@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model Consensus — One question, every model</title>
+  <meta name="description" content="Ask every AI model the same question and see where they agree, differ and surprise. Built on Pollinations.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐝</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="polli.css">
+  <style>
+    .layout { display: grid; grid-template-columns: 340px 1fr; gap: 18px; align-items: start; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+    .model-pick { max-height: 420px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-top: 8px; }
+    .model-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+    .model-row:last-child { border-bottom: none; }
+    .model-row:hover { background: var(--bg-card-hover); }
+    .model-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-row input { accent-color: var(--accent); }
+    .model-row.picked { background: var(--accent-soft); }
+
+    .quick-picks { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+
+    .answers { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+    .answer-card { position: relative; }
+    .answer-card .head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .answer-card .head .m { font-weight: 700; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .answer-card .body { font-size: 13.5px; white-space: pre-wrap; word-break: break-word; max-height: 340px; overflow-y: auto; }
+    .answer-card .foot { display: flex; gap: 8px; margin-top: 10px; font-size: 11px; color: var(--text-faint); }
+    .answer-card.err .body { color: var(--bad); font-size: 12.5px; }
+    .answer-card.done { border-color: var(--border-strong); }
+
+    .consensus-body { font-size: 14px; white-space: pre-wrap; }
+    .conviction { display: flex; gap: 4px; margin-top: 8px; }
+    .conviction .cell { height: 8px; flex: 1; border-radius: 4px; background: var(--bg-soft); }
+    .conviction .cell.hit { background: var(--good); }
+
+    .hero-questions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .hero-questions button { font-size: 12px; padding: 5px 10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>One question, every model</h1>
+    <p class="sub">
+      Ask the same question to a whole panel of Pollinations models at once. Watch answers arrive live,
+      see which models agree, and let one model summarize the consensus. Runs on <strong>your own Pollen</strong>.
+    </p>
+
+    <div class="layout">
+      <aside>
+        <div class="card">
+          <h2>Your question</h2>
+          <textarea id="question" rows="3" placeholder="e.g. What is your most controversial take about humans?"></textarea>
+          <div class="hero-questions" id="presets"></div>
+
+          <div style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-dim);">
+              <input type="checkbox" id="ask3x" style="accent-color:var(--accent);"> Ask 3× (test conviction)
+            </label>
+          </div>
+
+          <div style="margin-top:14px;">
+            <h3>Models <span class="faint" id="model-count">0 selected</span></h3>
+            <div class="quick-picks">
+              <button class="small ghost" data-pick="big8">Big 8 labs</button>
+              <button class="small ghost" data-pick="fast6">Fast 6</button>
+              <button class="small ghost" data-pick="frontier">Frontier 5</button>
+              <button class="small ghost" data-pick="open">Open weights</button>
+              <button class="small ghost" data-pick="clear">Clear</button>
+            </div>
+            <input type="search" id="model-search" placeholder="Filter models…">
+            <div class="model-pick" id="model-list">
+              <div style="padding:14px; text-align:center;"><span class="spinner"></span> loading models…</div>
+            </div>
+          </div>
+
+          <button class="primary" id="ask" style="width:100%; margin-top:14px;">Ask every model</button>
+        </div>
+      </aside>
+
+      <main>
+        <div class="card" id="consensus-card" style="display:none;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <h2 style="margin:0;">Consensus read</h2>
+            <span class="chip violet" id="consensus-model"></span>
+          </div>
+          <div class="consensus-body" id="consensus-body"></div>
+        </div>
+
+        <div class="card" id="results-card" style="display:none;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+            <h2 style="margin:0;">Answers</h2>
+            <span class="chip gold" id="progress-chip">0 / 0</span>
+            <div class="spacer" style="flex:1"></div>
+            <button class="small ghost" id="summarize" style="display:none;">Summarize consensus</button>
+          </div>
+          <div class="answers" id="answers"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="pollinations.js"></script>
+  <script src="polli-common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
