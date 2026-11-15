@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SciExplorer — Turn a science topic into something you can explore</title>
+  <meta name="description" content="Type any science topic and get an interactive, animated visual explanation with a live figure you can play with — built on Pollinations, paid with your own Pollen.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔬</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="polli.css">
+  <style>
+    .layout { display: grid; grid-template-columns: 360px 1fr; gap: 18px; align-items: start; }
+    @media (max-width: 940px) { .layout { grid-template-columns: 1fr; } }
+
+    .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+    .preset-chips button { font-size: 12px; padding: 5px 10px; }
+
+    .controls-row { display: flex; gap: 10px; margin-top: 14px; align-items: flex-end; }
+    .controls-row .grow { flex: 1; }
+
+    /* progress steps */
+    .steps { margin-top: 14px; display: none; }
+    .steps.on { display: block; }
+    .step { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-faint); border: 1px solid transparent; }
+    .step .num { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; background: var(--bg-soft); border: 1px solid var(--border-strong); flex: none; }
+    .step.active { color: var(--text); border-color: var(--border); background: var(--bg-soft); }
+    .step.active .num { background: var(--accent); color: #171204; border-color: var(--accent); }
+    .step.done { color: var(--text-dim); }
+    .step.done .num { background: rgba(62,207,142,0.15); color: var(--good); border-color: rgba(62,207,142,0.4); }
+    .step .ms { margin-left: auto; font-size: 11px; }
+
+    /* figure card */
+    .figure-frame {
+      width: 100%; height: 560px; border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm); background: #0d0f14; display: block;
+    }
+    .figure-code {
+      background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 12px; max-height: 260px; overflow: auto; margin: 0;
+      font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text-dim);
+      white-space: pre-wrap; word-break: break-all; display: none;
+    }
+    .figure-code.on { display: block; }
+
+    .figure-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .figure-toolbar .spacer { flex: 1; }
+
+    .hero-img { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border); display: block; background: var(--bg-soft); min-height: 60px; }
+
+    /* explanation sections */
+    .section-card .sec-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .section-card .sec-head h2 { margin: 0; flex: 1; min-width: 200px; }
+    .sec-body { font-size: 14.5px; margin-top: 10px; }
+    .sec-body p { margin: 0 0 10px; }
+    .sec-body p:last-child { margin-bottom: 0; }
+
+    .listen-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .listen-row audio { width: 100%; height: 36px; }
+
+    /* sources + simplifications */
+    .src-list { margin: 0; padding-left: 20px; font-size: 13.5px; }
+    .src-list li { margin-bottom: 6px; }
+    .simp-list { margin: 0; padding-left: 20px; font-size: 13.5px; }
+    .simp-list li { margin-bottom: 6px; color: var(--text-dim); }
+
+    /* gallery */
+    .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+    .gallery-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+    .gallery-item:hover { border-color: var(--accent); background: var(--bg-card-hover); }
+    .gallery-item .t { font-weight: 700; font-size: 13.5px; line-height: 1.35; margin-bottom: 6px; }
+    .gallery-item .meta { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); flex-wrap: wrap; }
+    .gallery-item .del { margin-left: auto; background: none; border: none; color: var(--text-faint); padding: 2px 6px; font-size: 13px; }
+    .gallery-item .del:hover { color: var(--bad); }
+
+    .hint { font-size: 12px; color: var(--text-faint); margin-top: 10px; }
+    .banner { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+    .banner img { width: 210px; border-radius: var(--radius-sm); border: 1px solid var(--border); flex: none; }
+    .banner .txt { flex: 1; min-width: 240px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>SciExplorer</h1>
+    <p class="sub">
+      Type any science topic and get an <strong>interactive visual explanation</strong> — a live, animated figure
+      with sliders and toggles that actually change the mechanism, plus a cited walkthrough.
+      In the spirit of <a href="https://github.com/Garinmckayl/anima" target="_blank" rel="noopener">Anima</a>:
+      show the real structure, cite every number, say how sure we are, make it move for a reason, educational never advice.
+      Runs on <strong>your own Pollen</strong>.
+    </p>
+
+    <div class="layout">
+      <!-- ============ LEFT: controls ============ -->
+      <aside>
+        <div class="card">
+          <h2>Science topic</h2>
+          <input type="text" id="topic" placeholder="e.g. How a refrigerator works" maxlength="120">
+          <div class="preset-chips" id="presets"></div>
+
+          <div class="controls-row">
+            <div class="grow">
+              <label class="field" for="detail">Detail level</label>
+              <select id="detail">
+                <option value="quick">Quick — 2 sections, small figure</option>
+                <option value="standard" selected>Standard — 3-4 sections</option>
+                <option value="deep">Deep — 5-6 sections, rich figure</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="controls-row" style="align-items:center;">
+            <label style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text-dim); cursor:pointer;">
+              <input type="checkbox" id="narrate" style="accent-color:var(--accent);"> Add narration audio per section
+            </label>
+          </div>
+
+          <button class="primary" id="generate" style="width:100%; margin-top:14px;">Explore this topic</button>
+
+          <div class="steps" id="steps">
+            <div class="step" data-step="outline">
+              <span class="num">1</span> <span>Planning the explanation (outline)</span> <span class="ms"></span>
+            </div>
+            <div class="step" data-step="figure">
+              <span class="num">2</span> <span>Building the interactive figure</span> <span class="ms"></span>
+            </div>
+            <div class="step" data-step="image">
+              <span class="num">3</span> <span>Illustrating the topic (hero image)</span> <span class="ms"></span>
+            </div>
+          </div>
+
+          <p class="hint">The figure runs in a sandboxed iframe: it can never touch this page or your data. Press <strong>Space</strong> inside a figure to pause it. Hover any part for an explanation.</p>
+        </div>
+
+        <div class="card">
+          <h2>Your gallery</h2>
+          <p class="sub" style="margin-bottom:12px; font-size:12.5px;">Topics you have explored, saved in this browser. Click to reopen.</p>
+          <div id="gallery"></div>
+        </div>
+      </aside>
+
+      <!-- ============ RIGHT: results ============ -->
+      <main>
+        <div class="card" id="welcome">
+          <div class="banner">
+            <img id="welcome-img" alt="" src="https://image.pollinations.ai/prompt/science%20exploration%20concept%2C%20magnifying%20glass%20over%20molecules%20and%20orbitals%2C%20dark%20blue%20background%2C%20gold%20accents%2C%20scientific%20diagram%20illustration?width=420&height=236&nologo=true&seed=7">
+            <div class="txt">
+              <h2 style="margin-bottom:6px;">Pick a topic and press <em>Explore</em></h2>
+              <p class="sub" style="margin:0 0 8px;">
+                SciExplorer turns a topic into a <strong>plan</strong> (what matters, in what order, with sources),
+                a <strong>live figure</strong> (canvas or SVG, animated, with controls that change the physics — not decoration),
+                and a <strong>cited walkthrough</strong> that says what was simplified.
+              </p>
+              <p class="sub" style="margin:0;">
+                Connect your Pollen (top right), then try a preset like <em>Neuron firing</em> or <em>Why the sky is blue</em>.
+                You pay only for what you generate, from your own balance.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="result-card" style="display:none;">
+          <div class="figure-toolbar">
+            <h2 style="margin:0;" id="result-title">Interactive figure</h2>
+            <span class="chip gold" id="figure-model-chip">openai/gpt-5.4</span>
+            <span class="spacer"></span>
+            <button class="small ghost" id="toggle-code">View code</button>
+            <button class="small ghost" id="reload-figure">Restart figure</button>
+          </div>
+
+          <div class="steps on" id="live-steps" style="margin:0 0 12px;"></div>
+
+          <iframe class="figure-frame" id="figure-frame" sandbox="allow-scripts" title="Interactive science figure"></iframe>
+          <pre class="figure-code" id="figure-code"></pre>
+
+          <div style="margin-top:14px;">
+            <img class="hero-img" id="hero-img" alt="Topic illustration" style="display:none;">
+          </div>
+        </div>
+
+        <div id="sections"></div>
+
+        <div class="card" id="sources-card" style="display:none;">
+          <h2>Sources <span class="faint small">— check us</span></h2>
+          <ul class="src-list" id="sources-list"></ul>
+          <p class="hint">Model-cited references. They may be imperfect — treat them as starting points for your own reading, not as medical, financial or professional advice.</p>
+        </div>
+
+        <div class="card" id="simplifications-card" style="display:none;">
+          <h2>Simplifications &amp; confidence <span class="faint small">— where we cut corners</span></h2>
+          <ul class="simp-list" id="simplifications-list"></ul>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="pollinations.js"></script>
+  <script src="polli-common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
