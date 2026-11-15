@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idle Agents Island · Pollinations</title>
+<link rel="stylesheet" href="polli.css">
+<style>
+  .layout { display:grid; grid-template-columns:minmax(0,1fr) 350px; gap:16px; align-items:start; }
+  @media (max-width: 1020px) { .layout { grid-template-columns:1fr; } }
+  #island { width:100%; height:auto; display:block; border-radius:10px; background:#0a1622; border:1px solid var(--border); }
+  .controls-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:12px; }
+  .speed-box { display:flex; align-items:center; gap:8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 14px; margin-top:12px; font-size:12px; color:var(--text-dim); }
+  .legend .sw { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:5px; vertical-align:-1px; border:1px solid rgba(255,255,255,0.12); }
+  .bar-row { display:grid; grid-template-columns:86px 1fr 30px; gap:8px; align-items:center; margin:5px 0; font-size:12px; color:var(--text-dim); }
+  .bar-track { background:var(--bg-soft); border-radius:4px; height:13px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:4px; transition:width .4s; }
+  #log-feed { max-height:250px; overflow-y:auto; display:flex; flex-direction:column; gap:5px; }
+  .log-line { font-size:12.5px; color:var(--text); background:var(--bg-soft); border-radius:6px; padding:6px 9px; line-height:1.45; }
+  .log-line .tick { color:var(--accent); font-family:var(--mono); font-weight:700; margin-right:6px; font-size:11px; }
+  .log-line .quote { color:var(--text-dim); font-style:italic; }
+  .log-line.sys { color:var(--warn); }
+  .agent-card { border:1px solid var(--border); background:var(--bg-soft); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .agent-card .head { display:flex; align-items:center; gap:8px; }
+  .agent-card .face { font-size:20px; }
+  .agent-card .nm { font-weight:700; }
+  .agent-card .last { font-size:12px; color:var(--text-dim); margin-top:4px; line-height:1.45; }
+  .persona-presets { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+  .form-row { margin-bottom:10px; }
+  .summ { font-size:12.5px; color:var(--text-dim); padding:7px 0; border-bottom:1px dashed var(--border); line-height:1.5; }
+  .summ:last-child { border-bottom:none; }
+  .summ b { color:var(--text); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏝️ Idle Agents Island</h1>
+  <p class="sub">AI agents on an island with nothing they have to do — so they start to play. Based on the MIT paper <i>“Is this machine playing?”</i></p>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <span class="chip gold" id="tick-chip">tick 0</span>
+          <span class="chip faint" id="agents-chip">0 agents</span>
+          <span class="chip violet">tick every <b id="speed-label">&nbsp;10&nbsp;</b> s</span>
+        </div>
+        <canvas id="island" width="800" height="520"></canvas>
+        <div class="legend">
+          <span><span class="sw" style="background:#1e425f"></span>water</span>
+          <span><span class="sw" style="background:#d9c38a"></span>beach</span>
+          <span><span class="sw" style="background:#4a7c3f"></span>grass</span>
+          <span><span class="sw" style="background:#35602f"></span>forest</span>
+          <span><span class="sw" style="background:#6e7a5a"></span>hill</span>
+          <span><span class="sw" style="background:#8a8d95"></span>mountain</span>
+          <span><span class="sw" style="background:#639455"></span>clearing</span>
+          <span>🪨 big rock</span><span>🌊 pond</span><span>🌲 tall tree</span>
+          <span>▮ block towers</span><span>◉ mandalas</span><span>🪨 piles</span><span>⚽ game</span>
+        </div>
+        <div class="controls-row">
+          <button id="play-pause" class="primary">▶ Start</button>
+          <div class="speed-box">
+            <label class="field" for="speed" style="margin:0">tick speed</label>
+            <input type="range" id="speed" min="5" max="20" step="5" value="10" style="width:130px">
+          </div>
+          <span class="faint small">drop for them:</span>
+          <button class="small" id="drop-ball" title="drop a ball in the clearing">⚽ ball</button>
+          <button class="small" id="drop-blocks" title="drop blocks in the clearing">🧱 blocks</button>
+          <button class="small" id="drop-paint" title="drop paint in the clearing">🎨 paint</button>
+        </div>
+        <div id="need-key" class="notice-box" style="display:none;margin-top:12px"></div>
+      </div>
+
+      <div class="card">
+        <h2>🔬 Ethogram — what agents do when nobody asks</h2>
+        <div id="bars"><div class="faint small">No actions recorded yet — press Start.</div></div>
+        <h3 style="margin-top:14px">Per-agent “what it chose”</h3>
+        <div id="summaries"><div class="faint small">No choices yet.</div></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Agents</h2>
+        <div id="roster"></div>
+        <h3 style="margin-top:14px">Add an agent</h3>
+        <div class="form-row">
+          <label class="field" for="agent-name">name</label>
+          <input type="text" id="agent-name" placeholder="e.g. Zephyr" maxlength="12">
+        </div>
+        <div class="form-row">
+          <label class="field">persona presets</label>
+          <div class="persona-presets" id="persona-presets"></div>
+          <label class="field" for="persona" style="margin-top:6px">persona prompt</label>
+          <textarea id="persona" rows="4"></textarea>
+        </div>
+        <div class="form-row">
+          <label class="field" for="model">model</label>
+          <select id="model"></select>
+        </div>
+        <button id="add-agent" class="primary" style="width:100%">➕ Add agent</button>
+        <div class="faint small" style="margin-top:8px">1–3 agents. Every tick each agent asks its model for ONE action.</div>
+      </div>
+
+      <div class="card">
+        <h2>📜 Activity log</h2>
+        <div id="log-feed"><div class="faint small">The island is quiet…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="pollinations.js"></script>
+<script src="polli-common.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
