@@ -35,6 +35,12 @@ One question, every model. The app sends the exact same prompt to a whole panel 
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `modelconsensus`, production deploy verified HTTP 200
+- headless test: 94 model rows rendered, big8 preset preselects 8, connect component + badge present, zero console errors
+- live check: <https://modelconsensus.edgeone.cool> returns the app title
+
 ## Outcome
 
 Shipped as quest submission for #19183.

@@ -34,6 +34,12 @@ A terminal in the browser with no real computer behind it: a Pollinations model 
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `worldsim`, production deploy verified HTTP 200
+- headless smoke: page loads, CRT boot screen renders, connect component + badge present, zero console errors
+- local commands (help/clear/boot/model/secrets) and the file-cache layer verified without a key
+
 ## Outcome
 
 Shipped as quest submission for #19179.

@@ -35,6 +35,11 @@ Your own version of Towers: a building where every floor is one business run by 
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `pollentowers`, production deploy verified HTTP 200
+- headless test: 30 floors render (lobby + 7 seeded + 22 rentable), directory lists 7, search and category filters work, office panel complete, drag rotation live, no-key rent guard fires, zero JS errors
+
 ## Outcome
 
 Shipped as quest submission for #17999.

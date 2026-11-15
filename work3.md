@@ -34,6 +34,12 @@ Type a science topic, get an interactive visual explanation you can click, drag 
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `sciexplorer`, production deploy verified HTTP 200
+- headless test: page loads error-free, connect component with the right app key, badge present, all 5 presets render; sandbox iframe proven opaque-origin (no parent access, no localStorage)
+- gallery persistence, figure quality gate and loose JSON parsing covered by behavior tests
+
 ## Outcome
 
 Shipped as quest submission for #19181.

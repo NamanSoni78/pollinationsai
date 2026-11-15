@@ -33,6 +33,11 @@ A tool about *the way language models write*: score any text for LLM-voice marke
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `llmvoice`, production deploy verified HTTP 200
+- headless tests: scanner discriminates (LLM slop 98/100, human classic 0/100, Austen 0, synthetic 73), tabs switch, game round playable, model tools show the friendly connect-first error when unconnected
+
 ## Outcome
 
 Shipped as quest submission for #19180.

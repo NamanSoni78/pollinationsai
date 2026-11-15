@@ -36,6 +36,12 @@ A game where the players are AI models — specifically Pollinations decision mo
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `decisionarena`, production deploy verified HTTP 200
+- engine tests: pellet determinism, wall crash, reversal block, 200-tick cap, greedy 20/20 in 91 ticks, replay reproduces the recorded run exactly
+- browser test: solo bot run key-free (score 20, 104 ticks), leaderboard save with (ref) mark, replay re-runs identically, bot-vs-bot race renders both canvases + winner banner, no-key guard fires
+
 ## Outcome
 
 Shipped as quest submission for #19176.

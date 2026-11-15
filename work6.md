@@ -35,6 +35,12 @@ Two or more AI personalities talk to each other on a live stage: pick personas, 
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `aidebate`, production deploy verified HTTP 200
+- headless smoke: page loads, persona cards and 4 modes render, connect component + badge present, zero console errors
+- setup persistence to localStorage verified
+
 ## Outcome
 
 Shipped as quest submission for #19178.

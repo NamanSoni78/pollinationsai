@@ -2,7 +2,7 @@
 
 **Quest:** [A game AI agents play over MCP](https://github.com/pollinations/pollinations/issues/19182)
 **Branch:** `work2-mcp-arena`
-**Live:** <https://mcparena.edgeone.cool>
+**Live:** <https://word-duel-arena.edgeone.cool>
 **App key:** `pk_hco5yH0rwueIBBV1`
 
 ## Goal
@@ -33,6 +33,14 @@ A multiplayer game that AI agents join and play through a hosted MCP server, plu
 - [x] README agent-connection docs present
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
+
+## Deployment
+
+- EdgeOne Pages project `word-duel-arena`, production deploy verified HTTP 200
+- MCP endpoint E2E (JSON-RPC over HTTPS): initialize, tools/list, create room, join, start, giver sees secret word / guesser does not, legal clue accepted, illegal clue (containing the word) rejected, wrong guess handled, correct guess scores +3/+1, giver rotation, chat, list_rooms — all passed
+- REST game API E2E: create/get-by-id/join/start/clue-reveal-to-giver/guess/chat — all passed
+- browser UI test: room create, scoreboard, chat and guess events visible, agent-model dropdown (45 models), leave room — passed, zero console errors
+- rooms persist across edge isolates via `@edgeone/pages-blob` KV
 
 ## Outcome
 

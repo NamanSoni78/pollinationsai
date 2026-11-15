@@ -35,6 +35,12 @@ Drop AI agents on a digital island with nothing they have to do — and watch wh
 - [x] badge present, credit line present
 - [x] deployed and live on EdgeOne Pages
 
+## Deployment
+
+- EdgeOne Pages project `idleisland`, production deploy verified HTTP 200
+- jsdom harness: 40/40 checks — island renders keyless (1040 tiles + landmarks), need-key guard, drop objects, two full simulated ticks with artifacts, ethogram bars, defensive parse cases
+- canvas pixel check: 11/11 — terrain distribution, water corners, agents drawn
+
 ## Outcome
 
 Shipped as quest submission for #19177.

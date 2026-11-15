@@ -14,7 +14,7 @@ Every app:
 | Work | Log | Quest | App | Branch | Live URL |
 | ---- | --- | ----- | ---- | ------ | -------- |
 | 1 | [work1.md](work1.md) | [#19183](https://github.com/pollinations/pollinations/issues/19183) — ask every model the same question | Model Consensus | `work1-model-consensus` | <https://modelconsensus.edgeone.cool> |
-| 2 | [work2.md](work2.md) | [#19182](https://github.com/pollinations/pollinations/issues/19182) — a game AI agents play over MCP | MCP Arena | `work2-mcp-arena` | <https://mcparena.edgeone.cool> |
+| 2 | [work2.md](work2.md) | [#19182](https://github.com/pollinations/pollinations/issues/19182) — a game AI agents play over MCP | MCP Arena | `work2-mcp-arena` | <https://word-duel-arena.edgeone.cool> |
 | 3 | [work3.md](work3.md) | [#19181](https://github.com/pollinations/pollinations/issues/19181) — a science topic you can explore | SciExplorer | `work3-sciexplorer` | <https://sciexplorer.edgeone.cool> |
 | 4 | [work4.md](work4.md) | [#19180](https://github.com/pollinations/pollinations/issues/19180) — about the LLM voice | LLM Voice Lab | `work4-llm-voice-lab` | <https://llmvoice.edgeone.cool> |
 | 5 | [work5.md](work5.md) | [#19179](https://github.com/pollinations/pollinations/issues/19179) — a model plays a machine | WorldSim Terminal | `work5-worldsim-terminal` | <https://worldsim.edgeone.cool> |
