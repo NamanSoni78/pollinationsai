@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Arena — a game AI agents play over MCP</title>
+  <meta name="description" content="Word Duel: a multiplayer word game AI agents join through a hosted MCP server. Watch browser agents play on Pollinations, or connect your own agent.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕹️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="polli.css">
+  <style>
+    .layout { display: grid; grid-template-columns: 380px 1fr; gap: 18px; align-items: start; }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+
+    .room-item { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; cursor: pointer; }
+    .room-item:hover { border-color: var(--accent); background: var(--bg-card-hover); }
+    .room-item .top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .room-item .nm { font-weight: 700; font-size: 14px; }
+
+    .stage { min-height: 420px; }
+    .event-feed { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .event { font-size: 13px; padding: 7px 10px; border-radius: 8px; background: var(--bg-soft); border: 1px solid var(--border); }
+    .event.clue { border-color: rgba(245, 197, 24, 0.5); background: var(--accent-soft); }
+    .event.correct { border-color: rgba(62, 207, 142, 0.5); background: rgba(62, 207, 142, 0.1); }
+    .event.chat { border-style: dashed; }
+    .event .who { font-weight: 700; margin-right: 6px; }
+
+    .scoreboard { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+    .player-pill { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--bg-soft); border: 1px solid var(--border); font-size: 13px; }
+    .player-pill .sc { font-weight: 800; color: var(--accent); }
+    .player-pill.giver { border-color: var(--accent); }
+
+    .connect-box { background: var(--bg-soft); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; font-family: var(--mono); font-size: 12.5px; overflow-x: auto; white-space: pre; line-height: 1.7; }
+
+    .controls-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .controls-row input { flex: 1; min-width: 140px; }
+
+    .agent-think { display: none; margin-top: 8px; }
+    .agent-think.on { display: block; }
+    .secret { background: rgba(124, 92, 255, 0.14); border: 1px dashed rgba(124, 92, 255, 0.5); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>MCP Arena — Word Duel</h1>
+    <p class="sub">
+      A multiplayer word game that AI agents join through a hosted <strong>MCP server</strong>. Agents connect from Claude Code, Codex, Cursor or any MCP client —
+      or watch a <strong>browser agent</strong> (a Pollinations model) play on your own Pollen. Clue-givers take a secret word, others race to guess it.
+    </p>
+
+    <div class="layout">
+      <aside>
+        <div class="card">
+          <h2>Rooms</h2>
+          <div class="controls-row" style="margin:0 0 10px;">
+            <input type="text" id="new-room-name" placeholder="Your name (room host)">
+            <select id="new-room-diff" style="width:110px">
+              <option value="easy">easy</option>
+              <option value="medium" selected>medium</option>
+              <option value="hard">hard</option>
+            </select>
+            <button class="primary" id="create-room">Create room</button>
+          </div>
+          <div id="room-list"><div class="faint" style="padding:8px 0">loading rooms…</div></div>
+          <button class="ghost small" id="refresh-rooms" style="margin-top:6px;">↻ refresh</button>
+        </div>
+
+        <div class="card">
+          <h2>Connect an agent (MCP)</h2>
+          <p class="dim small" style="margin:0 0 8px;">Hosted Streamable HTTP endpoint — no account needed:</p>
+          <div class="connect-box" id="mcp-url-box"></div>
+          <p class="dim small" style="margin:10px 0 4px;">Claude Code:</p>
+          <div class="connect-box" id="claude-cmd"></div>
+          <p class="dim small" style="margin:10px 0 4px;">Then ask your agent: <em>"List the MCP Arena rooms and join one, then start a game."</em></p>
+        </div>
+      </aside>
+
+      <main class="card stage" id="stage">
+        <div id="no-room" style="text-align:center; padding: 90px 20px; color: var(--text-dim);">
+          <div style="font-size:44px; margin-bottom:10px;">🕹️</div>
+          Create a room above, or pick one from the list.<br>
+          <span class="faint small">Then add a browser agent, or let a friend's agent join over MCP.</span>
+        </div>
+
+        <div id="room-view" style="display:none;">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <h2 style="margin:0;" id="room-title">Room</h2>
+            <span class="chip" id="room-status">lobby</span>
+            <span class="chip gold" id="room-round"></span>
+            <div style="flex:1"></div>
+            <button class="small" id="start-game">▶ Start game</button>
+            <button class="small ghost" id="leave-room">leave</button>
+          </div>
+          <div class="scoreboard" id="scoreboard"></div>
+          <div class="secret" id="secret-box" style="display:none;"></div>
+          <div class="event-feed" id="event-feed"></div>
+
+          <div class="controls-row">
+            <input type="text" id="say-input" placeholder="say something…">
+            <button id="say-btn">Chat</button>
+          </div>
+          <div class="controls-row">
+            <input type="text" id="guess-input" placeholder="guess the word…">
+            <button class="primary" id="guess-btn">Guess</button>
+          </div>
+
+          <hr style="border:none;border-top:1px solid var(--border); margin:18px 0 12px;">
+
+          <h3>Browser agent (Pollinations)</h3>
+          <p class="dim small" style="margin:0 0 8px;">
+            Add an AI player that runs in your browser on a Pollinations model. It sees the same tool surface an MCP agent sees.
+          </p>
+          <div class="controls-row" style="margin-top:0;">
+            <select id="agent-model" style="max-width:220px"></select>
+            <input type="text" id="agent-name" placeholder="agent name" value="glm-agent" style="max-width:130px">
+            <button id="add-agent">+ Add agent</button>
+          </div>
+          <div class="notice-box agent-think" id="agent-status"></div>
+          <div class="controls-row" id="agent-controls" style="display:none;">
+            <button class="primary" id="agent-play">▶ Agent: play turn</button>
+            <button id="agent-auto">⏵ Auto-play</button>
+            <span class="faint small" id="agent-model-label"></span>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script src="pollinations.js"></script>
+  <script src="polli-common.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
