@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pollen Towers · Pollinations</title>
+<link rel="stylesheet" href="polli.css">
+<style>
+/* ---- tower 3D ---- */
+.tower-stage {
+  perspective: 1500px;
+  perspective-origin: 50% 45%;
+  height: 620px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background:
+    radial-gradient(700px 420px at 50% 20%, rgba(124,92,255,0.10), transparent 70%),
+    radial-gradient(500px 300px at 50% 100%, rgba(245,197,24,0.07), transparent 70%);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  position: relative;
+}
+.tower-stage.dragging { cursor: grabbing; }
+.tower-world {
+  transform-style: preserve-3d;
+  position: relative;
+  width: 300px;
+  height: 100%;
+}
+.floor {
+  position: absolute;
+  left: 0;
+  width: 300px;
+  height: 64px;
+  transform-style: preserve-3d;
+  cursor: pointer;
+}
+.floor .face {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #1d2436 0%, #171c28 100%);
+  border: 1px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  overflow: hidden;
+  backface-visibility: hidden;
+}
+.floor.rented .face {
+  background: linear-gradient(180deg, #2a2410 0%, #1c1a10 100%);
+  border-color: rgba(245,197,24,0.45);
+  box-shadow: 0 0 18px rgba(245,197,24,0.08);
+}
+.floor.lobby .face {
+  background: linear-gradient(180deg, #241f38 0%, #191527 100%);
+  border-color: rgba(124,92,255,0.5);
+}
+.floor.empty .face {
+  background: rgba(20,24,34,0.55);
+  border: 1px dashed var(--border-strong);
+  color: var(--text-faint);
+}
+.floor .face:hover { border-color: var(--accent); }
+.floor .face img.icon { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: 0 0 auto; background: #fff; }
+.floor .face .glyph { font-size: 26px; flex: 0 0 auto; width: 34px; text-align: center; }
+.floor .face .info { min-width: 0; }
+.floor .face .name { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.floor .face .tag { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.floor .face .fnum {
+  position: absolute; right: 10px; top: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--text-faint);
+}
+.tower-hint {
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  font-size: 12px; color: var(--text-faint); pointer-events: none;
+  background: rgba(13,15,20,0.7); padding: 4px 12px; border-radius: 999px;
+}
+.tower-stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 14px 0; align-items: center; }
+
+/* ---- directory ---- */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.chips button { padding: 5px 12px; font-size: 12px; border-radius: 999px; }
+.chips button.on { background: var(--accent); border-color: var(--accent); color: #171204; }
+.dir-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 10px; }
+.dir-item {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px; cursor: pointer; transition: border-color 0.15s;
+}
+.dir-item:hover { border-color: var(--accent); }
+.dir-item .top { display: flex; gap: 10px; align-items: center; }
+.dir-item img.icon { width: 38px; height: 38px; border-radius: 8px; object-fit: cover; background: #fff; flex: 0 0 auto; }
+.dir-item .glyph { font-size: 28px; flex: 0 0 auto; }
+.dir-item .nm { font-weight: 700; font-size: 14px; }
+.dir-item .tg { font-size: 12px; color: var(--text-dim); }
+
+/* ---- modal / office panel ---- */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(5,7,10,0.72); z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 18px;
+  backdrop-filter: blur(3px);
+}
+.modal {
+  background: var(--bg-card); border: 1px solid var(--border-strong); border-radius: var(--radius);
+  width: 640px; max-width: 100%; max-height: 86vh; overflow-y: auto; padding: 22px;
+}
+.modal .close-x { float: right; }
+.fieldrow { margin-bottom: 12px; }
+.standup {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px; margin-top: 10px; background: var(--bg-soft);
+}
+.standup .agent { font-weight: 700; font-size: 13px; margin: 10px 0 4px; }
+.standup .agent:first-child { margin-top: 0; }
+.standup .out { white-space: pre-wrap; font-size: 13px; color: var(--text-dim); }
+.decision-card {
+  border: 1px solid rgba(124,92,255,0.45); background: var(--accent-2-soft);
+  border-radius: var(--radius-sm); padding: 12px; margin-top: 8px;
+}
+.declog { font-size: 12px; }
+.declog .row { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+.stepbar { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+.stepbar .st { flex: 1; min-width: 140px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 12px; color: var(--text-faint); background: var(--bg-soft); }
+.stepbar .st.on { border-color: var(--accent); color: var(--accent); }
+.stepbar .st.done { border-color: var(--good); color: var(--good); }
+.logo-big { width: 72px; height: 72px; border-radius: 12px; object-fit: cover; background: #fff; flex: 0 0 auto; }
+.office-head { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pollen Towers</h1>
+  <p class="sub">A tower of one-person companies, each run by a human owner and their AI agents. Agents do the daily work; decisions come to you. <span class="faint">Inspired by <a href="https://towers.app" target="_blank" rel="noopener">Towers</a>.</span></p>
+
+  <div id="polli-error"></div>
+
+  <div class="tower-stats">
+    <span class="chip gold" id="stat-companies">0 companies</span>
+    <span class="chip violet" id="stat-occupied">0 / 30 floors</span>
+    <span class="chip faint" id="stat-standups">0 standups run</span>
+    <span class="spacer" style="flex:1"></span>
+    <button id="reset-tower" class="ghost small">Reset tower</button>
+  </div>
+
+  <div class="tower-stage" id="tower-stage">
+    <div class="tower-world" id="tower-world"></div>
+    <div class="tower-hint">drag to rotate · click a floor to visit</div>
+  </div>
+
+  <div class="card" style="margin-top:18px">
+    <h2>Directory</h2>
+    <input type="search" id="dir-search" placeholder="Search companies…">
+    <div class="chips" id="dir-chips"></div>
+    <div class="dir-list" id="dir-list"></div>
+  </div>
+</div>
+
+<script src="pollinations.js"></script>
+<script src="polli-common.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
