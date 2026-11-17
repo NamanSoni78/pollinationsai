@@ -6,6 +6,8 @@ import { Hono } from "hono";
 
 type MockDiscordState = {
     userId: string;
+    email: string | null;
+    emailVerified: boolean;
     membershipRequestCount: number;
     membershipStatus: number;
     membershipErrorCode: number;
@@ -13,12 +15,14 @@ type MockDiscordState = {
 };
 
 export function createMockDiscord(): MockAPI<MockDiscordState> {
-    const state = {
+    const state: MockDiscordState = {
         userId: "987654321",
+        email: null,
+        emailVerified: false,
         membershipRequestCount: 0,
         membershipStatus: 200,
         membershipErrorCode: 10007,
-        memberRoles: [] as string[],
+        memberRoles: [],
     };
     const userProfile = {
         id: state.userId,
@@ -26,8 +30,12 @@ export function createMockDiscord(): MockAPI<MockDiscordState> {
         discriminator: "0",
         global_name: "Discord Test User",
         avatar: null,
-        email: null,
-        verified: false,
+        get email() {
+            return state.email;
+        },
+        get verified() {
+            return state.emailVerified;
+        },
     };
     const discord = new Hono()
         .post("/api/oauth2/token", (c) =>
@@ -77,6 +85,8 @@ export function createMockDiscord(): MockAPI<MockDiscordState> {
     return {
         state,
         reset: () => {
+            state.email = null;
+            state.emailVerified = false;
             state.membershipRequestCount = 0;
             state.membershipStatus = 200;
             state.membershipErrorCode = 10007;

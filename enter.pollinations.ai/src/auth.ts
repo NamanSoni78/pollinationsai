@@ -223,6 +223,56 @@ export function createAuth(
                         }),
                     );
                 }
+                // Discord is connect-only (guard above), so a Discord
+                // callback is legitimate only when it completes an
+                // authenticated /link-social flow, whose OAuth state
+                // records the linking user. Better Auth's state is not
+                // bound to the provider that minted it, so a sign-in
+                // state from any provider can be replayed on the
+                // Discord callback — and with Discord trusted for
+                // unverified emails, that implicitly links the
+                // attacker's Discord account to whichever local user
+                // owns the email on the Discord profile and mints a
+                // session for them.
+                if (
+                    authContext.path === "/callback/:id" &&
+                    authContext.params?.id === "discord" &&
+                    authContext.query?.code
+                ) {
+                    const stateId = authContext.query?.state;
+                    let linksAccount = false;
+                    if (stateId) {
+                        const [stateRecord] = await db
+                            .select({
+                                value: betterAuthSchema.verification.value,
+                            })
+                            .from(betterAuthSchema.verification)
+                            .where(
+                                eq(
+                                    betterAuthSchema.verification.identifier,
+                                    stateId,
+                                ),
+                            )
+                            .limit(1);
+                        try {
+                            linksAccount = Boolean(
+                                stateRecord &&
+                                    (
+                                        JSON.parse(stateRecord.value) as {
+                                            link?: unknown;
+                                        }
+                                    ).link,
+                            );
+                        } catch {
+                            linksAccount = false;
+                        }
+                    }
+                    if (!linksAccount)
+                        throw new APIError("BAD_REQUEST", {
+                            message:
+                                "Discord can only be connected to an existing Pollinations account.",
+                        });
+                }
                 // The path is the route pattern, not the resolved URL, so the
                 // provider comes from params. Only with a code: a denial at
                 // GitHub comes back without one and is a loss on their side,
