@@ -124,3 +124,29 @@ Re-tested the removed lines of every open fix PR against upstream `549feee`: #1,
 | Portal redirects cannot leave the app | `/billing/portal` validates `body.redirect` and constrains `body.pack` to a known pollen pack key |
 
 Net result for round 6: two surfaces swept (enter authorization core, payment triggers), 0 new issues accepted, 6 open fix PRs confirmed still applicable to upstream `549feee`.
+
+## Round 7 — session 3: MCP amplification, Discord bot spend gating, CI untrusted-content, user-image fetch deadline (2026-11-18)
+
+Baseline: upstream `549feee` (current HEAD); fork/main verified identical (no sync push needed). Method: six parallel read-only subagent audits (payments/billing/quests, auth/OAuth/tokens, gen routes/SSRF/IDOR, media service/uploads, apps/MCP, shared core + operations/CI) against the full dedup registry (issues 1–16), followed by main-agent code verification of every candidate — only findings reproduced by isolated unit tests are accepted (live probing not needed this round; every accepted finding is pinned by tests in the repo's existing suites).
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 17 | composio-mcp `COMPOSIO_MULTI_EXECUTE_TOOL` bills + executes an unbounded `tools[]` array per single JSON-RPC call under the platform Composio key (gateway pre-flight is `requireAccountFunds(c, 0)` with zero-reserve settlement) | High | 2 new tests in `apps/composio-mcp/worker.test.js` (injectable `fetchImpl`): oversized batch rejected pre-proxy with zero billing; batch at cap bills exactly cap units — suite 10/10 | `solution17-composio-multi-execute-caps` | fork [#21](https://github.com/NamanSoni78/pollinationsai/pull/21) |
+| 18 | catgpt-bot / opposite-prompt-bot answer mentions from any channel/guild, unrate-limited, spending the shared platform key per mention (1 text + up to 3 paid image gens + media upload; retry loop amplification) | High | 4 new tests per app via `createMessageHandler` injectable seam (no Discord / no paid APIs): out-of-channel mention never spends; cooldown bounds per-user spend to one billed reply per 60 s window — 4/4 + 4/4 | `solution18-discord-bots-channel-gate-cooldown` | fork [#22](https://github.com/NamanSoni78/pollinationsai/pull/22) |
+| 19 | `repo-auto-fix-polli-issues.yml` interpolates the attacker-authored issue title straight into the write-capable agent prompt, with no untrusted-content wrapper/system prompt (the repo's own standard, tested on both sibling workflows), the Pollen key in job-level env, and unused `id-token: write` | High (control gap; POLLI-label prerequisite disclosed) | 2 new fixtures in `.github/scripts/polli-workflows.test.mjs` (token scoping + OIDC drop, wrapper + system prompt) — 19/19; YAML parse-validated | `solution19-autofix-workflow-untrusted-content` | fork [#23](https://github.com/NamanSoni78/pollinationsai/pull/23) |
+| 20 | `fetchUserImage` bounds size but not time — no main-path caller passes `signal`, so a slow-loris image host pins a generation slot (incl. detached coordinator alarm, unbilled failures) until the ~125 s platform proxy timeout; all sibling user-media fetches already carry deadlines | Medium | 3 new tests in `gen.pollinations.ai/test/image/imageDownload.test.ts`: abort deadline wired into every fetch; stalled never-finishing host rejects with the distinct timeout error; default pinned at 30 s — 40/40 + `tsc --noEmit` clean | `solution20-user-image-fetch-timeout` | fork [#24](https://github.com/NamanSoni78/pollinationsai/pull/24) |
+
+### Surfaces audited this round with no gate-passing finding (read-only, session 3)
+
+- **enter payments/billing/quests/referral/promo/x402** — server-derived pack pricing, signature-verified + idempotent webhooks, transactional D1 credits, constant-time compares; every maintainer fix branch in the payments family targets code absent from main or is a feature. 0 accepted (one sub-gate observation documented: referral anti-abuse blind to non-card payment methods — bounded marketing-cost leak, fails the impact gate).
+- **enter auth/OAuth/session/device/agent-run/share-account** — PKCE + single-use codes + exact redirect matching + per-client binding verified on main; all 30 hint branches either landed, target deleted paths, or are features. 0 accepted.
+- **media.pollinations.ai uploads/catalog/delete/cache** — cross-tenant overwrite, stored XSS, path traversal, secret exposure all controlled (ag_-upload asymmetry and JSON base64 length cap noted as below-bar hardening by the round 5 session as issues 12/13). 0 new.
+- **apps/MCP fleet beyond polli/ffmpeg/exa** — network-mcp, packages-mcp, computer-mcp, machines-mcp, floret, mama-barbara, agent-* apps cleared; all committed secrets SOPS-encrypted.
+- **shared core / operations dashboards / other CI workflows** — constant-time compares, AES-GCM, no plaintext tokens, pull_request_target workflows never check out PR head.
+
+### Parallel-session coordination notes (2026-11-18)
+
+- This session's three fix branches (`solution12/13/14-*`, as first pushed) were **deleted from the fork mid-session by a concurrent session**; they were renumbered to `solution17-18-19-20-*` (same commits, issues 17–20) and re-pushed. Stale PR #20 was closed and superseded by PR #21. **Do not delete `solution17-*`…`solution20-*` — they carry this round's findings.**
+- Upstream PR creation re-verified this session: `403 Resource not accessible by personal access token` on `POST /repos/pollinations/pollinations/pulls`. Fork PRs #21–#24 remain the live review surface until an upstream-scoped token is supplied.
+- `issues_mds` was already rebased onto `549feee` by the round 5 session; this round appends issues 17–20 on top (fast-forward, no force).
+

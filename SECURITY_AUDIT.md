@@ -34,6 +34,21 @@ root cause as issues 1–8 below is NOT a new finding.**
 7. exa-mcp web_fetch_exa unbounded urls/maxCharacters
 8. Community-endpoint upstream host/body disclosure
 
+## Dedup registry, rounds 3–7 (issues 9–20 — same root cause = NOT a new finding)
+
+9. Discord OAuth callback state replay → account takeover (provider-agnostic state, no PKCE, unverified-email trust)
+10. Community publishers bill callers on unbounded self-reported usage
+11. polli web_scrape/fetch_file SSRF (no destination policy from the credentialed bot container)
+12. media JSON upload ≈4.6× pre-decode allocation OOMs the Worker below the documented cap
+13. media upload gate misses agent-run `ag_` tokens (upload/publish while DELETE refuses)
+14. User-media redirect hops skip the URL policy (SSRF via 302 to loopback/private/metadata)
+15. EXIF UserComment unbounded public content + input URL disclosure on the media host
+16. /3d/ routes forward unvalidated user URLs to providers (SSRF by proxy)
+17. composio-mcp COMPOSIO_MULTI_EXECUTE_TOOL unbounded tools[] (billing + execution amplification under the platform key)
+18. catgpt/opposite-prompt Discord bots: ungated, unrate-limited platform-key spend per mention with retry amplification
+19. repo-auto-fix-polli-issues.yml untrusted issue content into a write-capable agent + job-env Pollen key + unused id-token write
+20. gen fetchUserImage: no time bound on user-supplied image URL fetches (slow-loris slot pinning incl. detached coordinator alarms)
+
 ## Rules
 
 - LIVE-TESTED findings only count toward the confirmed total.
