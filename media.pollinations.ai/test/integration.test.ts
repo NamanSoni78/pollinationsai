@@ -1080,6 +1080,23 @@ describe("media.pollinations.ai", () => {
         });
     });
 
+    // The decoded size is derivable from the base64 length, so a payload a
+    // hair over the 16 MiB JSON cap must be rejected before atob() ever
+    // allocates the binary string (previously it decoded first and could
+    // OOM the isolate on the way to the 413).
+    it("rejects JSON uploads above the memory-safe cap before decoding", async () => {
+        const oversized = "A".repeat(Math.ceil((16 * 1024 * 1024 * 4) / 3) + 8);
+        const res = await SELF.fetch("https://media.pollinations.ai/upload", {
+            method: "POST",
+            headers: {
+                Authorization: "Bearer sk_app_alice",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ data: oversized }),
+        });
+        expect(res.status).toBe(413);
+    });
+
     it("requires account identity for custom IDs", async () => {
         for (const key of ["sk_nouser", "sk_legacy"]) {
             expect(
