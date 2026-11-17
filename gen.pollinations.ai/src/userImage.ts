@@ -2,7 +2,13 @@ import type { ImageInputErrorCode } from "@shared/error.ts";
 import { UpstreamError } from "@shared/error.ts";
 import { detectImageMimeType } from "@shared/image-mime.ts";
 import { readResponseBytes } from "@shared/response-bytes.ts";
-import { validateUserMediaUrl } from "@shared/user-media-url.ts";
+import {
+    fetchValidatedUserMedia,
+    MAX_USER_MEDIA_REDIRECTS,
+    UserMediaRedirectError,
+    UserMediaTooManyRedirectsError,
+    validateUserMediaUrl,
+} from "@shared/user-media-url.ts";
 
 /**
  * A user-supplied image we could not use.
@@ -93,6 +99,11 @@ export type FetchUserImageOptions = {
      * `"manual"` refuses redirects outright. A redirect is followed to a host
      * the URL guard never saw, so the strict paths decline rather than
      * re-validate a moving target.
+     *
+     * When unset (the image, embeddings and reference-audio paths), redirects
+     * are followed manually with every hop re-validated against the same URL
+     * policy — shorteners and CDN redirects keep working, while a hop to a
+     * loopback, private or literal-IP destination is refused.
      */
     redirect?: RequestRedirect;
     signal?: AbortSignal;
@@ -194,12 +205,32 @@ export async function fetchUserImage(
 
     let response: Response;
     try {
-        response = await fetch(url, {
-            ...(redirect && { redirect }),
-            headers: { "User-Agent": "Pollinations/1.0" },
-            ...(signal && { signal }),
-        });
+        response =
+            redirect === "manual"
+                ? await fetch(url, {
+                      redirect,
+                      headers: { "User-Agent": "Pollinations/1.0" },
+                      ...(signal && { signal }),
+                  })
+                : await fetchValidatedUserMedia(url, {
+                      headers: { "User-Agent": "Pollinations/1.0" },
+                      ...(signal && { signal }),
+                  });
     } catch (thrown) {
+        if (thrown instanceof UserMediaRedirectError) {
+            throw new UserImageError(
+                `Media URL ${imageUrl} redirects to ${thrown.target.toString()}, which is not an allowed media destination.`,
+                "invalid_image_url",
+                url,
+            );
+        }
+        if (thrown instanceof UserMediaTooManyRedirectsError) {
+            throw new UserImageError(
+                `Media URL ${imageUrl} redirects more than ${MAX_USER_MEDIA_REDIRECTS} times.`,
+                "invalid_image_url",
+                url,
+            );
+        }
         const error =
             thrown instanceof Error ? thrown : new Error(String(thrown));
         throw new UserImageError(

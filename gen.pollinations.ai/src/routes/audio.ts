@@ -25,7 +25,13 @@ import {
 } from "@shared/registry/usage-headers.ts";
 import { readResponseBytes } from "@shared/response-bytes.ts";
 import { SafeSchema } from "@shared/schemas/safety.ts";
-import { validateUserMediaUrl } from "@shared/user-media-url.ts";
+import {
+    fetchValidatedUserMedia,
+    MAX_USER_MEDIA_REDIRECTS,
+    UserMediaRedirectError,
+    UserMediaTooManyRedirectsError,
+    validateUserMediaUrl,
+} from "@shared/user-media-url.ts";
 import {
     errorResponseDescriptions,
     mediaResponseHeaders,
@@ -254,11 +260,23 @@ async function fetchReferenceAudio(referenceAudioUrl: string): Promise<File> {
 
     let response: Response;
     try {
-        response = await fetch(url, {
+        response = await fetchValidatedUserMedia(url, {
             headers: { "User-Agent": "Pollinations/1.0" },
             signal: AbortSignal.timeout(REFERENCE_AUDIO_FETCH_TIMEOUT_MS),
         });
     } catch (error) {
+        if (error instanceof UserMediaRedirectError) {
+            throw new UpstreamError(400 as ContentfulStatusCode, {
+                message: `reference_audio redirects to ${error.target.toString()}, which is not an allowed media destination`,
+                requestUrl: url,
+            });
+        }
+        if (error instanceof UserMediaTooManyRedirectsError) {
+            throw new UpstreamError(400 as ContentfulStatusCode, {
+                message: `reference_audio redirects more than ${MAX_USER_MEDIA_REDIRECTS} times`,
+                requestUrl: url,
+            });
+        }
         const message = error instanceof Error ? error.message : String(error);
         throw new UpstreamError(400 as ContentfulStatusCode, {
             message: `Failed to fetch reference_audio from ${url.hostname}: ${message}`,
