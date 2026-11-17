@@ -13,8 +13,17 @@ import {
 import { createMockTinybird } from "@shared/test/mocks/tinybird.ts";
 import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stemInputSeconds } from "../src/audio/stem-separation.ts";
+import {
+    requireStemFunds,
+    type StemVariation,
+} from "../src/audio/stem-separation.ts";
+import type { FallbackCandidate } from "../src/fallback.ts";
+import {
+    calculateUsageBilling,
+    getRegistryModelDefinition,
+} from "@shared/registry/registry.ts";
 import worker from "../src/index.ts";
 import fixture from "./fixtures/stem-input.json";
 import { withInlineGenerationCoordinator } from "./helpers/inline-generation-coordinator.ts";
@@ -372,4 +381,150 @@ test("retries a repeated stem-separation list and bills only the successful atte
     );
     const [storedKey] = await db.select().from(apikey).where(eq(apikey.id, id));
     expect(storedKey.pollenBalance).toBeCloseTo(1 - 0.0025 * 0.25, 10);
+});
+
+const STEM_MODEL = "elevenlabs/stem-separation";
+
+function stemCandidate(): FallbackCandidate {
+    return {
+        id: STEM_MODEL,
+        definition: getRegistryModelDefinition(STEM_MODEL),
+    };
+}
+
+function fakeLog() {
+    return {
+        trace: () => undefined,
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined,
+    };
+}
+
+function stemContext(packBalance: number, apiKey?: unknown) {
+    return {
+        var: {
+            auth: {
+                user: { id: "stem-payer" },
+                apiKey,
+            },
+            balance: {
+                getBalance: async () => ({
+                    tierBalance: 0,
+                    packBalance,
+                }),
+            },
+            model: {
+                requested: STEM_MODEL,
+                resolved: STEM_MODEL,
+                definition: getRegistryModelDefinition(STEM_MODEL),
+            },
+            log: fakeLog(),
+        },
+        env: {},
+    } as unknown as Parameters<typeof requireStemFunds>[0];
+}
+
+const exactCharge = (
+    seconds: number,
+    variation: StemVariation = "six_stems_v1",
+) =>
+    calculateUsageBilling({
+        model: STEM_MODEL,
+        usage: { promptAudioSeconds: seconds },
+        servedBy: getRegistryModelDefinition(STEM_MODEL),
+        input: { stemVariation: variation },
+    }).price.totalPrice;
+
+describe("exact pre-dispatch funds gate", () => {
+    it("prices the parsed input duration at the variation's rate", () => {
+        // Workspace analytics contract: 20s costs $0.10 six-stem, $0.05 two.
+        expect(exactCharge(20)).toBeCloseTo(0.1, 10);
+        expect(exactCharge(20, "two_stems_v1")).toBeCloseTo(0.05, 10);
+        // The upload bound: 50 MB at 32 kbps decodes to ~13,107 billed
+        // seconds, so one request can charge ~65.5 pollen of provider spend.
+        expect(exactCharge(13_107)).toBeCloseTo(13_107 * 0.005, 8);
+    });
+
+    it("refuses a balance below the exact charge before dispatch", async () => {
+        // 60s of six-stem separation costs $0.30: a mean-based gate (or 0,
+        // with no Tinybird history) admitted any positive balance.
+        await expect(
+            requireStemFunds(
+                stemContext(0.29),
+                stemCandidate(),
+                60,
+                "six_stems_v1",
+            ),
+        ).rejects.toMatchObject({ status: 402 });
+        await expect(
+            requireStemFunds(
+                stemContext(0.14),
+                stemCandidate(),
+                60,
+                "two_stems_v1",
+            ),
+        ).rejects.toMatchObject({ status: 402 });
+    });
+
+    it("admits a balance covering the exact charge", async () => {
+        await expect(
+            requireStemFunds(
+                stemContext(0.31),
+                stemCandidate(),
+                60,
+                "six_stems_v1",
+            ),
+        ).resolves.toBeUndefined();
+        await expect(
+            requireStemFunds(
+                stemContext(65.6),
+                stemCandidate(),
+                13_107,
+                "six_stems_v1",
+            ),
+        ).resolves.toBeUndefined();
+    });
+
+    it("refuses through the key budget first when it cannot cover the charge", async () => {
+        // requireFunds checks the key budget before the wallet: a key with
+        // $0.20 left must not dispatch a $0.30 render regardless of wallet.
+        await expect(
+            requireStemFunds(
+                stemContext(100, { id: "sk-stem", pollenBalance: 0.2 }),
+                stemCandidate(),
+                60,
+                "six_stems_v1",
+            ),
+        ).rejects.toMatchObject({ status: 402 });
+    });
+
+    it("skips the gate when the caller is not authenticated", async () => {
+        const anonymous = {
+            var: {
+                auth: {},
+                balance: {
+                    getBalance: async () => {
+                        throw new Error("must not load balance");
+                    },
+                },
+                model: {
+                    requested: STEM_MODEL,
+                    resolved: STEM_MODEL,
+                    definition: getRegistryModelDefinition(STEM_MODEL),
+                },
+                log: fakeLog(),
+            },
+            env: {},
+        } as unknown as Parameters<typeof requireStemFunds>[0];
+        await expect(
+            requireStemFunds(
+                anonymous,
+                stemCandidate(),
+                60,
+                "six_stems_v1",
+            ),
+        ).resolves.toBeUndefined();
+    });
 });
