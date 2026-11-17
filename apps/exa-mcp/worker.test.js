@@ -79,6 +79,12 @@ test("lists Exa's default tools without usage", async () => {
         ["web_search_exa", "web_fetch_exa"],
     );
     assert.equal(tools[0].inputSchema.properties.numResults.maximum, 10);
+    assert.equal(tools[1].inputSchema.properties.urls.maxItems, 10);
+    assert.equal(tools[1].inputSchema.properties.urls.minItems, 1);
+    assert.equal(
+        tools[1].inputSchema.properties.maxCharacters.maximum,
+        50_000,
+    );
     assert.equal(calls.length, 0);
     assert.equal(
         responses.some((response) =>

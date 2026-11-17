@@ -165,8 +165,8 @@ function buildServer(env, fetchImpl, reportUsage) {
             description:
                 "Read one or more known webpages as clean text. Use after search when highlights are insufficient.",
             inputSchema: z.object({
-                urls: z.array(z.url()).min(1),
-                maxCharacters: z.number().int().positive().optional(),
+                urls: z.array(z.url()).min(1).max(10),
+                maxCharacters: z.number().int().positive().max(50_000).optional(),
             }),
         },
         (params) =>
