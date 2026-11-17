@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import axios from "axios";
 import {
     AttachmentBuilder,
@@ -12,10 +13,22 @@ import {
 
 const TOKEN = process.env.BOT_TOKEN_OPPOSITE_PROMPT;
 const API_KEY = process.env.TEXT_POLLINATIONS_TOKEN;
+// Optional: restrict the bot to one channel the way the catgpt and
+// discord-bot-family bots are restricted. Unset keeps today's behaviour
+// (any channel), with the cooldown below still bounding per-user spend.
+const CHANNEL_ID = process.env.OPPOSITE_PROMPT_CHANNEL_ID || "";
 const TEXT_API = "https://gen.pollinations.ai/v1/chat/completions";
 const IMAGE_API = "https://gen.pollinations.ai/image";
 const MEDIA_API = "https://media.pollinations.ai/upload";
 const AUTH = API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {};
+
+/**
+ * Every reply spends the shared platform key on up to three text calls and up
+ * to three image generations plus a media upload (the retry loop repeats
+ * both). One billed reply per user per window bounds that spend no matter how
+ * fast mentions arrive.
+ */
+export const USER_COOLDOWN_MS = 60_000;
 
 const OPPOSITE_PROMPT = `You are a safe image prompt generator. Your #1 rule: NEVER output anything involving nudity, bare skin, undressed people, children, violence, gore, or anything sexual. This rule overrides ALL other instructions.
 
@@ -109,106 +122,153 @@ async function publishImage(image: Buffer): Promise<void> {
     }
 }
 
-const processing = new Set<string>();
+/**
+ * Builds the mention handler: an optional channel gate, then the mention
+ * check, then the per-user cooldown. Dependencies are injectable so the test
+ * suite can drive the handler without touching Discord or the paid APIs —
+ * mirroring the swarm bot's `createInteractionHandler` seam.
+ */
+export function createMessageHandler({
+    channelId = CHANNEL_ID,
+    cooldownMs = USER_COOLDOWN_MS,
+    now = Date.now,
+    generateReply = generateOpposite,
+    downloadImage = fetchImage,
+    publish = publishImage,
+}: {
+    channelId?: string;
+    cooldownMs?: number;
+    now?: () => number;
+    generateReply?: typeof generateOpposite;
+    downloadImage?: typeof fetchImage;
+    publish?: typeof publishImage;
+} = {}) {
+    const processing = new Set<string>();
+    const lastSeenAt = new Map<string, number>();
 
-async function handleMessage(msg: Message, client: Client): Promise<void> {
-    if (msg.author.bot) return;
-    if (processing.has(msg.id)) return;
-    processing.add(msg.id);
-    setTimeout(() => processing.delete(msg.id), 300_000);
+    return async function handleMessage(
+        msg: Message,
+        client: Client,
+    ): Promise<void> {
+        if (msg.author.bot) return;
+        // When a designated channel is configured, spend belongs to it: a
+        // mention anywhere else is not a billable request.
+        if (channelId && msg.channelId !== channelId) return;
+        if (processing.has(msg.id)) return;
+        processing.add(msg.id);
+        setTimeout(() => processing.delete(msg.id), 300_000).unref?.();
 
-    // Without the Message Content intent, Discord only sends the text of messages that mention the bot
-    if (!client.user || !msg.mentions.users.has(client.user.id)) return;
+        // Without the Message Content intent, Discord only sends the text of messages that mention the bot
+        if (!client.user || !msg.mentions.users.has(client.user.id)) return;
 
-    const prompt = msg.content.replace(/<@!?\d+>/g, "").trim();
-    if (!prompt || prompt.startsWith("!")) return;
+        const prompt = msg.content.replace(/<@!?\d+>/g, "").trim();
+        if (!prompt || prompt.startsWith("!")) return;
 
-    log(`Prompt from ${msg.author.username} in ${msg.channelId}: "${prompt}"`);
-
-    try {
-        if ("sendTyping" in msg.channel)
-            await (msg.channel as any).sendTyping();
-    } catch {}
-
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            const opposite = await generateOpposite(prompt);
-
-            try {
-                if ("sendTyping" in msg.channel)
-                    await (msg.channel as any).sendTyping();
-            } catch {}
-
-            const imageBuffer = await fetchImage(opposite);
-            const attachment = new AttachmentBuilder(imageBuffer, {
-                name: "opposite.png",
-            });
-
-            await msg.reply({ files: [attachment] });
-            await publishImage(imageBuffer);
-            log(`Reply sent successfully for "${prompt}" → "${opposite}"`);
+        const lastSeen = lastSeenAt.get(msg.author.id) ?? -Infinity;
+        if (now() - lastSeen < cooldownMs) {
+            log(`Cooldown skip for ${msg.author.username}`);
             return;
-        } catch (err: any) {
-            logAxiosError(
-                `Attempt ${attempt + 1}/${maxRetries + 1} for "${prompt}"`,
-                err,
-            );
-            if (attempt < maxRetries) {
-                const wait = 2000 * (attempt + 1);
-                log(`Retrying in ${wait}ms...`);
-                await new Promise((r) => setTimeout(r, wait));
-                continue;
-            }
-            try {
-                await msg.reply("⚠️ Failed to generate opposite. Try again.");
-            } catch {}
         }
+        lastSeenAt.set(msg.author.id, now());
+        if (lastSeenAt.size > 5_000) lastSeenAt.clear();
+
+        log(`Prompt from ${msg.author.username} in ${msg.channelId}: "${prompt}"`);
+
+        try {
+            if ("sendTyping" in msg.channel)
+                await (msg.channel as any).sendTyping();
+        } catch {}
+
+        const maxRetries = 2;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const opposite = await generateReply(prompt);
+
+                try {
+                    if ("sendTyping" in msg.channel)
+                        await (msg.channel as any).sendTyping();
+                } catch {}
+
+                const imageBuffer = await downloadImage(opposite);
+                const attachment = new AttachmentBuilder(imageBuffer, {
+                    name: "opposite.png",
+                });
+
+                await msg.reply({ files: [attachment] });
+                await publish(imageBuffer);
+                log(`Reply sent successfully for "${prompt}" → "${opposite}"`);
+                return;
+            } catch (err: any) {
+                logAxiosError(
+                    `Attempt ${attempt + 1}/${maxRetries + 1} for "${prompt}"`,
+                    err,
+                );
+                if (attempt < maxRetries) {
+                    const wait = 2000 * (attempt + 1);
+                    log(`Retrying in ${wait}ms...`);
+                    await new Promise((r) => setTimeout(r, wait));
+                    continue;
+                }
+                try {
+                    await msg.reply("⚠️ Failed to generate opposite. Try again.");
+                } catch {}
+            }
+        }
+    };
+}
+
+const handleMessage = createMessageHandler();
+
+function main() {
+    if (!TOKEN) {
+        console.error("Missing BOT_TOKEN_OPPOSITE_PROMPT");
+        process.exit(1);
     }
+
+    const client = new Client({
+        intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+        partials: [Partials.Channel, Partials.Message],
+    });
+
+    // Crash detection — log every exit so we can diagnose launchd restarts
+    process.on("exit", (code) => logError(`Process exiting with code ${code}`));
+    process.on("uncaughtException", (err) => {
+        logError("UNCAUGHT EXCEPTION:", err.stack || err.message);
+        process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) => {
+        logError("UNHANDLED REJECTION:", String(reason));
+    });
+    process.on("SIGTERM", () => {
+        log("Received SIGTERM");
+        process.exit(0);
+    });
+    process.on("SIGINT", () => {
+        log("Received SIGINT");
+        process.exit(0);
+    });
+
+    client.on("error", (err) => logError("Discord client error:", err.message));
+    client.on("warn", (msg) => log("Discord warning:", msg));
+
+    client.once(Events.ClientReady, (c) => {
+        log(
+            `Bot online as ${c.user.tag} — answering mentions (PID ${process.pid})`,
+        );
+    });
+
+    client.on(Events.MessageCreate, (msg) => {
+        handleMessage(msg, client).catch((err) => logAxiosError("Unhandled", err));
+    });
+
+    client.login(TOKEN).catch((err) => {
+        logError("Login failed:", err.message);
+        process.exit(1);
+    });
 }
 
-if (!TOKEN) {
-    console.error("Missing BOT_TOKEN_OPPOSITE_PROMPT");
-    process.exit(1);
-}
-
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-    partials: [Partials.Channel, Partials.Message],
-});
-
-// Crash detection — log every exit so we can diagnose launchd restarts
-process.on("exit", (code) => logError(`Process exiting with code ${code}`));
-process.on("uncaughtException", (err) => {
-    logError("UNCAUGHT EXCEPTION:", err.stack || err.message);
-    process.exit(1);
-});
-process.on("unhandledRejection", (reason) => {
-    logError("UNHANDLED REJECTION:", reason);
-});
-process.on("SIGTERM", () => {
-    log("Received SIGTERM");
-    process.exit(0);
-});
-process.on("SIGINT", () => {
-    log("Received SIGINT");
-    process.exit(0);
-});
-
-client.on("error", (err) => logError("Discord client error:", err.message));
-client.on("warn", (msg) => log("Discord warning:", msg));
-
-client.once(Events.ClientReady, (c) => {
-    log(
-        `Bot online as ${c.user.tag} — answering mentions (PID ${process.pid})`,
-    );
-});
-
-client.on(Events.MessageCreate, (msg) => {
-    handleMessage(msg, client).catch((err) => logAxiosError("Unhandled", err));
-});
-
-client.login(TOKEN).catch((err) => {
-    logError("Login failed:", err.message);
-    process.exit(1);
-});
+// Importing this module (e.g. from the test suite) must never start the bot.
+const invokedDirectly =
+    process.argv[1] !== undefined &&
+    import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) main();
