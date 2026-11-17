@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import multiprocessing
@@ -495,6 +496,54 @@ async def _try_jina(url: str, timeout: int) -> str | None:
     return text
 
 
+def blocked_destination_reason(url: str) -> str | None:
+    """Why `url` may not be fetched server-side, or None when it may.
+
+    The scraper runs inside the bot's container, next to its own APIs, the
+    webhook server and the Docker gateway, and on hosts with a cloud metadata
+    service. Model-supplied URLs are attacker-influenced (user requests and
+    instructions injected inside scraped pages or fetched files), so every
+    destination is checked before any client touches it: http(s) only, and no
+    loopback, private, link-local or otherwise non-public address. Mirrors the
+    platform guard in shared/user-media-url.ts (Cloudflare workers).
+    """
+    try:
+        parsed = parse_url(url)
+    except Exception:
+        return "Invalid URL format"
+    if parsed.scheme not in ("http", "https"):
+        return "URL must use http:// or https://"
+    # parse_url's netloc is the bare host (ada-url), so hostname is exactly
+    # the destination host without userinfo, port or brackets.
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return "URL must include a host"
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return f"Host '{host}' is not allowed"
+    # Cloud metadata services reachable by name rather than by address.
+    if host in ("metadata.google.internal", "metadata.goog"):
+        return f"Host '{host}' is not allowed"
+    try:
+        # ada-url normalizes WHATWG IPv4 forms (hex, octal, decimal) to
+        # dotted-decimal, so obfuscated loopback literals land here too.
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None  # public DNS name
+    if (
+        address.is_loopback
+        or address.is_private
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+        # CGNAT range (100.64.0.0/10) — shared address space, never a
+        # legitimate scrape destination (docker networks, internal meshes).
+        or address in ipaddress.ip_network("100.64.0.0/10")
+    ):
+        return f"Address '{host}' is not allowed"
+    return None
+
+
 async def scrape_url(
     url: str,
     extraction_strategy: str | None = None,
@@ -524,16 +573,9 @@ async def scrape_url(
     session_id: str | None = None,
     complexity: str | None = None,
 ) -> dict:
-    try:
-        parsed = parse_url(url)
-        if not parsed.scheme or not parsed.netloc:
-            return {
-                "success": False,
-                "url": url,
-                "error": "Invalid URL - must include http:// or https://",
-            }
-    except Exception:
-        return {"success": False, "url": url, "error": "Invalid URL format"}
+    reason = blocked_destination_reason(url)
+    if reason:
+        return {"success": False, "url": url, "error": reason}
 
     # ── Layer 0: x.com via fxtwitter ──────────────────────────────────────────
     # Ahead of the generic fetchers because they can only ever reach the login wall.
@@ -1146,6 +1188,10 @@ async def fetch_discord_attachment(
     instruction: str | None = None,
     complexity: str | None = None,
 ) -> dict:
+    reason = blocked_destination_reason(attachment_url)
+    if reason:
+        return {"success": False, "url": attachment_url, "error": reason}
+
     import aiohttp
 
     try:
