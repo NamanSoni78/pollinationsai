@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { calculateUsageBilling } from "@shared/registry/registry.ts";
 import { TEXT_SERVICES } from "@shared/registry/text.ts";
-import { openaiUsageToUsage } from "@shared/registry/usage-headers.ts";
+import { openaiUsageToUsage, responsesUsageToUsage } from "@shared/registry/usage-headers.ts";
 import { CreateChatCompletionRequestSchema } from "@shared/schemas/openai.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withModelFallback } from "../../src/fallback.ts";
@@ -360,6 +360,73 @@ describe("generateTextPortkey", () => {
         });
         expect(billing.cost.totalCost).toBeCloseTo(0.001754, 12);
         expect(billing.price.totalPrice).toBe(0.0013155);
+    });
+
+    it("bills image input tokens on the GPT-6 Astra lineage at the input-text rate", () => {
+        // Azure Responses usage: total = input + output, so the image detail
+        // tokens are inclusive and carved out of promptTextTokens (the same
+        // convention as the observed Grok usage above).
+        const usage = responsesUsageToUsage({
+            input_tokens: 1000,
+            output_tokens: 100,
+            total_tokens: 1100,
+            input_tokens_details: { image_tokens: 400 },
+        });
+        expect(usage).toMatchObject({
+            promptTextTokens: 600,
+            promptImageTokens: 400,
+            completionTextTokens: 100,
+        });
+        for (const model of [
+            "openai/gpt-6.2-astra",
+            "openai/gpt-6-astra",
+        ] as const) {
+            const definition = TEXT_SERVICES[model];
+            expect(definition.inputModalities).toContain("image");
+            const billing = calculateUsageBilling({
+                model,
+                usage,
+                servedBy: definition,
+                quotedBy: definition,
+            });
+            // Without promptImageTokens in the cost sheet the registry bills
+            // this line at 0 (convertUsage zero-fills missing rates), so the
+            // image half of every vision request on these models was free.
+            expect(billing.cost.promptImageTokens ?? 0).toBeGreaterThan(0);
+            expect(billing.price.promptImageTokens ?? 0).toBeGreaterThan(0);
+            expect(billing.cost.totalCost).toBeCloseTo(
+                billing.cost.promptTextTokens! +
+                    billing.cost.promptImageTokens! +
+                    billing.cost.completionTextTokens!,
+                12,
+            );
+        }
+    });
+
+    it("bills long-context GPT-6.2 Astra image tokens at the long-context rate", () => {
+        const usage = responsesUsageToUsage({
+            input_tokens: 300_000,
+            output_tokens: 100,
+            total_tokens: 300_100,
+            input_tokens_details: { image_tokens: 20_000 },
+        });
+        const definition = TEXT_SERVICES["openai/gpt-6.2-astra"];
+        const billing = calculateUsageBilling({
+            model: "openai/gpt-6.2-astra",
+            usage,
+            servedBy: definition,
+            quotedBy: definition,
+        });
+        expect(billing.costVariant).toBe("long_context");
+        expect(billing.cost.promptImageTokens).toBeCloseTo(
+            (20_000 * 16) / 1_000_000,
+            12,
+        );
+        // Customer charges apply the 0.75 Azure multiplier.
+        expect(billing.price.promptImageTokens).toBeCloseTo(
+            (20_000 * 16 * 0.75) / 1_000_000,
+            12,
+        );
     });
 
     it("falls back from Azure Grok to signed global AWS Chat at the primary price", async () => {
