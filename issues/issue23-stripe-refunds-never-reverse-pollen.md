@@ -1,7 +1,7 @@
 # Issue: Stripe refunds and lost chargebacks never reverse credited Pollen
 
 **Severity:** High (monetary integrity)
-**Status:** Confirmed by code-path tracing at upstream `549feee` and pinned by integration tests (2026-11-18). Deferred triage candidate #72 from round 1, now verified at HEAD.
+**Status:** Confirmed by code-path tracing at upstream `549feee` and pinned by integration tests (2026-11-18). Deferred triage candidate #72 from round 1 / FINDINGS registry entry R3-D1 from round 7 session 3 — both recorded, never filed or fixed; now verified at HEAD and resolved by this issue.
 **Fix:** PR https://github.com/NamanSoni78/pollinationsai/pull/27 (branch `solution17-stripe-refund-pollen-reversal`)
 
 ## Summary

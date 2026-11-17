@@ -10,6 +10,8 @@
 | R3-014 | User-media redirect hops skip the URL policy (SSRF) | High | Fixed — fork PR #17 | issue14 (live control + unit tests) |
 | R3-015 | EXIF UserComment public content channel + input URL disclosure | High | Fixed — fork PR #18 | issue15 (live PoC, own key) |
 | R3-016 | /3d/ unvalidated URL forwarding to providers (SSRF by proxy) | Medium | Fixed — fork PR #19 | issue16 (schema-level tests) |
+| R3-022 | Community text-proxy unbounded response buffering (isolate OOM) | High | Fixed — fork PR #26 | issue22 (code-path trace + 6 isolated unit tests) |
+| R3-023 | Stripe refunds/lost chargebacks never reverse credited Pollen | High | Fixed — fork PR #27 | issue23 (4 integration tests; resolves R3-D1 below) |
 
 ## Verified design-gap findings (no code PR — policy decision required)
 
@@ -23,7 +25,10 @@ Partially mitigated by: (a) the hourly fraud ban (`utils/stripe-fraud-score.ts`)
 
 Why no PR: a correct clawback needs product decisions this audit can't make unilaterally — deduct unspent balance only, or carry into debt (the deduction ladder's documented design)? reverse the quest rewards keyed to the purchase (`account-setup.ts:116-135` top-up tiers)? what about ops-initiated reversals already applied manually? Recommend the maintainers decide the policy; the evidence above is complete for that discussion. Verification method if patched: simulate `refund.created` against a test D1 and assert balance/credit-row changes.
 
+**Update (2026-11-18, round 9 — session 5):** implemented and test-pinned as **issue 23 / fork PR #27**. The policy decision is made there: debit into negative balance (the platform's documented generation-overdraft semantics), quest rewards deliberately untouched, manual/ops reversals unaffected. The verification prescribed above — simulate refund events against a test D1 and assert balance changes — is exactly the integration suite on the branch. R3-D1 can be considered closed pending review of PR #27.
+
 ## Dedup registry (known root causes, do NOT resubmit)
 
 - issues 1–8 from rounds 1–2 (see SECURITY_AUDIT.md)
 - issues 9–16 above (rounds 3–5, both sessions)
+- issues 17–21 (rounds 7–8, sessions 3–4) and issues 22–23 (round 9, session 5)
