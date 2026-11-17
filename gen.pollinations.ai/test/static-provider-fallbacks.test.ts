@@ -699,6 +699,43 @@ describe("static provider fallbacks", () => {
     );
 
     it.each([
+        ["openai/gpt-6.2-astra", 8, 40],
+        ["openai/gpt-6.2-sol", 2, 10],
+    ] as const)(
+        "bills the %s AWS fallback route at the AWS list sheet, not the Azure discount",
+        (model, inputRate, outputRate) => {
+            const primary = TEXT_SERVICES[model];
+            const fallback = TEXT_SERVICES[`${model}:aws`];
+            expect(primary.provider).toBe("azure");
+            expect(primary.priceMultiplier).toBe(0.75);
+            expect(primary.paidOnly).toBe(true);
+            expect(primary.fallbacks).toEqual([`${model}:aws`]);
+            expect(fallback.provider).toBe("aws");
+            expect(fallback.paidOnly).toBe(true);
+            expect(fallback.cost).toEqual(primary.cost);
+            expect(fallback.costVariants).toEqual(primary.costVariants);
+            // The AWS route's own price sheet is the AWS list rates; without
+            // the override it inherited the primary's 0.75 Azure multiplier
+            // and under-recorded every Bedrock-rescued request by 25%.
+            expect(fallback.priceMultiplier).toBe(1);
+            const usage = { promptTextTokens: 11, completionTextTokens: 5 };
+            const billing = calculateUsageBilling({
+                model,
+                usage,
+                servedBy: fallback,
+                quotedBy: primary,
+            });
+            // The caller keeps the Azure quote: list cost times 0.75.
+            const listCost =
+                (11 * inputRate) / 1e6 + (5 * outputRate) / 1e6;
+            expect(billing.price.totalPrice).toBeCloseTo(listCost * 0.75, 12);
+            // The serving route records its full AWS list cost as
+            // servedPrice, never 25% below it.
+            expect(billing.servedPrice).toBeCloseTo(listCost, 12);
+        },
+    );
+
+    it.each([
         ["openai/gpt-audio-mini", 0.00584],
         ["openai/gpt-audio-1.5", 0.0195],
     ] as const)(
