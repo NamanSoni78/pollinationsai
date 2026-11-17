@@ -32,6 +32,17 @@ export class UserImageError extends UpstreamError {
 /** Max bytes we will read for a single user-supplied image: 20MB. */
 export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
 
+/**
+ * Max time to wait on a user-supplied image host: 30 seconds. Size is capped
+ * by `readResponseBytes`, but nothing bounded time — a slow-loris image host
+ * could pin a generation slot (including a detached coordinator alarm) until
+ * the platform's own proxy timeout. Every sibling user-media fetch already
+ * carries a deadline: `REFERENCE_AUDIO_FETCH_TIMEOUT_MS` (30 s) for audio,
+ * `EDIT_IMAGE_PROBE_TIMEOUT_MS` (10 s) for the edit-dimension probe, and
+ * `COMMUNITY_ENDPOINT_TIMEOUT_MS` for community endpoints.
+ */
+export const USER_IMAGE_FETCH_TIMEOUT_MS = 30_000;
+
 /** Maps the shared user-media URL policy to the image API's error contract. */
 function assertAllowedImageUrl(value: string): URL {
     const validation = validateUserMediaUrl(value);
@@ -96,6 +107,8 @@ export type FetchUserImageOptions = {
      */
     redirect?: RequestRedirect;
     signal?: AbortSignal;
+    /** Overrides the fetch deadline. Tests use short deadlines. */
+    timeoutMs?: number;
 };
 
 /**
@@ -170,7 +183,12 @@ export async function fetchUserImage(
     imageUrl: string,
     options: FetchUserImageOptions = {},
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
-    const { maxBytes = MAX_IMAGE_SIZE, redirect, signal } = options;
+    const {
+        maxBytes = MAX_IMAGE_SIZE,
+        redirect,
+        signal,
+        timeoutMs = USER_IMAGE_FETCH_TIMEOUT_MS,
+    } = options;
 
     if (imageUrl.startsWith("data:")) {
         const bytes = decodeDataUri(
@@ -192,16 +210,28 @@ export async function fetchUserImage(
 
     const url = assertAllowedImageUrl(imageUrl);
 
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const fetchSignal = signal
+        ? AbortSignal.any([signal, deadline])
+        : deadline;
+
     let response: Response;
     try {
         response = await fetch(url, {
             ...(redirect && { redirect }),
             headers: { "User-Agent": "Pollinations/1.0" },
-            ...(signal && { signal }),
+            signal: fetchSignal,
         });
     } catch (thrown) {
         const error =
             thrown instanceof Error ? thrown : new Error(String(thrown));
+        if (deadline.aborted && !signal?.aborted) {
+            throw new UserImageError(
+                `Timed out downloading media from ${imageUrl}: no response within ${timeoutMs} ms. Please use a faster host.`,
+                "failed_to_download_image",
+                url,
+            );
+        }
         throw new UserImageError(
             transportMessage(imageUrl, error),
             "failed_to_download_image",
@@ -252,6 +282,13 @@ export async function fetchUserImage(
         );
     } catch (thrown) {
         if (thrown instanceof UserImageError) throw thrown;
+        if (deadline.aborted && !signal?.aborted) {
+            throw new UserImageError(
+                `Timed out downloading media from ${imageUrl}: the host did not finish within ${timeoutMs} ms. Please use a faster host.`,
+                "failed_to_download_image",
+                url,
+            );
+        }
         const error =
             thrown instanceof Error ? thrown : new Error(String(thrown));
         // The body never arrived. The media type is still unknown at this
