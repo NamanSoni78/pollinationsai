@@ -69,9 +69,13 @@ export async function generateSoniloSfx(opts: {
     const units = falBillableUnits(response);
     const data = (await response.json()) as { audio?: { url?: string } };
     if (!data.audio?.url) {
-        throw new UpstreamError(502, {
-            message: "Sonilo returned no audio output",
-        });
+        // fal completed and billed this job; charge the reported units.
+        throw Object.assign(
+            new UpstreamError(502, {
+                message: "Sonilo returned no audio output",
+            }),
+            { billedUsage: createCompletionAudioSecondsUsage(units) },
+        );
     }
     const audio = await fetchUpstream(data.audio.url, {
         errorLabel: `Failed to download ${SONILO_MODEL} output`,

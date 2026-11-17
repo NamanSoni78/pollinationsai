@@ -318,10 +318,15 @@ export async function callFalFallbackVideo(
                 !Number.isFinite(seconds) ||
                 seconds <= 0
             ) {
-                throw UpstreamError.fromProvider(502, {
-                    message:
-                        "Fal Grok response is missing output video duration",
-                });
+                // fal completed and billed this job; the caller is charged the
+                // requested duration, mirroring the moderation-rejection path.
+                throw Object.assign(
+                    UpstreamError.fromProvider(502, {
+                        message:
+                            "Fal Grok response is missing output video duration",
+                    }),
+                    { billedUsage: usage },
+                );
             }
             // Weighted fal billing units are not video seconds.
             usage.completionVideoSeconds = seconds;
