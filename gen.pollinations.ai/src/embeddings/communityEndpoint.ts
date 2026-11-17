@@ -41,7 +41,9 @@ export async function generateCommunityEmbeddings(
         throw new UpstreamError(502, {
             message: `Community embedding endpoint '${endpoint.modelId}' is a managed agent`,
             requestUrl: new URL(upstreamUrl),
-        });
+        
+     redactUpstream: true,
+ });
     }
 
     const bearerToken = await decryptSecret(
@@ -75,10 +77,14 @@ export async function generateCommunityEmbeddings(
                 "Community embedding endpoint timed out or could not connect",
             requestUrl: new URL(upstreamUrl),
             cause: error,
-        });
+        
+     redactUpstream: true,
+ });
     }
 
-    await ensureUpstreamOk(response, upstreamUrl);
+    await ensureUpstreamOk(response, upstreamUrl, {
+        redactUpstream: true,
+    });
     const body = await response.json().catch(() => null);
     const usage = getOpenAIEmbeddingUsage(body);
 
@@ -184,5 +190,7 @@ function invalidResponse(url: string, message: string): UpstreamError {
     return new UpstreamError(502, {
         message,
         requestUrl: new URL(url),
-    });
+    
+     redactUpstream: true,
+ });
 }

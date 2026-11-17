@@ -248,7 +248,9 @@ async function fetchCommunityMediaJson(
             message: endpointErrorMessage(modality, response.status, parsed),
             responseBody: text,
             requestUrl: new URL(url),
-        });
+        
+     redactUpstream: true,
+ });
     }
     return parsed;
 }
@@ -271,7 +273,9 @@ async function fetchWithTimeout(
                 error: error instanceof Error ? error.message : String(error),
             }),
             requestUrl: new URL(input),
-        });
+        
+     redactUpstream: true,
+ });
     }
 }
 
