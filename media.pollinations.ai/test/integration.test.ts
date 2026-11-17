@@ -1080,6 +1080,17 @@ describe("media.pollinations.ai", () => {
         });
     });
 
+    // Agent run tokens (ag_) report their parent key's "secret" type but are
+    // handed to generated code, so uploads must refuse them exactly like
+    // DELETE already does.
+    it("refuses uploads with agent run tokens", async () => {
+        const { status, body } = await uploadViaForm("ag_alice");
+        expect(status).toBe(403);
+        expect(body).toMatchObject({
+            error: "Uploading media requires a secret (sk_) API key",
+        });
+    });
+
     it("requires account identity for custom IDs", async () => {
         for (const key of ["sk_nouser", "sk_legacy"]) {
             expect(
