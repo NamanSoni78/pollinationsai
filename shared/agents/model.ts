@@ -26,6 +26,13 @@ export function createAgentModelProvider({
         fetch: fetcher,
         metadataExtractor: {
             async extractMetadata({ parsedBody }) {
+                // A completion that finished with finish_reason=error is a
+                // failed generation. Reject the step here — the raw provider
+                // marker is dropped by the AI SDK's finish-reason mapping
+                // (unknown -> "other"), so without this gate the run resolves
+                // with its partial output as a successful, billed step.
+                const finishError = finishErrorMessage(parsedBody);
+                if (finishError) throw new Error(finishError);
                 return {
                     pollinations: {
                         completionUsage: completionUsageFromBody(parsedBody),
@@ -34,6 +41,7 @@ export function createAgentModelProvider({
             },
             createStreamExtractor() {
                 let usage: unknown;
+                let finishError: string | undefined;
                 return {
                     processChunk(chunk) {
                         if (
@@ -45,8 +53,10 @@ export function createAgentModelProvider({
                             // Providers may send provisional counts before final usage.
                             usage = chunk.usage;
                         }
+                        finishError ??= finishErrorMessage(chunk);
                     },
                     buildMetadata() {
+                        if (finishError) throw new Error(finishError);
                         return {
                             pollinations: {
                                 completionUsage:
@@ -60,6 +70,33 @@ export function createAgentModelProvider({
             },
         },
     });
+}
+
+/**
+ * The provider's terminal failure marker for a chat completion: any choice
+ * finishing with finish_reason=error. Returns the message to fail the step
+ * with, or undefined when the completion finished normally.
+ */
+function finishErrorMessage(body: unknown): string | undefined {
+    if (!body || typeof body !== "object") return undefined;
+    const choices = (body as { choices?: unknown }).choices;
+    if (!Array.isArray(choices)) return undefined;
+    for (const choice of choices) {
+        if (
+            !choice ||
+            typeof choice !== "object" ||
+            (choice as { finish_reason?: unknown }).finish_reason !== "error"
+        ) {
+            continue;
+        }
+        const message = (
+            choice as { error?: { message?: unknown } }
+        ).error?.message;
+        return typeof message === "string" && message
+            ? message
+            : "Upstream ended generation with finish_reason=error";
+    }
+    return undefined;
 }
 
 /** Whether the run stopped on calls only the caller can answer (no execute). */
