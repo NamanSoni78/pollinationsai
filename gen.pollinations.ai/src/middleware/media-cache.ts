@@ -1,6 +1,7 @@
 /** Generation request identity and cache policy; Media owns file storage. */
 
 import { IMMUTABLE_CACHE_CONTROL } from "@shared/http/cache-control.ts";
+import { authenticateApiKeyRequest } from "@shared/auth/api-key.ts";
 import { SAFETY_HEADER_NAME } from "@shared/schemas/safety.ts";
 import { IMAGE_DIMENSIONS_HEADER } from "@/schemas/image.ts";
 import { generateCacheKey } from "@/utils/media-cache.ts";
@@ -38,6 +39,29 @@ const CACHED_HEADERS = new Set([
     "x-voice-changer-voice",
 ]);
 
+/**
+ * Resolve a caller identity for media cache partitioning. The lookup runs
+ * before the route's auth middleware, so the shared helper does the read-only
+ * key lookup here. Returns undefined for anonymous callers and on lookup
+ * failures (the auth middleware rejects bad keys later on a MISS).
+ */
+async function resolveMediaCacheAuth(
+    c: Parameters<GenerationCacheAdapter["getKey"]>[0],
+): Promise<string | undefined> {
+    try {
+        const authResult = await authenticateApiKeyRequest({
+            request: c.req.raw,
+            env: c.env,
+            ctx: c.executionCtx,
+        });
+        if (authResult?.apiKey?.id) return `key:${authResult.apiKey.id}`;
+        if (authResult?.user?.id) return `user:${authResult.user.id}`;
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 function mediaCacheAdapter(config: MediaCacheConfig): GenerationCacheAdapter {
     return {
         storage: "media",
@@ -52,6 +76,16 @@ function mediaCacheAdapter(config: MediaCacheConfig): GenerationCacheAdapter {
                     "__caller_list_key",
                     callerCacheScope(variables.auth),
                 );
+            }
+            // The cache lookup runs before the route's auth middleware, so
+            // resolve the caller here (same read-only helper auth uses) and
+            // partition media files the same way the text cache does: a paid
+            // generation is replayed only to the key that paid for it, while
+            // anonymous traffic keeps the shared public cache.
+            const mediaCacheAuth = await resolveMediaCacheAuth(c);
+            if (mediaCacheAuth) {
+                c.set("generationCachePrivate", true);
+                cacheUrl.searchParams.set("__caller_key", mediaCacheAuth);
             }
             if (c.var.generationCacheBody) {
                 cacheUrl.searchParams.set(

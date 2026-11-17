@@ -1,10 +1,12 @@
 /**
  * Text cache middleware for gen.pollinations.ai
- * Implements cache lookup before access checks.
+ * Caches by caller identity: a keyed generation is replayed only to the key
+ * that paid for it, while keyless (anonymous) traffic keeps sharing entries.
  * Adapted from gen.pollinations.ai/cloudflare-cache
  */
 
 import { IMMUTABLE_CACHE_CONTROL } from "@shared/http/cache-control.ts";
+import { authenticateApiKeyRequest } from "@shared/auth/api-key.ts";
 import {
     createCaptureStream,
     generateCacheKey,
@@ -21,7 +23,7 @@ import { getRequiredSafetyFeatures, type ModelVariables } from "./model.ts";
 
 /**
  * Text cache middleware
- * - Checks cache before auth/balance checks so cache hits can remain public
+ * - Partitions the cache by caller identity (see resolveCacheAuth below)
  * - Returns immediately on cache HIT
  * - On MISS: continues to auth/rate limiting/origin
  * - After origin response: caches it (handles both streaming and non-streaming)
@@ -29,6 +31,30 @@ import { getRequiredSafetyFeatures, type ModelVariables } from "./model.ts";
  * Note: Only apply this middleware to cacheable routes (e.g., /v1/chat/completions, /text/:prompt)
  * Non-cacheable routes like /v1/models should NOT use this middleware
  */
+
+/**
+ * Resolve a caller identity for cache partitioning. The cache lookup runs
+ * before the route's auth middleware, so the shared helper does the same
+ * read-only key lookup here. Returns undefined for anonymous callers and on
+ * lookup failures (the auth middleware rejects bad keys later on a MISS).
+ */
+async function resolveCacheAuth(
+    c: Parameters<GenerationCacheAdapter["getKey"]>[0],
+): Promise<string | undefined> {
+    try {
+        const authResult = await authenticateApiKeyRequest({
+            request: c.req.raw,
+            env: c.env,
+            ctx: c.executionCtx,
+        });
+        if (authResult?.apiKey?.id) return `key:${authResult.apiKey.id}`;
+        if (authResult?.user?.id) return `user:${authResult.user.id}`;
+        return undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 const textCacheAdapter: GenerationCacheAdapter = {
     storage: "text",
     label: "text-cache",
@@ -54,6 +80,15 @@ const textCacheAdapter: GenerationCacheAdapter = {
         if (variables.model?.requested?.includes(",") || seed === -1) {
             c.set("generationCachePrivate", true);
         }
+        // The cache lookup runs before the auth middleware, so the identity
+        // variables are not populated yet: authenticate here (the same
+        // read-only helper the auth middleware uses) to partition the key. A
+        // failed lookup must not break caching, so it falls back to the
+        // anonymous scope and auth rejects the request later on a MISS.
+        const cacheAuth = await resolveCacheAuth(c);
+        // A keyed generation belongs to the key that paid for it: replay it
+        // only to that caller, mirroring the agent-run partition below.
+        if (cacheAuth) c.set("generationCachePrivate", true);
         // Agent runs are unique; caller lists are stable per key because their
         // choices depend on that key's permissions and available budget.
         const cacheScope = variables.model?.cacheScope;
@@ -63,7 +98,9 @@ const textCacheAdapter: GenerationCacheAdapter = {
               ? `random-seed:${crypto.randomUUID()}`
               : variables.model?.requested?.includes(",")
                 ? `caller-list:${callerCacheScope(variables.auth)}`
-                : undefined;
+                : cacheAuth
+                  ? `caller:${cacheAuth}`
+                  : undefined;
         const cacheVersions = [
             variables.model?.definition.cacheVersion,
             ...(variables.model?.fallbackEntries?.map(
