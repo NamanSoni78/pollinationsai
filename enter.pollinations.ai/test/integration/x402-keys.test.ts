@@ -656,4 +656,72 @@ describe("x402 prepaid API keys", () => {
             }
         });
     });
+
+    describe("revocation", () => {
+        // Prepaid keys are payment credentials: revoking one through the
+        // dashboard's Revoke button must not depend on purchase bookkeeping.
+        // Before migration 0083 the x402_key_purchase.key_id foreign key had
+        // no ON DELETE action, so DELETE /api/account/keys/:id failed with 500
+        // and no prepaid key could ever be revoked.
+        test("revokes a credited prepaid key and keeps the purchase audit row", async ({
+            accountToken,
+        }) => {
+            const ownerKey = await createApiKeyViaApi(accountToken, {
+                name: "x402-revoke-owner",
+            });
+            const owner = (
+                await env.DB.prepare("SELECT user_id FROM apikey WHERE id = ?")
+                    .bind(ownerKey.id)
+                    .first<{ user_id: string }>()
+            )?.user_id;
+            if (!owner) throw new Error("Test account is missing");
+
+            const id = `revoke-${crypto.randomUUID()}`;
+            const issued = await preparePurchase(
+                env,
+                undefined,
+                id,
+                owner,
+                "0.50",
+            );
+            await creditPurchase(env.DB, id, owner, issued.id);
+            expect((await getPurchase(env.DB, id))?.credited_at).not.toBeNull();
+
+            const response = await SELF.fetch(
+                `http://localhost:3000/api/account/keys/${issued.id}`,
+                {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${accountToken}` },
+                },
+            );
+            expect(response.status).toBe(200);
+            expect(await response.json()).toMatchObject({ success: true });
+
+            // The revoked key can no longer authenticate.
+            const verify = await SELF.fetch(
+                "http://localhost:3000/api/account/key",
+                { headers: { Authorization: `Bearer ${issued.key}` } },
+            );
+            expect(verify.status).toBe(401);
+
+            // The purchase audit row survives with its encrypted key for
+            // support recovery (PAYMENT_USED), with the apikey link cleared.
+            const purchase = await getPurchase(env.DB, id);
+            expect(purchase).toMatchObject({ payment_id: id, user_id: owner });
+            expect(purchase?.key_id).toBeNull();
+            expect(purchase?.encrypted_key).toBeTruthy();
+            expect(purchase?.credited_at).not.toBeNull();
+
+            // Revocation is repeatable bookkeeping, not a one-shot escape:
+            // deleting the same key again stays a clean 404.
+            const again = await SELF.fetch(
+                `http://localhost:3000/api/account/keys/${issued.id}`,
+                {
+                    method: "DELETE",
+                    headers: { Authorization: `Bearer ${accountToken}` },
+                },
+            );
+            expect(again.status).toBe(404);
+        });
+    });
 });
