@@ -165,7 +165,9 @@ async function fetchCommunityImageBytes(
                 error: error instanceof Error ? error.message : String(error),
             }),
             requestUrl: new URL(url),
-        });
+        
+     redactUpstream: true,
+ });
     }
     if (!response.ok) {
         throw new UpstreamError(502, {
@@ -173,7 +175,9 @@ async function fetchCommunityImageBytes(
             upstreamStatus: response.status,
             responseBody: await response.text().catch(() => undefined),
             requestUrl: new URL(url),
-        });
+        
+     redactUpstream: true,
+ });
     }
     return readResponseBytes(response, MAX_COMMUNITY_IMAGE_BYTES, () =>
         UpstreamError.fromProvider(502, {
@@ -200,7 +204,9 @@ async function fetchCommunityVideoBytes(
                 error: error instanceof Error ? error.message : String(error),
             }),
             requestUrl: new URL(url),
-        });
+        
+     redactUpstream: true,
+ });
     }
     if (!response.ok) {
         throw new UpstreamError(502, {
@@ -208,7 +214,9 @@ async function fetchCommunityVideoBytes(
             upstreamStatus: response.status,
             responseBody: await response.text().catch(() => undefined),
             requestUrl: new URL(url),
-        });
+        
+     redactUpstream: true,
+ });
     }
     try {
         return await readResponseBytes(

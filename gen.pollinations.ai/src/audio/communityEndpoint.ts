@@ -77,9 +77,13 @@ export async function callCommunitySpeechEndpoint(
             message: "Community speech endpoint timed out or could not connect",
             cause: error,
             requestUrl: new URL(upstreamUrl),
-        });
+        
+     redactUpstream: true,
+ });
     }
-    response = await ensureUpstreamOk(response, upstreamUrl);
+    response = await ensureUpstreamOk(response, upstreamUrl, {
+            redactUpstream: true,
+        });
 
     const contentType =
         response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
@@ -87,7 +91,9 @@ export async function callCommunitySpeechEndpoint(
         throw new UpstreamError(502 as ContentfulStatusCode, {
             message: `Community speech endpoint '${endpoint.modelId}' did not return binary audio (expected audio/*, got ${contentType || "no content type"})`,
             requestUrl: new URL(upstreamUrl),
-        });
+        
+     redactUpstream: true,
+ });
     }
 
     return new Response(response.body, {
@@ -176,7 +182,9 @@ export async function callCommunityTranscriptionEndpoint(
                 "Community transcription endpoint timed out or could not connect",
             cause: error,
             requestUrl: new URL(upstreamUrl),
-        });
+        
+     redactUpstream: true,
+ });
     }
     // Endpoints that only speak plain json (gpt-4o-transcribe and friends)
     // reject verbose_json outright. Say so instead of surfacing a bare
@@ -185,9 +193,13 @@ export async function callCommunityTranscriptionEndpoint(
         throw new UpstreamError(502 as ContentfulStatusCode, {
             message: `Community transcription endpoint '${endpoint.modelId}' rejected response_format=verbose_json. Pollinations requests verbose_json because it reports the audio duration that transcription is billed on; models that only support plain json cannot be used yet.`,
             requestUrl: new URL(upstreamUrl),
-        });
+        
+     redactUpstream: true,
+ });
     }
-    response = await ensureUpstreamOk(response, upstreamUrl);
+    response = await ensureUpstreamOk(response, upstreamUrl, {
+            redactUpstream: true,
+        });
 
     const transcript = parseCommunityTranscription(await response.text());
     return buildTranscriptionResponse({
