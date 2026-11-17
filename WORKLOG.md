@@ -158,3 +158,41 @@ Baseline: upstream `549feee`; `fork/main` identical; all prior issues (1–20) a
 |---|---|---|---|---|---|
 | 21 | `pollinations-mcp` (`packages/mcp/src/services/audioService.js`) buffers uncapped remote audio via `await response.blob()` (128 MiB Worker OOM via `transcribe_audio`/`isolate_speech`/`change_voice`), omits a fetch timeout, and allows trailing-dot `localhost.` / `.local` / `.internal` / single-label intranet hostnames in `publicAudioUrl` | High | 4 new unit tests in `packages/mcp/test/audioService.test.js` (trailing-dot & internal host rejection, `AbortSignal` deadline + `Content-Length` pre-check at 25 MiB / 50 MiB, streaming reader cancellation on oversized chunked stream) — full MCP suite 46/46 passing | `solution21-mcp-audio-fetch-caps` | fork [#25](https://github.com/NamanSoni78/pollinationsai/pull/25) |
 
+
+## Round 9 — session 5: Wave-2 sweep — operations/CI, packages/frontend, residual gen/apps/media (2026-11-18)
+
+Baseline: upstream `549feee` at audit time; `fork/main` kept identical and fast-forwarded to `30ae4da` mid-session (the three new commits touch GPU image validation, polli-cli and MCP completions — none overlap this round's fixes, so no rebase was needed). Issues 1–21 and fork PRs #1–#25 untouched.
+
+Method: five parallel read-only subagents over the never-audited Wave-2 surfaces from SECURITY_AUDIT.md — operations/ + repo CI, packages/ + the pollinations.ai frontend (including the two newest "play" commits end-to-end), gen residual/billing, apps/ residual (~60 apps, only four ever audited), media + shared residual. Strict gate as before: only high-impact findings verifiable via isolated unit tests or non-destructive probes.
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 22 | Community text-proxy responses relayed and buffered with no byte cap (media legs capped at ~28 MB, text legs uncapped and deadline-less) → publisher-triggerable isolate OOM; owner calls to their own model are free and unbilled | High (availability) | Code-path traced at `549feee` (`genericOpenAIClient.ts:595`, `responses/client.ts:161,249`, `chatClient.ts:66`, `track.ts:1570,1644-1657`, `validatedSSEStream.ts:29`); 6 isolated unit tests pin the cap incl. upstream-cancel on violation; regression `community-endpoints` 170/170 (managed-agent billing suites incl.), `generateTextPortkey`+`genericOpenAIClient` 107/107, `byop-markup`/`text-cache`/`generation-vcr` 162/162; `tsc` clean | `solution16-community-text-response-cap` | fork [#26](https://github.com/NamanSoni78/pollinationsai/pull/26) |
+| 23 | Stripe refunds and lost chargebacks never reverse credited Pollen (FINDINGS R3-D1 / deferred round-1 candidate #72, now verified) | High (monetary) | Code-path traced at `549feee`; 4 integration tests over the signed webhook route (mocked Stripe API + real D1) pin exact-once reversal incl. replay, partial-refund scaling + cumulative clamp, pending/non-checkout no-ops, lost-vs-won disputes; regression `integration/stripe` 105/105, `fraud-ban`, `quests` 58/58; `tsc` no new errors | `solution17-stripe-refund-pollen-reversal` | fork [#27](https://github.com/NamanSoni78/pollinationsai/pull/27) |
+
+> Renumber note (2026-11-18): this session first wrote its reports as `issue16`/`issue17` in parallel with sessions 3–4 registering issues 16–21; renumbered to **issue22/issue23**. The fix branches keep their `solution16-community-text-response-cap` / `solution17-stripe-refund-pollen-reversal` names and fork PRs #26/#27 are unchanged. FINDINGS **R3-D1** (refund-clawback design gap) is resolved by issue 23: the product decision it requested is implemented as debit-into-negative (the platform's documented generation-overdraft semantics), quest rewards are deliberately not reversed, and the verification it prescribed — simulate `refund.created` against a test D1 and assert balance/credit changes — is exactly the test suite shipped on the branch.
+
+Both upstream PR creations were attempted and rejected with `403 Resource not accessible by personal access token` (same as rounds 5–8); fork PRs remain the live review surface until an upstream-scoped token is supplied.
+
+### Surfaces reviewed this round — controls held (condensed from the five subagent reports)
+
+| Surface | Evidence |
+|---|---|
+| operations/ secrets | every secret store is SOPS/age-encrypted (`ENC[AES256_GCM,…]` — economics/ingest/kpi/observability/infra-watch/model-evals/cpu); repo-wide token-pattern sweep clean; community-monitor tokens live only in the uncommitted `.env` |
+| repo CI/workflows | auto-fix/askpolli maintain immutable numeric-id maintainer gates (`polli-authorization.mjs` + job `if:`); `pull_request_target` usage safe (base checkout, JSON via env, no shell interpolation of untrusted fields — `apps-publish-submissions.yml` interpolates env-var references only); PR-facing jobs hold no `secrets.*`; app review bot containerized behind iptables egress deny with model-proxy key cap |
+| dashboards/monitoring | economics + KPI workers session-gated, tokens in headers not URLs; observability strips browser auth headers; infra-watch public surface is read-only `/health`, Discord delivery allowlist-mentions + digit-validated ids; investigator tools field-allowlisted, official-models-only, budget-capped |
+| packages/ + frontend | zero XSS sinks (no dangerouslySetInnerHTML/innerHTML/srcdoc/postMessage anywhere; only HTML sink is static ROUTE_META through HTMLRewriter); OAuth: PKCE S256 + single-use code + origin-checked `safeReturnTo` + HMAC session with constant-time verify; API keys only in Authorization headers, credential files 0600, no plaintext key constants; react-markdown without rehype-raw; new play feature (Sonilo video SDK + prompt persistence commits) reviewed end-to-end, no sinks |
+| apps/ residual MCP+agents | computer-mcp per-user Durable Object workspaces, scoped git credentials never entering the shell, output caps/timeouts/`/tmp` wipe; machines/network/research/news/packages/calculators/composio/ask-jev/apps MCP servers enforce URL policies + per-hop redirect revalidation + size caps + binding-only ingress; pr-review-fixer accepts only fine-grained PATs and pushes to caller forks; pi-workbench PKCE + path-traversal guard; no plaintext secrets repo-wide; #122 (`agents:false`) re-verified as belt-and-suspenders, not a bug |
+| media + shared residual | media ids unguessable/owner-namespaced, no traversal (flat keyspace, charset-validated); other metadata channels closed (SVG forced attachment, nosniff+CSP set last, header replay trusted-put only); all image fetch sites funnel through `validateUserMediaUrl`; Tinybird public pipes aggregate-only; community listing hides owner ids/PII/base URLs; billing writes single-statement atomic, exactly one settlement per request; gen↔media internal API is service-binding only |
+
+### Candidates rejected (recorded, not submitted)
+
+- community-monitor runs `claude --dangerously-skip-permissions` with untrusted Discord message text as its primary input: probabilistic LLM prompt-injection with a documented design; hardening recommendation (scope the `Bash` tool, add an untrusted-content rule to CYCLE.md), below the reproducibility gate. (Session 3 subsequently shipped a scoped-permissions hardening branch, `solution12-community-monitor-scoped-permissions` — complementary, no overlap with an issue here.)
+- `validateUserMediaUrl` misses non-dotted-quad IPv4 encodings and `.local` names: the bypassed destination space is unroutable from Workers; fold a tighter parser into the PR #17 hop validator rather than filing separately.
+- `app.json` `url` has no scheme check in `validateApps` (only `screenshotUrl` does) while the site renders it as a raw href: requires a maintainer-merged malicious edit; one-line hardening.
+- Billing fail-open on settlement infra failure, and reservation stranding on mid-settlement reconcile failure: operational resilience, not attacker-forcible.
+- Mutable major-version action pins and `?key=` in the Play API example: hardening/documentation only.
+
+### Sync
+
+- `fork/main` fast-forwarded `549feee` → `30ae4da` mid-session (no force needed; upstream moved with three commits unrelated to this round's fixes). `issues_mds` appends this round additively on top of sessions 3–4 (rebase, no history rewrite, no branch deletions).
