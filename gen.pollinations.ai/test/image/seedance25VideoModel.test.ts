@@ -169,6 +169,9 @@ describe("Seedance 2.5 via Replicate", () => {
         // Unset ratio defaults to an edit; an explicit ratio stays fixed.
         [undefined, { video_output_duration_seconds: 9 }, 9, -1, "adaptive"],
         ["16:9", { video_output_duration_seconds: 4 }, 4, 4, "16:9"],
+        // A model-picked length beyond the registry-declared 30s ceiling is
+        // clamped: the bill never exceeds the preflight's worst case.
+        ["adaptive", { video_output_duration_seconds: 60 }, 30, -1, "adaptive"],
     ] as const)(
         "with reference video and aspect ratio %s bills reported duration (metrics %j)",
         async (aspectRatio, metrics, billedSeconds, expectedDuration, expectedAspectRatio) => {

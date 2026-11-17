@@ -17,7 +17,7 @@ import type { AuthVariables } from "@/middleware/auth.ts";
 import type { BalanceVariables } from "@/middleware/balance.ts";
 import type { LoggerVariables } from "@/middleware/logger.ts";
 import type { ModelVariables } from "@/middleware/model.ts";
-import { getEstimatedPrice } from "@/utils/model-stats.ts";
+import { getEstimatedPrice, type PerSecondRequestBound } from "@/utils/model-stats.ts";
 import { keyBudgetExhausted, requireFunds } from "@/utils/refusals.ts";
 import { enforceModelRateLimit } from "./model-rate-limit.ts";
 
@@ -31,6 +31,44 @@ type GenerationAccessEnv = {
     Variables: GenerationAccessVariables;
 };
 
+/**
+ * Request facts that bound a per-second video bill, read from the validated
+ * query after the route's zod validator has run. Text/JSON routes have no
+ * such fields, so the bound is undefined and their estimate is unchanged.
+ */
+export function perSecondRequestBound(
+    // The Env generic is deliberately loose: the middleware chain's contexts
+    // carry different schema types, and valid("query") is only present on
+    // routes whose zod validator ran before the gate.
+    c: { req: { valid: (target: any) => any } },
+): PerSecondRequestBound | undefined {
+    const query = c.req.valid("query") as Partial<{
+        duration?: number;
+        resolution?: string;
+        aspectRatio?: string;
+        reference_videos?: string[];
+    }> | undefined;
+    if (!query || typeof query !== "object") return undefined;
+    const rawVideos: unknown = query.reference_videos;
+    const hasReferenceVideo =
+        (Array.isArray(rawVideos) && rawVideos.length > 0) ||
+        (typeof rawVideos === "string" && rawVideos.length > 0);
+    const request: PerSecondRequestBound = {};
+    if (query.duration != null) request.requestedSeconds = query.duration;
+    if (query.resolution != null) request.resolution = query.resolution;
+    if (hasReferenceVideo) request.hasReferenceVideo = true;
+    // With a reference video and the ratio unset (or "adaptive"), the model
+    // picks the output length: mirror resolveAspectRatio's default.
+    if (hasReferenceVideo && (query.aspectRatio == null || query.aspectRatio === "adaptive")) {
+        request.adaptiveDuration = true;
+    }
+    return request.requestedSeconds != null ||
+        request.resolution != null ||
+        request.hasReferenceVideo != null
+        ? request
+        : undefined;
+}
+
 export async function checkBalance(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
@@ -38,6 +76,7 @@ export async function checkBalance(
         ModelVariables["model"],
         "resolved" | "definition"
     > = vars.model,
+    request?: PerSecondRequestBound,
 ): Promise<void> {
     const { auth, balance, log } = vars;
     if (!auth.user?.id) return;
@@ -48,6 +87,7 @@ export async function checkBalance(
             await getModelStats(env.KV, log),
             model.resolved,
             model.definition,
+            request,
         ),
         Boolean(auth.apiKey?.byopMarkupApplies),
     );
@@ -117,10 +157,17 @@ export async function requireModelAttemptAccess(
     candidate: FallbackCandidate,
 ): Promise<void> {
     if (candidate.definition && c.var.model.requested.includes(",")) {
-        await checkBalance(c.var, c.env, {
-            resolved: candidate.id,
-            definition: candidate.definition,
-        });
+        await checkBalance(
+            c.var,
+            c.env,
+            {
+                resolved: candidate.id,
+                definition: candidate.definition,
+            },
+            perSecondRequestBound(
+                c as unknown as Parameters<typeof perSecondRequestBound>[0],
+            ),
+        );
         await reserveApiKeyBudget(c.var, c.env);
     }
     await enforceModelRateLimit(c, candidate);
@@ -166,10 +213,11 @@ export const apiKeyBudgetReservation = createMiddleware<GenerationAccessEnv>(
 export async function requireGenerationAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    request?: PerSecondRequestBound,
 ): Promise<void> {
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
-    await checkBalance(vars, env);
+    await checkBalance(vars, env, vars.model, request);
 }
 
 /**
@@ -180,9 +228,10 @@ export async function requireGenerationAccess(
 async function requireListAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    request?: PerSecondRequestBound,
 ): Promise<void> {
     if (!vars.model.requested.includes(",")) {
-        return requireGenerationAccess(vars, env);
+        return requireGenerationAccess(vars, env, request);
     }
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
@@ -196,7 +245,7 @@ async function requireListAccess(
     let refusal: unknown;
     for (const model of listed) {
         try {
-            return await checkBalance(vars, env, model);
+            return await checkBalance(vars, env, model, request);
         } catch (error) {
             if (!(error instanceof PaymentRequiredError)) throw error;
             refusal ??= error;
@@ -207,7 +256,13 @@ async function requireListAccess(
 
 export const generationAccess = createMiddleware<GenerationAccessEnv>(
     async (c, next) => {
-        await requireListAccess(c.var, c.env);
+        await requireListAccess(
+            c.var,
+            c.env,
+            perSecondRequestBound(
+                c as unknown as Parameters<typeof perSecondRequestBound>[0],
+            ),
+        );
         await next();
     },
 );
