@@ -8,7 +8,10 @@ StartLimitIntervalSec=0
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/monitor
-EnvironmentFile=/home/ubuntu/monitor/.env
+# No EnvironmentFile: secrets stay out of the service environment. loop.sh
+# sources .env without exporting and exports only DISCORD_TOKEN (required by
+# the mcp-discord server); probe.mjs and the leaderboard builders use
+# `node --env-file`, and tb-query.sh reads .env itself.
 ExecStartPre=-/home/ubuntu/monitor/update-from-repo.sh
 ExecStart=/home/ubuntu/monitor/loop.sh
 Restart=always

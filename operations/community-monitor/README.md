@@ -13,6 +13,8 @@ Committed (source of truth — edit here, then deploy):
 - `CYCLE.md` — the agent's full rulebook, re-read fresh every cycle.
 - `probe.mjs` + `probe-schedule.mjs` — selective community text/image checks (see
   "Probe load" below).
+- `tb-query.sh` — Tinybird query wrapper that reads `TB_TOKEN` from `.env`
+  itself, so the token never has to live in the agent's environment.
 - `community-monitor.service` + `loop.sh` — the deployed systemd path. Each
   cycle gets a fresh Claude process and systemd starts the next one 30 minutes
   after completion. Headless cycles cannot be remote-controlled; a separate
@@ -30,8 +32,12 @@ Committed (source of truth — edit here, then deploy):
 
 Live-only on the box, never committed:
 - `.env` — real `POLLI_TOKEN`, `TB_TOKEN`, and `DISCORD_TOKEN` secrets.
-  Configure `mcp-discord` without `--config`; it inherits `DISCORD_TOKEN` from
-  the service environment. Never place the token in MCP command-line arguments.
+  `loop.sh` sources it without exporting; only `DISCORD_TOKEN` is exported
+  (the `mcp-discord` server config requires it from the process environment).
+  `POLLI_TOKEN` and `TB_TOKEN` never enter the agent's environment:
+  `probe.mjs` and both leaderboard builders load `.env` via
+  `node --env-file`, and `tb-query.sh` reads `.env` directly. Never place a
+  token in MCP command-line arguments.
 - `state.json` — cycle-to-cycle memory (last-replied message ids, alert state,
   probe backoff and protocol alerts). Preserve it during deployments to retain cooldowns and
   prevent duplicate posts.
@@ -116,7 +122,7 @@ and refresh `update-from-repo.sh` before restarting the service so the next
 cycle knows the complete file set.
 
 ```bash
-scp operations/community-monitor/{CYCLE.md,chat-stream.mjs,image-probe.mjs,probe-schedule.mjs,probe.mjs,loop.sh,healthcheck.sh,update-from-repo.sh} \
+scp operations/community-monitor/{CYCLE.md,chat-stream.mjs,image-probe.mjs,probe-schedule.mjs,probe.mjs,loop.sh,healthcheck.sh,tb-query.sh,update-from-repo.sh} \
   community-monitor:/home/ubuntu/monitor/
 ssh community-monitor "mkdir -p /home/ubuntu/monitor/.claude"
 scp operations/community-monitor/.claude/settings.json \
@@ -127,7 +133,7 @@ scp operations/community-monitor/community-monitor.service \
   community-monitor:/tmp/community-monitor.service
 ssh community-monitor "sudo install -m 0644 /tmp/community-monitor.service \
   /etc/systemd/system/community-monitor.service && \
-  chmod +x /home/ubuntu/monitor/{probe.mjs,loop.sh,healthcheck.sh,update-from-repo.sh} && \
+  chmod +x /home/ubuntu/monitor/{probe.mjs,loop.sh,healthcheck.sh,tb-query.sh,update-from-repo.sh} && \
   sudo systemctl daemon-reload && \
   sudo systemctl restart community-monitor"
 ```
