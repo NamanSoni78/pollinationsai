@@ -521,6 +521,45 @@ function rateAgainst(
  * price is that cost times the serving model's multiplier. A fallback still
  * charges the requested listing's price.
  */
+
+/**
+ * Community publishers report their own usage (token counts, durations), so
+ * the quantity side of `quantity x unit price` is untrusted input: unit prices
+ * are capped at registration (see MAX_COMMUNITY_PRICE_*), but without a
+ * quantity bound one response could claim 9e15 tokens and bill a caller an
+ * astronomical charge — and pay the publisher 75% of it. These ceilings sit
+ * far above the largest plausible legitimate request (request prompts are
+ * capped at tens of thousands of characters, generations at tens of thousands
+ * of tokens, uploads at tens of megabytes), so they only ever truncate a
+ * fraudulent report.
+ */
+const MAX_COMMUNITY_REPORTED_TOKENS = 10_000_000;
+const MAX_COMMUNITY_REPORTED_SECONDS = 3_600;
+
+const SECONDS_USAGE_TYPES = new Set<UsageType>([
+    "promptAudioSeconds",
+    "promptVideoSeconds",
+    "completionAudioSeconds",
+    "completionVideoSeconds",
+]);
+
+/** Clamps a publisher-reported usage object to the per-request ceilings. */
+export function clampCommunityUsage(usage: Usage): Usage {
+    const clamped: Usage = {};
+    for (const usageType of Object.keys(usage) as UsageType[]) {
+        const quantity = usage[usageType];
+        if (typeof quantity !== "number" || !Number.isFinite(quantity)) {
+            clamped[usageType] = quantity;
+            continue;
+        }
+        const ceiling = SECONDS_USAGE_TYPES.has(usageType)
+            ? MAX_COMMUNITY_REPORTED_SECONDS
+            : MAX_COMMUNITY_REPORTED_TOKENS;
+        clamped[usageType] = Math.min(Math.max(quantity, 0), ceiling);
+    }
+    return clamped;
+}
+
 export function calculateUsageBilling({
     model,
     usage,
@@ -529,7 +568,11 @@ export function calculateUsageBilling({
     output,
     input,
 }: UsageBillingInput): UsageBilling {
-    const served = rateAgainst(model, usage, servedBy, output, input);
+    // Only the serving endpoint's report is untrusted: a community listing
+    // quoted against a trusted fallback bills platform-measured usage.
+    const effectiveUsage =
+        servedBy.provider === "community" ? clampCommunityUsage(usage) : usage;
+    const served = rateAgainst(model, effectiveUsage, servedBy, output, input);
     // Provider units need not match public usage units (e.g. weighted video
     // seconds), so the receipt gives a total, not a per-usage-type breakdown.
     if (input?.providerBilling) {
@@ -545,8 +588,12 @@ export function calculateUsageBilling({
     if (quotedBy === servedBy) {
         return { ...served, servedPrice: served.price.totalPrice };
     }
-    // Rated independently rather than rescaled: see rateAgainst.
-    const quoted = rateAgainst(model, usage, quotedBy, output, input);
+    // Rated independently rather than rescaled: see rateAgainst. The quoted
+    // listing's price is what the caller pays, so a community quote clamps
+    // the same publisher-reported quantities the serving side did.
+    const quotedUsage =
+        quotedBy.provider === "community" ? clampCommunityUsage(usage) : usage;
+    const quoted = rateAgainst(model, quotedUsage, quotedBy, output, input);
     const selectionStatuses = [
         served.costVariantStatus,
         quoted.costVariantStatus,
