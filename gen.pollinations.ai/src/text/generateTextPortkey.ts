@@ -126,11 +126,23 @@ export async function generateTextPortkey(
         string
     >;
     const responsesFetcher = state.options.responsesFetcher;
+    // Community endpoints carry their own deadline- and size-bound fetcher in
+    // the model config; it wins over the default bindings so an untrusted
+    // third-party upstream can neither tarpit the request nor OOM the relay
+    // with an unbounded response. Managed agents set options.responsesFetcher
+    // themselves and never carry this key, so their transport keeps winning.
+    const communityModelConfig = state.options.modelConfig as
+        | { fetcher?: typeof fetch; responsesFetcher?: typeof fetch }
+        | undefined;
+    const communityFetcher =
+        communityModelConfig?.responsesFetcher ??
+        communityModelConfig?.fetcher;
     const requestConfig =
         typeof directEndpoint === "string"
             ? {
                   endpoint: directEndpoint,
                   additionalHeaders,
+                  ...(communityFetcher && { fetcher: communityFetcher }),
               }
             : {
                   endpoint: () => buildEndpoint(portkeyGatewayUrl),
@@ -155,7 +167,7 @@ export async function generateTextPortkey(
         return await callChatViaResponses(
             state.messages,
             state.options,
-            responsesFetcher,
+            communityFetcher ?? responsesFetcher,
         );
     }
 
