@@ -2403,6 +2403,15 @@ export const accountRoutes = new Hono<Env>()
             }
             await requireKeyWithinCallerKey(c, callerKey, key);
 
+            // Paid x402 prepaid keys carry a purchase row referencing them
+            // (no ON DELETE CASCADE on x402_key_purchase.key_id), so deleting
+            // the key row alone fails the FK and the key stays valid forever.
+            // Remove its purchase rows first.
+            await c.env.DB.prepare(
+                "DELETE FROM x402_key_purchase WHERE key_id = ?",
+            )
+                .bind(id)
+                .run();
             await db.delete(apikeyTable).where(eq(apikeyTable.id, id));
 
             return c.json({ success: true });
