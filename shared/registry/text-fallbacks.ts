@@ -305,11 +305,13 @@ export const TEXT_FALLBACKS = {
     "openai/gpt-6.1-sol": {
         "openai/gpt-6.1-sol:aws": { provider: "aws", priceMultiplier: 1 },
     },
+    // The AWS route's own price sheet is the AWS list rates: override the
+    // primary's 0.75 Azure multiplier like every other OpenAI→AWS fallback.
     "openai/gpt-6.2-astra": {
-        "openai/gpt-6.2-astra:aws": { provider: "aws" },
+        "openai/gpt-6.2-astra:aws": { provider: "aws", priceMultiplier: 1 },
     },
     "openai/gpt-6.2-sol": {
-        "openai/gpt-6.2-sol:aws": { provider: "aws" },
+        "openai/gpt-6.2-sol:aws": { provider: "aws", priceMultiplier: 1 },
     },
     "openai/gpt-6-luna": {
         "openai/gpt-6-luna:aws": { provider: "aws", priceMultiplier: 1 },
