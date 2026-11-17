@@ -164,6 +164,10 @@ export async function communityEndpointModelConfig({
     if (!authKey) throw new Error("Agent request has no agent run token");
 
     return {
+        // Marker consumed by the shared clients to apply community-only
+        // protections (buffered response size caps) without changing the
+        // behavior of first-party providers on the same code paths.
+        communityEndpoint: true,
         provider: "openai",
         authKey,
         model: endpoint.upstreamModel,

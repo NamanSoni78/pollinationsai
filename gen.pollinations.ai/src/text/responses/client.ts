@@ -1,4 +1,6 @@
+import { MAX_COMMUNITY_TEXT_RESPONSE_BYTES } from "@shared/community-endpoints.ts";
 import { collectUpstreamHeaders, remapUpstreamStatus } from "@shared/error.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import type { CreateResponseRequest } from "@shared/schemas/openai.ts";
 import { createParser } from "eventsource-parser";
 import {
@@ -18,6 +20,8 @@ type JsonObject = Record<string, unknown>;
 
 export type DirectResponsesTarget = {
     authConfigured: boolean;
+    /** Set for community endpoints so shared clients can cap their buffered bodies. */
+    communityEndpoint?: true;
     /** Managed agents run on this gateway, so their statuses are already caller-facing. */
     callerFacingStatus?: true;
     disableReasoningForForcedTools?: true;
@@ -59,6 +63,9 @@ export function responsesTargetFromConfig(
     return {
         authConfigured:
             !!aws || (typeof authKey === "string" && authKey.length > 0),
+        ...(config.communityEndpoint === true
+            ? { communityEndpoint: true as const }
+            : {}),
         ...(aws ? { aws } : {}),
         ...(config.responsesDisableReasoningForForcedTools === true
             ? { disableReasoningForForcedTools: true as const }
@@ -140,10 +147,20 @@ function errorMessage(details: unknown, response: Response): string {
     return `${response.status} ${response.statusText}`;
 }
 
+// Community endpoints are untrusted servers; their buffered bodies are capped.
+function communityBodyTooLarge(total: number): Error {
+    const error = new Error(
+        `Community endpoint response is too large (${total} bytes; cap is ${MAX_COMMUNITY_TEXT_RESPONSE_BYTES})`,
+    ) as ServiceError;
+    error.status = 502;
+    return error;
+}
+
 /** The response object carried by a Responses stream's terminal event. */
 async function finalStreamResponse(
     response: Response,
     requestUrl: URL,
+    community = false,
 ): Promise<unknown> {
     let final: unknown;
     let failure: string | undefined;
@@ -158,7 +175,15 @@ async function finalStreamResponse(
             }
         },
     });
-    parser.feed(await response.text());
+    parser.feed(
+        community
+            ? await readResponseText(
+                  response,
+                  MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+                  communityBodyTooLarge,
+              )
+            : await response.text(),
+    );
     if (final !== undefined) return final;
     const error = new Error(
         failure ?? "Responses provider stream ended without a final response",
@@ -182,6 +207,7 @@ export async function callDirectResponses(
         const final = await finalStreamResponse(
             result.response,
             result.requestUrl,
+            target.communityEndpoint === true,
         );
         return { ...result, response: Response.json(final) };
     }
@@ -246,7 +272,13 @@ export async function callDirectResponses(
     }
 
     if (!response.ok) {
-        const text = await response.text();
+        const text = target.communityEndpoint
+            ? await readResponseText(
+                  response,
+                  MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+                  communityBodyTooLarge,
+              )
+            : await response.text();
         const details = parseJson(text);
         const error = new Error(
             errorMessage(details, response),

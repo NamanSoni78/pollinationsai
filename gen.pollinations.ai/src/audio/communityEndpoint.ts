@@ -6,6 +6,7 @@ import {
     COMMUNITY_ENDPOINT_TIMEOUT_MS,
     type CommunityEndpointRuntime,
     communityTranscriptionSeconds,
+    MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
     normalizeCommunityEndpointBearerToken,
 } from "@shared/community-endpoints.ts";
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
@@ -14,6 +15,7 @@ import {
     createAudioSecondsUsage,
     createAudioTokenUsage,
 } from "@shared/registry/usage-headers.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
@@ -189,7 +191,18 @@ export async function callCommunityTranscriptionEndpoint(
     }
     response = await ensureUpstreamOk(response, upstreamUrl);
 
-    const transcript = parseCommunityTranscription(await response.text());
+    // Untrusted server: cap the buffered body before parsing it.
+    const transcript = parseCommunityTranscription(
+        await readResponseText(
+            response,
+            MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+            () =>
+                new UpstreamError(502 as ContentfulStatusCode, {
+                    message:
+                        "Community transcription endpoint response is too large",
+                }),
+        ),
+    );
     return buildTranscriptionResponse({
         normalized: {
             text: transcript.text,

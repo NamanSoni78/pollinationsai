@@ -5,6 +5,7 @@
  */
 
 import type { Logger } from "@logtape/logtape";
+import { MAX_COMMUNITY_TEXT_RESPONSE_BYTES } from "@shared/community-endpoints.ts";
 import { IMMUTABLE_CACHE_CONTROL } from "@shared/http/cache-control.ts";
 import { refreshR2ObjectTtl } from "@shared/r2-storage.ts";
 import {
@@ -265,6 +266,12 @@ export function createCaptureStream<TEnv extends TextCacheEnv>(
     const log = c.get("log");
     let chunks: Uint8Array[] = [];
     let totalSize = 0;
+    // Bytes actually held back for the cache write. An oversized response is
+    // streamed to the caller untouched but never cached, and its copy is not
+    // kept in worker memory: one oversized body otherwise turns into several
+    // full copies of itself across the pipeline (capture + concatenation).
+    let capturedBytes = 0;
+    let captureDropped = false;
     let resolveWrite!: () => void;
     let rejectWrite!: (error: unknown) => void;
     const write = new Promise<void>((resolve, reject) => {
@@ -274,9 +281,20 @@ export function createCaptureStream<TEnv extends TextCacheEnv>(
 
     const stream = new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
-            // Save a copy of the chunk for caching later
-            chunks.push(chunk.slice());
             totalSize += chunk.byteLength;
+            if (
+                !captureDropped &&
+                capturedBytes + chunk.byteLength >
+                    MAX_COMMUNITY_TEXT_RESPONSE_BYTES
+            ) {
+                captureDropped = true;
+                chunks = [];
+            }
+            if (!captureDropped) {
+                // Save a copy of the chunk for caching later
+                chunks.push(chunk.slice());
+                capturedBytes += chunk.byteLength;
+            }
 
             // Pass the chunk through unchanged to the client
             controller.enqueue(chunk);
@@ -291,9 +309,18 @@ export function createCaptureStream<TEnv extends TextCacheEnv>(
                 },
             );
 
+            if (captureDropped) {
+                log?.info(
+                    "[TEXT-CACHE] Response exceeded the capture cap ({cap} bytes); streamed through without caching",
+                    { cap: MAX_COMMUNITY_TEXT_RESPONSE_BYTES },
+                );
+                resolveWrite();
+                return;
+            }
+
             void (async () => {
                 try {
-                    const completeResponse = new Uint8Array(totalSize);
+                    const completeResponse = new Uint8Array(capturedBytes);
                     let offset = 0;
                     for (const chunk of chunks) {
                         completeResponse.set(chunk, offset);

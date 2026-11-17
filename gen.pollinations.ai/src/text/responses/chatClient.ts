@@ -1,3 +1,5 @@
+import { MAX_COMMUNITY_TEXT_RESPONSE_BYTES } from "@shared/community-endpoints.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import type {
     ChatCompletion,
     ChatMessage,
@@ -20,6 +22,14 @@ function clientError(
     error.status = status;
     error.requestUrl = requestUrl;
     return error;
+}
+
+// Community endpoints are untrusted servers; their buffered bodies are capped.
+function communityBodyTooLarge(total: number): ServiceError {
+    return clientError(
+        `Community endpoint response is too large (${total} bytes)`,
+        502,
+    );
 }
 
 /** Call a native Responses provider while preserving the public Chat contract. */
@@ -62,8 +72,15 @@ export async function callChatViaResponses(
     }
 
     let data: unknown;
+    const bodyText = target.communityEndpoint
+        ? await readResponseText(
+              response,
+              MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+              communityBodyTooLarge,
+          )
+        : null;
     try {
-        data = await response.json();
+        data = bodyText === null ? await response.json() : JSON.parse(bodyText);
     } catch (cause) {
         const error = clientError(
             "Responses provider returned invalid JSON",

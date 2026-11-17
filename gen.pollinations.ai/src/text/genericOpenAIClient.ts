@@ -1,4 +1,6 @@
+import { MAX_COMMUNITY_TEXT_RESPONSE_BYTES } from "@shared/community-endpoints.ts";
 import { collectUpstreamHeaders } from "@shared/error.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import debug from "debug";
 import { createParser } from "eventsource-parser";
 import { bedrockCredentials, signBedrockHeaders } from "./auth/bedrock.js";
@@ -20,6 +22,30 @@ import {
 const log = debug("pollinations:genericopenai");
 const errorLog = debug("pollinations:error");
 const DONE_EVENT_PATTERN = /data:\s*\[DONE\]/;
+
+// Community endpoints are untrusted servers; their buffered bodies are capped.
+// The marker is set by communityEndpointModelConfig; first-party providers on
+// the same code paths keep today's behavior.
+function communityBodyTooLarge(total: number): Error {
+    const error = new Error(
+        `Community endpoint response is too large (${total} bytes; cap is ${MAX_COMMUNITY_TEXT_RESPONSE_BYTES})`,
+    ) as ServiceError;
+    error.status = 502;
+    return error;
+}
+
+async function readUpstreamBody(
+    response: Response,
+    community: boolean,
+): Promise<string> {
+    return community
+        ? readResponseText(
+              response,
+              MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+              communityBodyTooLarge,
+          )
+        : response.text();
+}
 
 // Attach internal response metadata as non-enumerable properties so downstream
 // handling can use it without adding fields to OpenAI-compatible response bodies.
@@ -526,7 +552,10 @@ export async function genericOpenAIClient(
         if (!response.ok) {
             let errorText: string;
             try {
-                errorText = await response.text();
+                errorText = await readUpstreamBody(
+                    response,
+                    options.modelConfig?.communityEndpoint === true,
+                );
             } catch (thrown: unknown) {
                 throw withUpstreamContext(thrown, requestUrl);
             }
@@ -592,7 +621,10 @@ export async function genericOpenAIClient(
         let data: ChatCompletion;
         let responseBody: string | undefined;
         try {
-            responseBody = await response.text();
+            responseBody = await readUpstreamBody(
+                response,
+                options.modelConfig?.communityEndpoint === true,
+            );
             data = JSON.parse(responseBody) as ChatCompletion;
         } catch (thrown: unknown) {
             const error = withUpstreamContext(thrown, requestUrl);

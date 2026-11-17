@@ -78,6 +78,13 @@ export const MAX_COMMUNITY_PRICE_PER_SECOND = 0.012 / 60;
 // limit of their own, so without this a hung endpoint would hold the request
 // open until the caller disconnects.
 export const COMMUNITY_ENDPOINT_TIMEOUT_MS = 300_000;
+// Cap for a buffered text-family response body read from a community endpoint
+// (chat completions, responses-adapter JSON, embeddings JSON, transcription
+// verbose_json). Community endpoints are untrusted servers: a 30 MiB body
+// already multiplies into ~123 MiB of worker memory across the copies the
+// pipeline makes, and the Cloudflare isolate limit is 128 MiB. Legitimate
+// text-family responses (even a 1M-token completion) stay well under 4 MB.
+export const MAX_COMMUNITY_TEXT_RESPONSE_BYTES = 8 * 1024 * 1024;
 const BEARER_PREFIX = /^Bearer(?:\s+|$)/i;
 
 export type CommunityEndpointModality =

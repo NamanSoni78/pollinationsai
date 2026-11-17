@@ -2,6 +2,7 @@ import { communityEmbeddingsUrl } from "@shared/community-endpoint-urls.ts";
 import {
     COMMUNITY_ENDPOINT_TIMEOUT_MS,
     type CommunityEndpointRuntime,
+    MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
     normalizeCommunityEndpointBearerToken,
 } from "@shared/community-endpoints.ts";
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
@@ -10,6 +11,7 @@ import {
     buildUsageHeaders,
     getOpenAIEmbeddingUsage,
 } from "@shared/registry/usage-headers.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import { CreateEmbeddingResponseSchema } from "@/schemas/embeddings.ts";
 import { badRequest, inputToText, normalizeInputs } from "./input.ts";
@@ -79,7 +81,22 @@ export async function generateCommunityEmbeddings(
     }
 
     await ensureUpstreamOk(response, upstreamUrl);
-    const body = await response.json().catch(() => null);
+    // Untrusted server: cap the buffered body before parsing it.
+    const bodyText = await readResponseText(
+        response,
+        MAX_COMMUNITY_TEXT_RESPONSE_BYTES,
+        () =>
+            invalidResponse(
+                upstreamUrl,
+                "Community embedding endpoint response is too large",
+            ),
+    );
+    let body: unknown = null;
+    try {
+        body = JSON.parse(bodyText);
+    } catch {
+        body = null;
+    }
     const usage = getOpenAIEmbeddingUsage(body);
 
     const parsed = CreateEmbeddingResponseSchema.safeParse({
@@ -133,6 +150,11 @@ export async function generateCommunityEmbeddings(
     );
 }
 
+// First-party embedding models cap dimensions at 1536-4096. When the caller
+// omits `dimensions`, an untrusted endpoint must not be able to return an
+// arbitrarily large vector (which the pipeline buffers and re-serializes).
+const MAX_UNDIMENSIONED_EMBEDDING_DIMENSIONS = 4096;
+
 function isValidEmbedding(
     embedding: number[] | string,
     base64: boolean,
@@ -142,7 +164,9 @@ function isValidEmbedding(
         return (
             Array.isArray(embedding) &&
             embedding.length > 0 &&
-            (!dimensions || embedding.length === dimensions)
+            (!dimensions || embedding.length === dimensions) &&
+            (dimensions !== undefined ||
+                embedding.length <= MAX_UNDIMENSIONED_EMBEDDING_DIMENSIONS)
         );
     }
     if (typeof embedding !== "string" || embedding.length === 0) return false;
@@ -151,7 +175,9 @@ function isValidEmbedding(
         return (
             byteLength > 0 &&
             byteLength % 4 === 0 &&
-            (!dimensions || byteLength === dimensions * 4)
+            (!dimensions || byteLength === dimensions * 4) &&
+            (dimensions !== undefined ||
+                byteLength / 4 <= MAX_UNDIMENSIONED_EMBEDDING_DIMENSIONS)
         );
     } catch {
         return false;
