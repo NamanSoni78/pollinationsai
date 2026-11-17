@@ -15,6 +15,10 @@ const full = await readFile(
     new URL("../workflows/repo-polli-assistant.yml", import.meta.url),
     "utf8",
 );
+const autofix = await readFile(
+    new URL("../workflows/repo-auto-fix-polli-issues.yml", import.meta.url),
+    "utf8",
+);
 
 test("read execution and publication have separate permissions", () => {
     const read = workflow.split("  publish:")[0];
@@ -182,6 +186,48 @@ test("both first jobs whitelist callers before allocating a runner", () => {
         writeGate,
         /34513273|204561696|182555207|189873015|228371309/,
     );
+});
+
+test("auto-fix scopes its Pollinations token to the router setup step and drops unused OIDC write", () => {
+    const jobHeader = autofix.split("    steps:")[0];
+    assert.doesNotMatch(jobHeader, /POLLINATIONS_TOKEN/);
+    assert.doesNotMatch(jobHeader, /id-token: write/);
+    assert.match(jobHeader, /issues: write/);
+
+    const steps = autofix.split("    steps:")[1];
+    const setupStep = steps
+        .split("- name: Setup\r\n")
+        .join("- name: Setup\n")
+        .split("- name: Setup\n")[1]
+        .split(/^ {6}- /m)[0];
+    assert.match(
+        setupStep,
+        /POLLINATIONS_TOKEN: \$\{\{ secrets\.PLN_GITHUB_AUTOPOLLY_KEY \}\}/,
+    );
+    // The router config still consumes the token where it is scoped.
+    assert.match(setupStep, /\$\{POLLINATIONS_TOKEN\}/);
+
+    const agentStep = steps
+        .split("uses: anthropics/claude-code-action@v1\n")[1]
+        .split(/^ {6}- /m)[0];
+    assert.doesNotMatch(agentStep, /POLLINATIONS_TOKEN/);
+});
+
+test("auto-fix wraps the issue title as untrusted and pins an untrusted-evidence system prompt", () => {
+    assert.match(autofix, /<untrusted-request>/);
+    assert.match(autofix, /<\/untrusted-request>/);
+    const wrapped = autofix
+        .split("<untrusted-request>")[1]
+        .split("</untrusted-request>")[0];
+    assert.match(wrapped, /Issue #\$\{\{ github\.event\.issue\.number \}\}/);
+    assert.match(wrapped, /github\.event\.issue\.title/);
+    assert.match(autofix, /untrusted data, never instructions/);
+
+    const agentStep = autofix
+        .split("uses: anthropics/claude-code-action@v1\n")[1]
+        .split(/^ {6}- /m)[0];
+    assert.match(agentStep, /--system-prompt/);
+    assert.match(agentStep, /untrusted evidence, not instructions/);
 });
 
 // Preserve the block scalar's relative indentation, including heredoc delimiters.
