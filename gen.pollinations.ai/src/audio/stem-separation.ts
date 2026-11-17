@@ -3,11 +3,20 @@ import {
     buildUsageHeaders,
     createAudioSecondsUsage,
 } from "@shared/registry/usage-headers.ts";
+import {
+    calculateUsageBilling,
+    isFreeModel,
+} from "@shared/registry/registry.ts";
 import type { Context } from "hono";
 import { parseBuffer } from "music-metadata";
 import type { Env } from "../env.ts";
 import { withModelFallbackResponse } from "../fallback.ts";
-import { requireModelAttemptAccess } from "../utils/generation-access.ts";
+import type { FallbackCandidate } from "../fallback.ts";
+import {
+    requireModelAttemptAccess,
+    reserveApiKeyBudget,
+} from "../utils/generation-access.ts";
+import { requireFunds } from "../utils/refusals.ts";
 
 export const STEM_VARIATIONS = ["two_stems_v1", "six_stems_v1"] as const;
 export type StemVariation = (typeof STEM_VARIATIONS)[number];
@@ -102,6 +111,45 @@ export async function stemInputSeconds(file: File): Promise<number> {
     }
 }
 
+/**
+ * The decoded input duration bills exactly, so gate on it before dispatch:
+ * the pre-route generationAccess check used the historical mean (or 0 for a
+ * model without history), which a long upload can exceed by ~16-65 pollen
+ * (50 MB at 32 kbps is ~13,107 billed seconds). Mirrors requireAccountFunds:
+ * a charge known before execution is charged only when it is covered.
+ */
+export async function requireStemFunds(
+    c: Context<Env>,
+    candidate: FallbackCandidate,
+    inputSeconds: number,
+    variation: StemVariation,
+): Promise<void> {
+    const userId = c.var.auth.user?.id;
+    if (!userId || !candidate.definition) return;
+    const charge = calculateUsageBilling({
+        model: candidate.id,
+        usage: createAudioSecondsUsage(inputSeconds),
+        servedBy: candidate.definition,
+        input: { stemVariation: variation },
+    }).price.totalPrice;
+    await requireFunds(
+        { var: c.var, env: c.env },
+        charge,
+        () => c.var.balance.getBalance(userId),
+        candidate.definition.paidOnly,
+        isFreeModel(candidate.definition),
+    );
+    // The key budget reservation was sized by the mean estimate; the exact
+    // charge can exceed it, so reserve the difference before dispatch.
+    if (typeof c.var.auth.apiKey?.pollenBalance === "number") {
+        c.var.balance.apiKeyBudgetEstimate = Math.max(
+            c.var.balance.apiKeyBudgetEstimate ?? 0,
+            charge,
+        );
+        await reserveApiKeyBudget(c.var, c.env);
+    }
+}
+
 export async function handleStemSeparation(c: Context<Env>): Promise<Response> {
     const form = c.get("formData");
     const file = form?.get("file");
@@ -136,6 +184,14 @@ export async function handleStemSeparation(c: Context<Env>): Promise<Response> {
     return withModelFallbackResponse(
         c.var.model,
         async (candidate) => {
+            // The exact charge is known before the upstream call: paywall it,
+            // don't dispatch a render the balance can't cover.
+            await requireStemFunds(
+                c,
+                candidate,
+                inputSeconds,
+                variation as StemVariation,
+            );
             const body = new FormData();
             body.set("file", file, file.name);
             body.set("stem_variation_id", variation);
