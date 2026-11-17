@@ -1,4 +1,4 @@
-# Issue 24 — The Klein self-hosted GPU path accepts truncated image responses, caching and billing them as successes (incomplete coverage of #18202)
+# Issue 28 — The Klein self-hosted GPU path accepts truncated image responses, caching and billing them as successes (incomplete coverage of #18202)
 
 - **Severity:** Medium (billed + cached garbage delivery on the fourth self-hosted GPU backend; becomes High if the Klein worker ever answers JPEG like its siblings)
 - **Affected:** `gen.pollinations.ai/src/image/models/fluxKleinModel.ts` (`callFluxKleinAPI`) — upstream `pollinations/pollinations` main @ `30ae4da`

@@ -1,4 +1,4 @@
-# Issue 22 — Community publishers bill callers on unbounded self-reported usage in every non-text modality (video seconds, audio seconds, image tokens, embeddings tokens), earning 75% of the claim
+# Issue 26 — Community publishers bill callers on unbounded self-reported usage in every non-text modality (video seconds, audio seconds, image tokens, embeddings tokens), earning 75% of the claim
 
 - **Severity:** High (direct caller overcharge in a single request; publisher self-enrichment at 75% of the charge)
 - **Affected:** `gen.pollinations.ai/src/middleware/track.ts` (`isImplausibleProxyUsage`) plus the media/embedding consumption sites — upstream `pollinations/pollinations` main @ `30ae4da`

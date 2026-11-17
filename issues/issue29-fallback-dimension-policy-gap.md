@@ -1,4 +1,4 @@
-# Issue 25 — Unbounded image dimensions forwarded to per-area-billed fallback providers while the caller pays the primary pool's flat quote (up to ~21× platform subsidy loss)
+# Issue 29 — Unbounded image dimensions forwarded to per-area-billed fallback providers while the caller pays the primary pool's flat quote (up to ~21× platform subsidy loss)
 
 - **Severity:** Medium (platform money loss; sustained ~$1.5–5/min per key; precondition is a pool outage/saturation, which the ops log shows occurs in production)
 - **Affected:** `gen.pollinations.ai/src/image/models/zImageFalModel.ts`, `gen.pollinations.ai/src/image/models/prunaModel.ts` (`callFluxSchnellDeepInfraAPI`) — upstream `pollinations/pollinations` main @ `30ae4da`

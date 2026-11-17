@@ -1,4 +1,4 @@
-# Issue 23 — `discord-bot-family` answers every human mention, reply, DM, and conversation-channel message with an ungated platform-keyed paid completion
+# Issue 27 — `discord-bot-family` answers every human mention, reply, DM, and conversation-channel message with an ungated platform-keyed paid completion
 
 - **Severity:** High (unbounded platform spend of the shared `TEXT_POLLINATIONS_TOKEN` by any Discord user; production-deployed fleet)
 - **Affected:** `apps/discord-bot-family/src-functional/bot-loop.ts` + `api.ts` — upstream `pollinations/pollinations` main @ `30ae4da`
