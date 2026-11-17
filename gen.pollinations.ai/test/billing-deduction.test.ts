@@ -478,7 +478,9 @@ describe("billing deduction", () => {
             apiKeyReservedAmount: 0,
         });
 
-        expect(await getApiKeyBalance(apiKeyId)).toBeCloseTo(-1, 10);
+        // A finite API-key budget floors at zero: the part of the bill beyond
+        // the remaining budget is absorbed rather than left as negative debt.
+        expect(await getApiKeyBalance(apiKeyId)).toBe(0);
         expect(await getUserBalance(db, userId)).toEqual({
             tierBalance: 97,
             packBalance: 0,
