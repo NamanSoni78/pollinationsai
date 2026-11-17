@@ -468,7 +468,12 @@ api.post(
         }
         // Publishable keys ship inside public clients, so anyone holding one
         // could host files on the owner's account; uploads are secret-key only.
-        if (authResult.type !== "secret") {
+        // Agent run tokens report their parent key's type, but they're handed
+        // to generated code, so they can't upload either (mirrors DELETE).
+        if (
+            authResult.type !== "secret" ||
+            apiKey.startsWith(AGENT_RUN_TOKEN_PREFIX)
+        ) {
             return c.json(
                 { error: "Uploading media requires a secret (sk_) API key" },
                 403,
