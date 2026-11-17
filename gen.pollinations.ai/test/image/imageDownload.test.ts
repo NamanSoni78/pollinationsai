@@ -5,7 +5,11 @@ import {
     readImageDimensions,
     toDataUri,
 } from "../../src/image/utils/imageDownload.ts";
-import { MAX_IMAGE_SIZE } from "../../src/userImage.ts";
+import {
+    fetchUserImage,
+    MAX_IMAGE_SIZE,
+    USER_IMAGE_FETCH_TIMEOUT_MS,
+} from "../../src/userImage.ts";
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -326,5 +330,68 @@ describe("readImageDimensions", () => {
             width: 1280,
             height: 720,
         });
+    });
+});
+
+describe("fetchUserImage deadline", () => {
+    // A host that accepts the connection but never finishes the body is the
+    // slow-loris shape the deadline exists to bound.
+    function stallUntilAborted() {
+        return vi.spyOn(globalThis, "fetch").mockImplementation(
+            async (_url: unknown, init?: RequestInit) => {
+                const signal = init?.signal;
+                const stream = new ReadableStream({
+                    start(controller) {
+                        signal?.addEventListener("abort", () =>
+                            controller.error(
+                                new DOMException(
+                                    "This operation was aborted",
+                                    "AbortError",
+                                ),
+                            ),
+                        );
+                    },
+                });
+                return new Response(stream, { status: 200 });
+            },
+        );
+    }
+
+    it("bounds every user-image fetch with an abort deadline", async () => {
+        const spy = stallUntilAborted();
+
+        await expect(
+            fetchUserImage("https://example.com/slow.png", { timeoutMs: 40 }),
+        ).rejects.toMatchObject({
+            name: "UserImageError",
+            status: 400,
+            errorCode: "failed_to_download_image",
+        });
+
+        const signal = spy.mock.calls[0]?.[1]?.signal;
+        expect(signal).toBeInstanceOf(AbortSignal);
+        expect(signal?.aborted).toBe(true);
+    });
+
+    it("reports the deadline firing distinctly from other transport failures", async () => {
+        stallUntilAborted();
+
+        const error = await fetchUserImage(
+            "https://example.com/slow.png",
+            { timeoutMs: 40 },
+        ).catch((cause) => cause);
+
+        expect(error).toMatchObject({
+            name: "UserImageError",
+            errorCode: "failed_to_download_image",
+        });
+        expect(error.message).toMatch(
+            /^Timed out downloading media from https:\/\/example\.com\/slow\.png/,
+        );
+        expect(error.message).toContain("40 ms");
+    });
+
+    it("keeps the default deadline at thirty seconds", () => {
+        expect(USER_IMAGE_FETCH_TIMEOUT_MS).toBe(30_000);
     });
 });
