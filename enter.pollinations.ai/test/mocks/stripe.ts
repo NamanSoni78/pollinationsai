@@ -64,6 +64,8 @@ type StripeCheckoutSession = {
     metadata?: Record<string, string>;
     payment_status?: "paid" | "unpaid";
     payment_intent?: string | null;
+    amount_total?: number | null;
+    currency?: string;
 };
 
 type StripePortalSession = {
@@ -394,10 +396,15 @@ export function createMockStripe(): MockAPI<MockStripeState> {
             recordRequest(c, state);
             const customer = c.req.query("customer");
             const status = c.req.query("status");
+            // The refund-reversal webhook looks a pack checkout up by the
+            // PaymentIntent its refund carries back.
+            const paymentIntent = c.req.query("payment_intent");
             const data = state.checkoutSessions.filter(
                 (session) =>
                     (!customer || session.customer === customer) &&
-                    (!status || session.status === status),
+                    (!status || session.status === status) &&
+                    (!paymentIntent ||
+                        session.payment_intent === paymentIntent),
             );
             return c.json({
                 object: "list",
