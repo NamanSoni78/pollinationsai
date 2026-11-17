@@ -171,14 +171,23 @@ export async function callKlingVideoAPI(
     const billedSeconds = Number(
         ((falBillableUnits(resultResponse) * 0.14) / rate).toFixed(9),
     );
+    // The job is complete and billed by fal; every failure from here on
+    // still carries the billed seconds so the caller is charged.
+    const usage = {
+        completionVideoSeconds: billedSeconds,
+        ...(generateAudio ? { completionAudioSeconds: billedSeconds } : {}),
+    };
     const result = await readJson<KlingResult>(
         resultResponse,
         "Kling returned an invalid result",
     );
     if (!result.video?.url) {
-        throw UpstreamError.fromProvider(502, {
-            message: "Kling returned no video",
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: "Kling returned no video",
+            }),
+            { billedUsage: usage },
+        );
     }
 
     const videoResponse = await fetchKlingRead(result.video.url, {
@@ -200,12 +209,7 @@ export async function callKlingVideoAPI(
         durationSeconds: duration,
         trackingData: {
             actualModel: KLING_MODEL,
-            usage: {
-                completionVideoSeconds: billedSeconds,
-                ...(generateAudio
-                    ? { completionAudioSeconds: billedSeconds }
-                    : {}),
-            },
+            usage,
         },
     };
 }

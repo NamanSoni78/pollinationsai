@@ -66,12 +66,21 @@ async function readJson<T>(response: Response, message: string): Promise<T> {
     }
 }
 
-function remainingTime(deadline: number, title: string): number {
+function remainingTime(
+    deadline: number,
+    title: string,
+    // Once the fal job is accepted it runs and bills even if we stop
+    // polling, so a timeout from that point on still carries billed usage.
+    paidUsage?: { completionVideoSeconds: number },
+): number {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-        throw UpstreamError.fromProvider(504, {
-            message: `${title} generation timed out`,
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(504, {
+                message: `${title} generation timed out`,
+            }),
+            paidUsage ? { billedUsage: paidUsage } : {},
+        );
     }
     return remaining;
 }
@@ -144,10 +153,17 @@ async function callFalH3API(
         });
     }
 
+    // The job is accepted: if we give up from here, fal still runs and bills
+    // it, so every failure below carries the requested duration as billed
+    // usage — the remedy the AssemblyAI timeout fix already established.
+    const paidUsage = { completionVideoSeconds: durationSeconds };
+
     while (true) {
         const statusResponse = await fetchUpstream(submission.status_url, {
             headers: authorization,
-            signal: AbortSignal.timeout(remainingTime(deadline, title)),
+            signal: AbortSignal.timeout(
+                remainingTime(deadline, title, paidUsage),
+            ),
             errorLabel: `${title} status check failed`,
         });
         const status = await readJson<H3QueueStatus>(
@@ -166,13 +182,16 @@ async function callFalH3API(
             });
         }
         await sleep(
-            Math.min(H3_POLL_INTERVAL_MS, remainingTime(deadline, title)),
+            Math.min(
+                H3_POLL_INTERVAL_MS,
+                remainingTime(deadline, title, paidUsage),
+            ),
         );
     }
 
     const resultResponse = await fetchUpstream(submission.response_url, {
         headers: authorization,
-        signal: AbortSignal.timeout(remainingTime(deadline, title)),
+        signal: AbortSignal.timeout(remainingTime(deadline, title, paidUsage)),
         errorLabel: `${title} result fetch failed`,
     });
     const billableUnits = Number(
@@ -182,18 +201,24 @@ async function callFalH3API(
         unitCost !== undefined &&
         (!Number.isFinite(billableUnits) || billableUnits <= 0)
     ) {
-        throw UpstreamError.fromProvider(502, {
-            message: `${title} returned invalid billing units`,
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: `${title} returned invalid billing units`,
+            }),
+            { billedUsage: paidUsage },
+        );
     }
     const result = await readJson<H3Result>(
         resultResponse,
         `${title} returned an invalid result`,
     );
     if (!result.video?.url) {
-        throw UpstreamError.fromProvider(502, {
-            message: `${title} returned no video`,
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: `${title} returned no video`,
+            }),
+            { billedUsage: paidUsage },
+        );
     }
 
     const videoResponse = await fetchUpstream(result.video.url, {
