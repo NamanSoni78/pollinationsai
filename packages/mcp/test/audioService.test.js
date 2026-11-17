@@ -106,11 +106,80 @@ test("rejects private audio URLs before fetching", async (t) => {
         return new Response(new Uint8Array([1]));
     };
 
-    await assert.rejects(
-        transcribeAudio({ source: "https://127.0.0.1/audio.mp3" }, CONTEXT),
-        /public HTTPS URL/,
-    );
+    for (const blockedUrl of [
+        "https://127.0.0.1/audio.mp3",
+        "https://localhost/audio.mp3",
+        "https://localhost./audio.mp3",
+        "https://sub.localhost./audio.mp3",
+        "https://internal.local/audio.mp3",
+        "https://service.internal/audio.mp3",
+        "https://intranet/audio.mp3",
+    ]) {
+        await assert.rejects(
+            transcribeAudio({ source: blockedUrl }, CONTEXT),
+            /public HTTPS URL/,
+        );
+    }
     assert.equal(calls, 0);
+});
+
+test("rejects oversized source audio via Content-Length or streamed bytes before forwarding", async (t) => {
+    const originalFetch = globalThis.fetch;
+    let genCalls = 0;
+    let streamPulls = 0;
+    let streamCancelled = false;
+    t.after(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    globalThis.fetch = async (input, init = {}) => {
+        const url = String(input);
+        if (url === "https://cdn.example.com/declared-huge.mp3") {
+            assert.ok(init.signal instanceof AbortSignal);
+            return new Response(new Uint8Array([1, 2, 3]), {
+                headers: {
+                    "Content-Type": "audio/mpeg",
+                    "Content-Length": String(26 * 1024 * 1024),
+                },
+            });
+        }
+        if (url === "https://cdn.example.com/streamed-huge.mp3") {
+            assert.ok(init.signal instanceof AbortSignal);
+            const chunk = new Uint8Array(1024 * 1024);
+            return new Response(
+                new ReadableStream({
+                    pull(controller) {
+                        streamPulls += 1;
+                        controller.enqueue(chunk);
+                    },
+                    cancel() {
+                        streamCancelled = true;
+                    },
+                }),
+                { headers: { "Content-Type": "audio/mpeg" } },
+            );
+        }
+        genCalls += 1;
+        return Response.json({ text: "unreachable" });
+    };
+
+    await assert.rejects(
+        transcribeAudio(
+            { source: "https://cdn.example.com/declared-huge.mp3" },
+            CONTEXT,
+        ),
+        /exceeds maximum size of 25 MB/,
+    );
+    await assert.rejects(
+        transcribeAudio(
+            { source: "https://cdn.example.com/streamed-huge.mp3" },
+            CONTEXT,
+        ),
+        /exceeds maximum size of 25 MB/,
+    );
+    assert.equal(streamCancelled, true);
+    assert.ok(streamPulls <= 27);
+    assert.equal(genCalls, 0);
 });
 
 test("rejects redirecting audio URLs without following them", async (t) => {
