@@ -393,6 +393,27 @@ export function stopReason(
     return "end_turn";
 }
 
+/**
+ * A completion that finished with finish_reason=error is a failed
+ * generation, not an answer: its content is a partial/truncated body.
+ * Return the provider's error message so callers can fail the turn
+ * instead of silently committing half-finished work.
+ */
+export function completionFinishError(
+    completion: CreateChatCompletionResponse,
+): string | undefined {
+    for (const choice of completion.choices) {
+        if (choice?.finish_reason !== "error") continue;
+        const message = (
+            choice as { error?: { message?: unknown } }
+        ).error?.message;
+        return typeof message === "string" && message
+            ? message
+            : "Upstream ended generation with finish_reason=error";
+    }
+    return undefined;
+}
+
 export function toolUseInput(argumentsJson: string): unknown {
     return JSON.parse(argumentsJson || "{}");
 }
@@ -432,6 +453,10 @@ export function chatToMessagesResponse(
     completion: CreateChatCompletionResponse,
     model: string,
 ): CreateMessageResponse {
+    const finishError = completionFinishError(completion);
+    if (finishError) {
+        throw new Error(finishError);
+    }
     const choice = completion.choices[0];
     const message = choice?.message;
     const content: CreateMessageResponse["content"] = [];

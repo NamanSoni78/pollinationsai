@@ -32,7 +32,11 @@ type ChatDelta = {
 
 type ChatChunk = {
     id?: string;
-    choices?: { delta?: ChatDelta; finish_reason?: string | null }[];
+    choices?: {
+        delta?: ChatDelta;
+        finish_reason?: string | null;
+        error?: { message?: string };
+    }[];
     usage?: CompletionUsage | null;
     error?: { message?: string };
 };
@@ -63,6 +67,7 @@ export function chatToMessagesStream(
     let blockIndex = -1;
     let openBlock: "text" | "thinking" | null = null;
     let finishReason: string | null | undefined;
+    let finishErrorMessage: string | undefined;
     let usage: CompletionUsage | undefined;
     let ended = false;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -113,6 +118,16 @@ export function chatToMessagesStream(
                 send("content_block_delta", { index: blockIndex, delta });
             };
             const complete = () => {
+                if (
+                    finishReason === "error" ||
+                    finishErrorMessage !== undefined
+                ) {
+                    fail(
+                        finishErrorMessage ??
+                            "Upstream ended generation with finish_reason=error",
+                    );
+                    return;
+                }
                 if (!CompletionUsageSchema.safeParse(usage).success) {
                     fail("Provider returned no usage");
                     return;
@@ -170,6 +185,11 @@ export function chatToMessagesStream(
                 const choice = chunk.choices?.[0];
                 if (!choice) return;
                 if (choice.finish_reason) finishReason = choice.finish_reason;
+                if (choice.finish_reason === "error") {
+                    finishErrorMessage =
+                        choice.error?.message ??
+                        "Upstream ended generation with finish_reason=error";
+                }
                 const delta = choice.delta ?? {};
                 const reasoning = delta.reasoning_content ?? delta.reasoning;
                 if (reasoning) {
