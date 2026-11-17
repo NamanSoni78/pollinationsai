@@ -16,6 +16,11 @@ const REQUEST_PRICE_FIELDS = [
  * Per-request estimate from the model definition, or null when the definition
  * is token-priced (Tinybird's historical average is the better preflight).
  * A rate with a declared unit gives the price of one unit, e.g. one megapixel.
+ *
+ * A per-second field is one second of a render whose duration is only known at
+ * completion, so its per-request estimate is the worst case (rate × maxDuration)
+ * rather than one second: a 30s render billed 29 pollen must not be admitted
+ * on a 0.97 estimate.
  */
 export function getDefinedRequestEstimate(
     definition: ModelDefinition,
@@ -25,11 +30,44 @@ export function getDefinedRequestEstimate(
     const price = getPriceDefinitionForModel(definition);
     const field = REQUEST_PRICE_FIELDS.find((f) => price[f] != null);
     if (!field) return null;
-    const requestPrice =
-        (price[field] ?? 0) * (definition.priceUnits?.[field]?.quantity ?? 1);
+    const unitQuantity = definition.priceUnits?.[field]?.quantity ?? 1;
+    const perSecond =
+        field === "completionVideoSeconds" ||
+        field === "completionAudioSeconds";
+    const requestMultiplier = perSecond
+        ? Math.max(1, definition.maxDuration ?? unitQuantity)
+        : unitQuantity;
+    const requestPrice = (price[field] ?? 0) * requestMultiplier;
     return Number.isFinite(requestPrice) && requestPrice >= 0
         ? requestPrice
         : null;
+}
+
+/** True when the model bills by the second in its registry price. */
+function perSecondPriceField(
+    definition: ModelDefinition,
+): "completionVideoSeconds" | "completionAudioSeconds" | null {
+    const price = getPriceDefinitionForModel(definition);
+    if (price.completionVideoSeconds != null) return "completionVideoSeconds";
+    if (price.completionAudioSeconds != null) return "completionAudioSeconds";
+    return null;
+}
+
+/**
+ * Worst-case per-request bound for a per-second model: rate × maxDuration.
+ * Null when the model is not per-second priced or has no usable maximum.
+ */
+export function getPerSecondUpperBound(
+    definition: ModelDefinition,
+): number | null {
+    const field = perSecondPriceField(definition);
+    if (!field) return null;
+    const price = getPriceDefinitionForModel(definition);
+    const rate = price[field] ?? 0;
+    const maxDuration = definition.maxDuration;
+    if (!(rate > 0) || !(maxDuration > 0)) return null;
+    const bound = rate * maxDuration;
+    return Number.isFinite(bound) && bound > 0 ? bound : null;
 }
 
 /**
@@ -55,6 +93,17 @@ export function getEstimatedPrice(
             stats.data?.find((r) => r.model === model) ??
             stats.data?.find((r) => definition?.aliases.includes(r.model))
         )?.avg_cost_usd || 0;
+    // A per-second model only reveals its duration at completion, so a
+    // Tinybird average (or a cold zero) systematically under-reserves
+    // above-average renders: a 15s render billed 2.7 was admitted on a 0.9
+    // average, a 30s render on one second's rate. For a finite budget the
+    // worst case (rate × maxDuration) is the only safe preflight.
+    const perSecondBound = definition
+        ? getPerSecondUpperBound(definition)
+        : null;
+    if (perSecondBound != null) {
+        return perSecondBound;
+    }
     const defined = definition ? getDefinedRequestEstimate(definition) : null;
     if (
         defined != null &&
