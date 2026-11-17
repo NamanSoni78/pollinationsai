@@ -37,3 +37,31 @@ Treated as deliberate design, not submitted: expired custom ids being reusable (
 | Date (UTC) | Action |
 |---|---|
 | 2026-11-18 | fork/main verified equal to upstream `549feee`; issues 1–11 + `solution9`–`solution11` branches confirmed; round-4 review appended |
+
+## Round 5 — MCP gateway, jobs, messages, shared hardening (2026-11-18)
+
+Baseline: upstream `549feee` (fork/main equal, verified). Scope: `gen` MCP gateway (`routes/mcp.ts`, `mcp-card.ts`), async job routes, Anthropic-compat `/v1/messages`, stem separation, and shared hardening modules (`response-bytes`, `client-ip`, `community-endpoint-urls`, `error`, Stripe webhook verification, D1 query construction).
+
+**No new issue accepted — controls verified live and in code:**
+
+| Control | Evidence |
+|---|---|
+| MCP gateway cannot be reached without a key | Live against `gen.pollinations.ai`: `/mcp` 200 (public catalog, by design), `/mcp/exa` **401**, `/mcp/ffmpeg` **401**, `/mcp/EXA` **401**, `/mcp/exa/` **404**, `/mcp//exa` **404**, `/mcp/exa/card` **404** — no path variant falls through to a server binding |
+| Paid-only models refuse anonymous callers | Live: `POST /v1/chat/completions` `google/gemini-3.7-flash` → **401**; `GET /image` `black-forest-labs/flux.2-max` → **401** |
+| Job status/result are owner-scoped | `routes/jobs.ts` resolves through `GENERATION_COORDINATOR.getByName(id).status(userId)`; another account gets 404, results served `private, no-store` + `Vary: Authorization` |
+| `/v1/messages` inherits chat auth, balance, cache and billing | Route dispatches to `/v1/chat/completions` with the caller's headers, so no parallel billing path exists |
+| Stem separation runs the full gate chain | `auth`, `balance`, cache, `generationAccess`, `apiKeyBudgetReservation` before the provider call |
+| Untrusted response bodies cannot exceed their cap | `shared/response-bytes.ts` checks Content-Length and a running byte count while streaming |
+| Rate-limit identity is not client-spoofable | `shared/client-ip.ts` reads only `cf-connecting-ip` |
+| Community endpoint URLs reject internal targets | `shared/community-endpoint-urls.ts` blocks localhost/.local, IPv6 literals, 127/10/192.168/169.254/172.16-31/CGNAT 100.64-127, 0.0.0.0/0, 224+ and 198.18-19 |
+| Error responses do not leak storage internals | `shared/error.ts` drops Drizzle/D1 query text and caps upstream bodies at 16 KB |
+| Payment and scan webhooks verify signatures | `routes/stripe-webhooks.ts` rejects unsigned or invalid `stripe-signature` with 400 |
+| No interpolated SQL outside test helpers | Repo-wide scan: only `shared/test/reset-storage.ts` builds table names into SQL |
+
+**Rejected this round (recorded so later sessions do not resubmit):**
+
+- Seedance 2.5 edit without `promptVideoSeconds`: input-video cost is folded into the higher `video_in_480p`/`video_in_720p` completion rates (`shared/registry/image.ts:1933-1940`), so nothing is unbilled.
+- Video preflight reserving roughly one second: `getDefinedRequestEstimate` is a deliberate soft preflight by declared unit (upstream `95a49d1` fixed the megapixel analogue and kept one-unit semantics); settlement is post-paid, so this is design, not a defect.
+- `/v1/messages` dropping the query string: re-tested, `?key=` authenticates normally.
+
+**Sync:** fork/main = upstream `549feee`; branches `issues_mds`, `solution1`–`solution11` intact.
