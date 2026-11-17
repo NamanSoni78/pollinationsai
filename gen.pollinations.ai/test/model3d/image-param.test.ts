@@ -27,3 +27,44 @@ describe.each([
         ).toEqual(["https://a.example/1,2.png", "https://b.example/2.png"]);
     });
 });
+
+describe("3d runtime image param URL policy", () => {
+    const parseImage = (image: unknown) =>
+        Model3dParamsSchema.parse({ model: DEFAULT_3D_MODEL, image }).image;
+
+    it("accepts public HTTP(S) reference URLs", () => {
+        expect(parseImage("https://example.com/ref.jpg")).toEqual([
+            "https://example.com/ref.jpg",
+        ]);
+    });
+
+    it("rejects loopback, private and literal-IP reference URLs", () => {
+        for (const url of [
+            "http://127.0.0.1:8080/admin",
+            "http://10.0.0.5/internal",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://localhost/x.png",
+            "file:///etc/passwd",
+            "https://user:pass@example.com/ref.jpg",
+        ]) {
+            const result = Model3dParamsSchema.safeParse({
+                model: DEFAULT_3D_MODEL,
+                image: url,
+            });
+            expect(result.success).toBe(false);
+            if (!result.success) {
+                expect(result.error.issues[0].message).toBe(
+                    "Reference images must use public HTTP(S) URLs without credentials or literal IP hosts.",
+                );
+            }
+        }
+    });
+
+    it("rejects a private URL mixed into a valid list", () => {
+        const result = Model3dParamsSchema.safeParse({
+            model: DEFAULT_3D_MODEL,
+            image: ["https://example.com/ok.png", "http://192.168.1.4/x.png"],
+        });
+        expect(result.success).toBe(false);
+    });
+});
