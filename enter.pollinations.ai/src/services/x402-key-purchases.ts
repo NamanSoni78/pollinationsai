@@ -12,7 +12,9 @@ import type { Env } from "../env.ts";
 type Purchase = {
     payment_id: string;
     user_id: string;
-    key_id: string;
+    // Null after the purchased key was revoked: the audit row survives for
+    // support key recovery, with its apikey link cleared (migration 0083).
+    key_id: string | null;
     pack_key: string;
     encrypted_key: string;
     credited_at: number | null;
