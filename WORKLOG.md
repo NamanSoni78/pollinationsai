@@ -50,3 +50,58 @@ Removed the two duplicate-numbered files (`issue10-json-upload-isolate-oom.md`, 
 ### Blocker recorded
 
 Upstream pull-request creation still returns `403 Resource not accessible by personal access token` although the token reports `pull_requests=write`; fork PRs #15/#16 remain the live review surface until an upstream-scoped token is supplied.
+
+
+## Round 6 — enter auth surface + live probe matrix (2026-11-18, session 2)
+
+Baseline: upstream `549feee`; `fork/main` identical; `issues_mds` `3115ddd` (parallel-session round preserved — issues 1–13 and PRs #15/#16 untouched). This round is additive only: no history rewrite, no file deletions.
+
+Scope: `enter.pollinations.ai` authorization core (device grant, session tokens, API-key authentication, edge rate limit, admin guard, referral/quest grants, async-job ownership, app lookup, unsubscribe, repo-bot authorization) plus a non-destructive live probe matrix against `gen.pollinations.ai`.
+
+### No new issue accepted — controls verified
+
+| Control | Evidence |
+|---|---|
+| Device grant is single-use and unforgeable | 40-char device code + 8-char user code over a 32-symbol alphabet; `/token` deletes the D1 row and the KV entry in one step before releasing the key (`routes/device.ts`), so a replayed poll gets `invalid_grant` |
+| Device user codes are not a token oracle | `GET /api/device/info` returns only `status`/`scope`/`clientId`; the key is released only to the holder of the 40-char device code |
+| Device client ids must be real published apps | `isKnownDeviceClient` → `findPublishableClientKey`; unknown or revoked ids fail at issuance with `invalid_client` |
+| Session tokens are short-lived and scoped | HS256 over a purpose-derived signing key, `iss`/`aud`/`exp` (900 s)/`typ` all required; `extractApiKey` refuses `sess_` tokens in `?key=`, so they cannot leak through referrers |
+| Publishable keys can never authenticate | `pk_` prefix → 401 with an explicit refusal; `sk_`/app keys stay distinct |
+| Key lookup cannot amplify floods or act as an oracle | 300 s negative cache on invalid key hashes; `last_request` write throttled to 5 minutes |
+| Edge rate limit still counts IPs with `byIp:false` | `shared/rate-limit.ts` counts every unkeyed request when `cf-connecting-ip` is present, so device codes, app lookup and sign-in cannot be flooded from one host |
+| Admin API is unreachable with a user credential | `routes/admin.ts` requires a bearer matching `PLN_ENTER_TOKEN` (constant-time `secretEquals`) or the hashed D1-export token on the single `trigger-d1-sync` path; there is no session or API-key path |
+| Bulk pollen grants are admin-only and idempotent | admin guard + `rewardKey(questId, user)` idempotency keys in `quest-grants.ts` |
+| Async job results are owner-scoped | `/v1/jobs/*` mounts `auth()`; `ownedJob` queries the per-job Durable Object with the caller's user id, ids are 64-hex hashes |
+| App lookup binds client_id to its redirect allowlist | `app-lookup.ts` answers `{found:false}` on mismatch, so a public `pk_` cannot brand a consent screen and hand a key to a third-party redirect |
+| Unsubscribe links are signed | `verifyUnsubscribe(BETTER_AUTH_SECRET, u, s)`; forged links get the invalid page |
+| Repo bot cannot be triggered by a non-maintainer | immutable numeric user ids, `sender.type === 'Bot'` rejected, label removed on failure (`repo-auto-fix-polli-issues.yml`, `polli-authorization.mjs`) |
+| Input surfaces are bounded | TTS `input` ≤ 10 000 chars, duration ≤ 380 s, steps ≤ 100, seed ≤ u32, image ≥ 16 px/side, embedding batch capped |
+| Site hosts are isolated from the dashboard origin | `sites.ts` resolves names only under `SITES_HOST_SUFFIX`, never under the `enter`/`gen` hosts |
+
+### Live probe matrix (anonymous + own key, non-destructive)
+
+| Probe | Result |
+|---|---|
+| `GET /image/{prompt}` anon, prompt generated before | 200 — cache HIT, i.e. issue #1, not a new finding |
+| `GET /image/{fresh prompt}` anon | 401 |
+| `GET /image/...?width=16384&height=16384` anon | 401 (uncached) |
+| `GET /image/...?width=abc` anon | 400 with `fieldErrors.width` |
+| `GET /video/...`, `GET /3d/...` anon | 401 |
+| `POST /v1/audio/transcriptions` (multipart) anon | 401 |
+| `POST /v1/audio/speech`, `POST /v1/embeddings`, `GET /text/...` anon | 200 (free tier) |
+| `POST /v1/chat/completions` anon with `openai/gpt-6.1-sol` or `moonshotai/kimi-k3.1-pro` | 401 — premium models are not anonymously selectable |
+| `POST /mcp` anon | 405 |
+| Reflected payload probe (`<script>`, `<svg onload>`) | JSON errors only, no HTML reflection |
+
+Balance before and after the probes: `1.97499171` → `1.97499171` pollen (no spend).
+
+### Candidates rejected (recorded, not submitted)
+
+- Device-code phishing by borrowing a third-party `pk_` as `client_id`: the consent page shows the real owner, the grant is explicit per device, and the key is minted by the victim's own session — no server-side authorization gap to patch.
+- `/approve` accepts `apiKey`/`apiKeyId` from the body: the key is minted by the same authenticated session, so there is no gain without an already-stolen key.
+- Unauthenticated `/api/device/code` row creation: bounded by the IP-counted edge limit.
+- Auto-fix agent reads untrusted issue text with a write token: maintainer-only label gate with immutable ids — accepted design risk, not reproducible without maintainer action.
+
+### Fix-PR staleness check
+
+Re-tested the removed lines of every open fix PR against upstream `549feee`: #1, #10, #11, #12, #13, #14 all still apply (the vulnerable code is still on main), so none needs a rebase and none is obsolete.
