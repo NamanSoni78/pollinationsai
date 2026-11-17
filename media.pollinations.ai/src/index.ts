@@ -58,7 +58,7 @@ const KEY_VERIFY_URL = "https://enter.pollinations.ai/api/account/key";
 // IDs can be reused after expiry; neither should remain in downstream caches.
 const UNCACHED_CACHE_CONTROL = "no-store";
 const DEFAULT_MAX_SIZE = 104857600; // 100 MB
-const MAX_BUFFERED_SIZE = 104857600; // JSON base64 uploads still buffer in memory
+const MAX_BUFFERED_SIZE = 16 * 1024 * 1024; // JSON base64 uploads buffer several copies of the file in isolate memory (raw body text, parsed string, atob binary string, byte array — ~4.6x the decoded size). Cloudflare kills the isolate above 128 MiB, so the JSON cap must stay memory-safe; 100 MiB here reliably OOMed the worker (error 1102, live-tested at a 40 MiB payload). Multipart and raw bodies stream and keep the full cap.
 const MAX_PRIVACY_IMAGE_SIZE = 32 * 1024 * 1024;
 
 function isImage(contentType: string): boolean {
@@ -336,7 +336,7 @@ api.post(
         tags: ["media.pollinations.ai"],
         summary: "Upload media",
         description:
-            "Upload an image, audio, or video file via multipart/form-data (field `file`), application/json (base64 `data`), or a raw file body with its media MIME type and Content-Length headers. Multipart and raw uploads stream to storage up to 400 MiB; JSON uploads remain limited to 100 MiB because base64 decoding buffers in Worker memory. Raw uploads receive a random, unlisted ID. Each account can upload up to 100 files a minute. Returns an id and its retrieval URL. Image metadata is stripped only when requested with `safe=privacy` or the `Pollinations-Safe: privacy` header; `safe=true` also enables privacy. Without it, uploaded bytes are preserved. Privacy processing supports image uploads up to 32 MiB and returns an error for larger or unparseable images. Omit `id` for a new random ID, or supply a case-sensitive ID scoped to your account. Custom IDs require a user-owned API key; the returned id includes an opaque account prefix. Existing files or gallery entries return 409 without being replaced, including on retries. Untagged files cannot be deleted. Files expire after 30 days; GET refreshes retention once a file is at least 15 days old.\n\n**Tags publish.** An optional `tags` field publishes the upload into each tag's public gallery (GET /media?tag=…), where anyone can see it. Untagged uploads stay unlisted, but all retrieval URLs are public. Knowing one custom URL makes other predictable names in that account guessable. **Alpha:** the publish tagging is new and may still change.",
+            "Upload an image, audio, or video file via multipart/form-data (field `file`), application/json (base64 `data`), or a raw file body with its media MIME type and Content-Length headers. Multipart and raw uploads stream to storage up to 400 MiB; JSON uploads remain limited to 16 MiB because base64 decoding buffers in Worker memory (larger buffers exceed the isolate limit before the cap is checked); use multipart or raw uploads for larger files. Raw uploads receive a random, unlisted ID. Each account can upload up to 100 files a minute. Returns an id and its retrieval URL. Image metadata is stripped only when requested with `safe=privacy` or the `Pollinations-Safe: privacy` header; `safe=true` also enables privacy. Without it, uploaded bytes are preserved. Privacy processing supports image uploads up to 32 MiB and returns an error for larger or unparseable images. Omit `id` for a new random ID, or supply a case-sensitive ID scoped to your account. Custom IDs require a user-owned API key; the returned id includes an opaque account prefix. Existing files or gallery entries return 409 without being replaced, including on retries. Untagged files cannot be deleted. Files expire after 30 days; GET refreshes retention once a file is at least 15 days old.\n\n**Tags publish.** An optional `tags` field publishes the upload into each tag's public gallery (GET /media?tag=…), where anyone can see it. Untagged uploads stay unlisted, but all retrieval URLs are public. Knowing one custom URL makes other predictable names in that account guessable. **Alpha:** the publish tagging is new and may still change.",
         parameters: [
             {
                 in: "query",
@@ -672,6 +672,13 @@ api.post(
                         fileTooLargeError(MAX_PRIVACY_IMAGE_SIZE),
                         413,
                     );
+                }
+                // Decoded size is knowable from the base64 length, so
+                // reject oversized payloads before allocating the atob
+                // binary string and the byte copy — decoding first is what
+                // let sub-cap-but-huge payloads OOM the isolate.
+                if (base64Data.length > Math.ceil((jsonMaxSize * 4) / 3)) {
+                    return c.json(fileTooLargeError(jsonMaxSize), 413);
                 }
                 let binaryString: string;
                 try {
@@ -1209,7 +1216,7 @@ app.get("/", (c) => {
             docs: "GET /openapi.json",
         },
         limits: {
-            maxFileSize: "400 MiB (multipart or raw upload); 100 MiB (JSON)",
+            maxFileSize: "400 MiB (multipart or raw upload); 16 MiB (JSON)",
         },
     });
 });
