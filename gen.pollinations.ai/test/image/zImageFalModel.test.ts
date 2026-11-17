@@ -125,4 +125,64 @@ describe("callZImageFalAPI", () => {
             message: "Z-Image Fal returned invalid JSON",
         });
     });
+
+    it.each([
+        ["4096x4096 (17x the pool's pixel cap)", 4096, 4096],
+        ["2048x2048", 2048, 2048],
+        ["below the pool's minimum side", 100, 100],
+        ["above the pool's maximum side", 8192, 256],
+    ])(
+        "refuses %s without calling fal, mirroring the pool workers' 422",
+        async (_name, width, height) => {
+            const fetchSpy = vi
+                .spyOn(globalThis, "fetch")
+                .mockResolvedValueOnce(new Response("unexpected", {
+                    status: 500,
+                }));
+
+            await expect(
+                callZImageFalAPI("a red apple", {
+                    ...params,
+                    width,
+                    height,
+                }),
+            ).rejects.toMatchObject({
+                status: 422,
+                message: expect.stringContaining("exceeds the z-image limit"),
+            });
+            expect(fetchSpy).not.toHaveBeenCalled();
+        },
+    );
+
+    it("serves dimensions at the pool cap exactly", async () => {
+        const requests: Array<{ url: string; init?: RequestInit }> = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+            const href = url.toString();
+            requests.push({ url: href, init });
+            if (href === FAL_ENDPOINT) {
+                return Response.json(
+                    {
+                        images: [
+                            { url: IMAGE_URL, content_type: "image/jpeg" },
+                        ],
+                    },
+                    { headers: { "x-fal-billable-units": "3" } },
+                );
+            }
+            return new Response(JPEG_BYTES, {
+                headers: { "content-type": "image/jpeg" },
+            });
+        });
+
+        // 1536x1536 = 2,359,296 px, exactly the pool's MAX_FINAL_PIXELS.
+        await callZImageFalAPI("a red apple", {
+            ...params,
+            width: 1536,
+            height: 1536,
+        });
+
+        expect(JSON.parse(requests[0].init?.body as string)).toMatchObject({
+            image_size: { width: 1536, height: 1536 },
+        });
+    });
 });

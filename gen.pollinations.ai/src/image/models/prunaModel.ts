@@ -165,15 +165,41 @@ async function generateDeepInfraImage(
     };
 }
 
+// The flux pool workers clamp requests above their pixel budget
+// (MAX_PIXELS, 810,000 by default) down to it, preserving aspect ratio,
+// before generating. The DeepInfra fallback must do the same: DeepInfra
+// bills FLUX.1 Schnell by image area while the caller pays the pool's flat
+// quote, so forwarding unclamped dimensions (the schema has no maximum)
+// would turn the platform's fallback subsidy into an unbounded cost gap —
+// a 4096x4096 request that sheds to DeepInfra while the pool is saturated
+// or down bills ~17x the flat price the caller pays.
+const FLUX_MAX_PIXELS = 810_000;
+
+function clampToFluxPoolPixelCap(
+    width: number,
+    height: number,
+): { width: number; height: number } {
+    if (width * height <= FLUX_MAX_PIXELS) return { width, height };
+    const scale = Math.sqrt(FLUX_MAX_PIXELS / (width * height));
+    return {
+        width: Math.max(1, Math.round(width * scale)),
+        height: Math.max(1, Math.round(height * scale)),
+    };
+}
+
 /** Exact FLUX.1 Schnell fallback served by DeepInfra. */
 export async function callFluxSchnellDeepInfraAPI(
     prompt: string,
     safeParams: ImageParams,
 ): Promise<ImageGenerationResult> {
+    const { width, height } = clampToFluxPoolPixelCap(
+        safeParams.width ?? 1024,
+        safeParams.height ?? 1024,
+    );
     const input: FluxSchnellInput = {
         prompt,
-        width: safeParams.width,
-        height: safeParams.height,
+        width,
+        height,
         num_images: 1,
     };
     if (safeParams.seed !== undefined) input.seed = safeParams.seed;

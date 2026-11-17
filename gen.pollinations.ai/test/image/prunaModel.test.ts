@@ -120,6 +120,45 @@ describe("prunaModel - FLUX.1 Schnell on DeepInfra", () => {
             providerBilling: { units: 0.005, unitCost: 1 },
         });
     });
+
+    it("clamps oversized dimensions to the flux pool's pixel cap, preserving aspect", async () => {
+        const requests: ProviderRequest[] = [];
+        mockPrunaFetch(requests);
+
+        await callFluxSchnellDeepInfraAPI("a red apple", {
+            ...baseParams,
+            model: "black-forest-labs/flux.1-schnell:deepinfra",
+            width: 4096,
+            height: 4096,
+            dimensionsExplicit: true,
+        });
+
+        expect(requests).toHaveLength(1);
+        const body = requests[0].body as { width: number; height: number };
+        // The flux pool clamps to MAX_PIXELS (810,000) keeping the aspect
+        // ratio; the fallback must not forward the raw 16.8 MP request that
+        // DeepInfra would bill by area while the caller pays the flat quote.
+        expect(body.width * body.height).toBeLessThanOrEqual(810_000);
+        expect(body.width).toBeGreaterThan(0);
+        expect(body.height).toBeGreaterThan(0);
+        expect(Math.abs(body.width / body.height - 1)).toBeLessThan(0.01);
+    });
+
+    it("forwards dimensions below the cap untouched", async () => {
+        const requests: ProviderRequest[] = [];
+        mockPrunaFetch(requests);
+
+        await callFluxSchnellDeepInfraAPI("a red apple", {
+            ...baseParams,
+            model: "black-forest-labs/flux.1-schnell:deepinfra",
+            width: 1024,
+            height: 768,
+            dimensionsExplicit: true,
+        });
+
+        const body = requests[0].body as { width: number; height: number };
+        expect(body).toMatchObject({ width: 1024, height: 768 });
+    });
 });
 
 describe("prunaModel - p-image", () => {
