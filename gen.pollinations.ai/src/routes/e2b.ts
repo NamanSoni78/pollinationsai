@@ -529,7 +529,11 @@ function noteRequestActivity(
 // has, and from a caller with a budget a budget of 0: the box's rent is billed
 // to the caller's budget, so the caller keeps all of it. Returns what the
 // caller must do then to fund the box key.
-async function logIn(c: E2bContext, sandbox: CreatedSandbox) {
+async function logIn(
+    c: E2bContext,
+    sandbox: CreatedSandbox,
+    keyExpiresIn?: number,
+) {
     const callerKey = c.var.auth.apiKey;
     const budgeted = typeof callerKey?.pollenBalance === "number";
     const created = await c.env.ENTER.fetch(
@@ -549,6 +553,7 @@ async function logIn(c: E2bContext, sandbox: CreatedSandbox) {
                       )
                     : POLLI_PERMISSIONS,
                 ...(budgeted && { pollenBudget: 0 }),
+                ...(keyExpiresIn && { expiresIn: keyExpiresIn }),
             }),
         },
     );
@@ -690,7 +695,21 @@ const sandboxApi = (keeper: boolean, ...authenticate: MiddlewareHandler[]) =>
             let notice: string | undefined;
             if (template) {
                 try {
-                    notice = await logIn(c, created);
+                    // The lease ends at `until` at the latest (or at E2B's
+                    // 24h run cap without a keep), and the polli login inside
+                    // the box must not outlive the sandbox that holds it.
+                    notice = await logIn(
+                        c,
+                        created,
+                        until
+                            ? Math.max(
+                                  60,
+                                  Math.ceil(
+                                      (until.getTime() - Date.now()) / 1000,
+                                  ),
+                              )
+                            : MAX_RUN_MS / 1000,
+                    );
                 } catch (error) {
                     // The sandbox still works; `polli auth login` in it logs in.
                     c.var.log.error("Sandbox login failed: {error}", {

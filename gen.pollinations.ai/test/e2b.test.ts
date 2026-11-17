@@ -957,6 +957,8 @@ test("the pollinations templates come logged in with a key from enter's key API"
             name: `polli-sandbox-${sandboxID}`,
             type: "secret",
             accountPermissions: ["profile", "usage", "machines"],
+            // No keep in the request, so the login expires at E2B's 24h run cap.
+            expiresIn: 86_400,
         },
     });
 
