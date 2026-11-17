@@ -121,12 +121,12 @@ export async function atomicReserveApiKeyBalance(
     if (amount <= 0) return { ok: true, reserved: 0 };
 
     const result = await db.run(sql`
-			UPDATE ${apiKeyTable}
-			SET pollen_balance = ROUND(pollen_balance - ${amount}, ${POLLEN_BILLING_PRECISION})
-			WHERE id = ${apiKeyId}
-			AND pollen_balance IS NOT NULL
-			AND pollen_balance >= ${amount}
-		`);
+                        UPDATE ${apiKeyTable}
+                        SET pollen_balance = ROUND(pollen_balance - ${amount}, ${POLLEN_BILLING_PRECISION})
+                        WHERE id = ${apiKeyId}
+                        AND pollen_balance IS NOT NULL
+                        AND pollen_balance >= ${amount}
+                `);
 
     const ok = (result.meta.changes ?? 0) > 0;
     return { ok, reserved: ok ? amount : 0 };
@@ -134,7 +134,11 @@ export async function atomicReserveApiKeyBalance(
 
 /**
  * Reconcile a finite API-key budget with the final charge. Positive amounts
- * deduct more; negative amounts release unused reservation.
+ * deduct more; negative amounts release unused reservation. A positive
+ * adjustment can never drive the budget below zero: the reserve path already
+ * enforces `pollen_balance >= amount`, so a final bill beyond the remaining
+ * budget floors at 0 (the platform absorbs the difference) instead of
+ * leaving the key with unbounded negative debt.
  */
 export async function atomicAdjustApiKeyBalance(
     db: DrizzleD1Database,
@@ -144,11 +148,15 @@ export async function atomicAdjustApiKeyBalance(
     if (amount === 0) return { ok: true };
 
     const result = await db.run(sql`
-			UPDATE ${apiKeyTable}
-			SET pollen_balance = ROUND(pollen_balance - ${amount}, ${POLLEN_BILLING_PRECISION})
-			WHERE id = ${apiKeyId}
-			AND pollen_balance IS NOT NULL
-		`);
+                        UPDATE ${apiKeyTable}
+                        SET pollen_balance = ${
+                            amount > 0
+                                ? sql`MAX(0, ROUND(pollen_balance - ${amount}, ${POLLEN_BILLING_PRECISION}))`
+                                : sql`ROUND(pollen_balance - ${amount}, ${POLLEN_BILLING_PRECISION})`
+                        }
+                        WHERE id = ${apiKeyId}
+                        AND pollen_balance IS NOT NULL
+                `);
 
     return { ok: (result.meta.changes ?? 0) > 0 };
 }
