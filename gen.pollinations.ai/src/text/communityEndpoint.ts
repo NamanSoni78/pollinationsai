@@ -4,13 +4,94 @@ import {
 } from "@shared/auth/agent-run-token.ts";
 import {
     type CommunityEndpointRuntime,
+    COMMUNITY_ENDPOINT_TIMEOUT_MS,
     isFreeCommunityEndpoint,
     normalizeCommunityEndpointBearerToken,
     usesAgentRunToken,
 } from "@shared/community-endpoints.ts";
+import { MAX_COMMUNITY_MEDIA_RESPONSE_BYTES } from "@shared/community-media.ts";
+import { UpstreamError } from "@shared/error.ts";
 import type { ModelDefinition } from "@shared/registry/registry.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import type { RequestData, TransformOptions } from "./types.js";
+
+/**
+ * A community endpoint is a self-hosted third-party server, not one of our
+ * providers: image, embeddings and audio already bound their fetches to
+ * COMMUNITY_ENDPOINT_TIMEOUT_MS, but the text path passed no signal at all,
+ * so a wedged endpoint tarpitted the request until the platform's own
+ * timeout kicked in. Every fetch this module originates carries the
+ * community deadline; official providers are unaffected.
+ */
+export function communityEndpointFetch(
+    input: string,
+    init?: RequestInit,
+): Promise<Response> {
+    return fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(COMMUNITY_ENDPOINT_TIMEOUT_MS),
+    }).then((response) => capCommunityEndpointResponse(response));
+}
+
+function communityResponseTooLarge(total: number): UpstreamError {
+    return UpstreamError.fromProvider(502, {
+        message: `Community endpoint response is larger than ${MAX_COMMUNITY_MEDIA_RESPONSE_BYTES} bytes (saw ${total})`,
+    });
+}
+
+/**
+ * Bound how many bytes a community text response may buffer before the
+ * JSON/SSE relay paths read it. Media endpoints already cap what a publisher
+ * can return (MAX_COMMUNITY_MEDIA_RESPONSE_BYTES via readResponseBytes), but
+ * the text clients buffered the whole upstream body: a publisher could relay
+ * a 60–100 MB JSON or SSE stream — free while calling their own model — and
+ * OOM the isolate that is also serving other callers. Content-Length is
+ * checked first when present; the running total is enforced while streaming
+ * because the header can be absent or wrong, and the underlying body is
+ * cancelled so the endpoint cannot keep streaming into a request that has
+ * already failed.
+ */
+function capCommunityEndpointResponse(response: Response): Response {
+    const declared = Number.parseInt(
+        response.headers.get("content-length") ?? "",
+        10,
+    );
+    if (
+        Number.isFinite(declared) &&
+        declared > MAX_COMMUNITY_MEDIA_RESPONSE_BYTES
+    ) {
+        void response.body?.cancel().catch(() => {});
+        throw communityResponseTooLarge(declared);
+    }
+    if (!response.body) return response;
+
+    const reader = response.body.getReader();
+    let total = 0;
+    const capped = new ReadableStream<Uint8Array<ArrayBuffer>>({
+        async pull(controller) {
+            try {
+                const { done, value } = await reader.read();
+                if (done) {
+                    controller.close();
+                    return;
+                }
+                total += value.byteLength;
+                if (total > MAX_COMMUNITY_MEDIA_RESPONSE_BYTES) {
+                    await reader.cancel().catch(() => {});
+                    controller.error(communityResponseTooLarge(total));
+                    return;
+                }
+                controller.enqueue(value);
+            } catch (error) {
+                controller.error(error);
+            }
+        },
+        cancel(reason) {
+            return reader.cancel(reason);
+        },
+    });
+    return new Response(capped, response);
+}
 
 /**
  * The run token a delegating endpoint authenticates with, or undefined.
@@ -170,5 +251,16 @@ export async function communityEndpointModelConfig({
         ...(endpoint.api === "responses"
             ? { responsesEndpoint: endpoint.baseUrl }
             : { directEndpoint: endpoint.baseUrl }),
+        // Only a proxy talks to an unvetted third-party server, so only a
+        // proxy gets the deadline- and size-bound fetcher. Managed agents
+        // run on in-repo clients that already own their transport and
+        // billing, and their fetcher must keep winning over this one. The
+        // chat path reads "fetcher", the responses adapter "responsesFetcher".
+        ...(endpoint.type === "proxy" && endpoint.api === "responses"
+            ? { responsesFetcher: communityEndpointFetch }
+            : {}),
+        ...(endpoint.type === "proxy" && endpoint.api !== "responses"
+            ? { fetcher: communityEndpointFetch }
+            : {}),
     };
 }
