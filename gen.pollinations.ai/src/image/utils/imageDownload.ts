@@ -110,7 +110,9 @@ export function readImageDimensions(
  *
  * Redirects are followed here, unlike the text path: an image URL pasted into
  * the `image` parameter is routinely a shortener or a CDN that redirects, and
- * refusing those would reject URLs that work today.
+ * refusing those would reject URLs that work today. Each hop is re-validated
+ * against the user-media URL policy (see fetchValidatedUserMedia), so a
+ * redirect can only ever land on another allowed public destination.
  */
 export async function downloadUserImage(
     imageUrl: string,
