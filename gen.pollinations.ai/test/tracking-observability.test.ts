@@ -11,6 +11,7 @@ import {
     COMMUNITY_MODEL_REWARD_RATE,
     type CommunityEndpointRuntime,
     communityEndpointPrices,
+    communityEndpointPricesForModality,
     communityModelDefinition,
     communityModelId,
     type ProxyCommunityEndpointRuntime,
@@ -4060,6 +4061,28 @@ describe("trackResponse community proxy usage", () => {
         ...proxy,
         type: "endpoint_agent",
     };
+    // A video publisher: bills generated seconds at its own per-second price.
+    const videoProxy = createCommunityEndpoint("proxy-video-owner", {
+        id: "community-endpoint-test-video",
+        modelId: "test-owner/test-video-model",
+        modality: "video",
+        baseUrl: "https://community.example.test/v1/videos",
+        ...communityEndpointPricesForModality(
+            { completionVideoPrice: 0.001 },
+            "video",
+        ),
+    });
+    // An image publisher in request mode: one flat price per delivered image.
+    const imageProxy = createCommunityEndpoint("proxy-image-owner", {
+        id: "community-endpoint-test-image",
+        modelId: "test-owner/test-image-model",
+        modality: "image",
+        baseUrl: "https://community.example.test/v1/images",
+        ...communityEndpointPricesForModality(
+            { completionImagePrice: 0.000001 },
+            "image",
+        ),
+    });
     const served = (endpoint: CommunityEndpointRuntime): FallbackCandidate => ({
         id: endpoint.modelId,
         definition: communityModelDefinition(endpoint),
@@ -4070,6 +4093,20 @@ describe("trackResponse community proxy usage", () => {
             { choices: [] },
             { headers: { "x-model-used": proxy.modelId, ...usage } },
         );
+    // Image and video responses carry their bytes, not JSON: the usage rides
+    // on the same headers, and the content-type guard expects a media type.
+    const media = (
+        usage: Record<string, string>,
+        contentType = "video/mp4",
+        modelId = proxy.modelId,
+    ) =>
+        new Response(null, {
+            headers: {
+                "content-type": contentType,
+                "x-model-used": modelId,
+                ...usage,
+            },
+        });
     const stream = (body: string) =>
         new Response(body, {
             headers: { "content-type": "text/event-stream" },
@@ -4236,6 +4273,78 @@ describe("trackResponse community proxy usage", () => {
 
     it.each([
         [
+            "a video proxy past the seconds ceiling",
+            "generate.image",
+            served(proxy),
+            { "x-usage-completion-video-seconds": "601" },
+        ],
+        [
+            "a video proxy past the seconds ceiling on the input side",
+            "generate.image",
+            served(proxy),
+            { "x-usage-prompt-video-seconds": "601" },
+        ],
+        [
+            "an audio proxy past the seconds ceiling",
+            "generate.audio",
+            served(proxy),
+            { "x-usage-prompt-audio-seconds": "36001" },
+        ],
+        [
+            "a speech proxy past the seconds ceiling",
+            "generate.audio",
+            served(proxy),
+            { "x-usage-completion-audio-seconds": "36001" },
+        ],
+        [
+            "an image proxy past the image token ceiling",
+            "generate.image",
+            served(proxy),
+            { "x-usage-completion-image-tokens": "1000001" },
+        ],
+        [
+            "an embeddings proxy past the prompt ceiling",
+            "generate.embedding",
+            served(proxy),
+            { "x-usage-prompt-text-tokens": "2000001" },
+        ],
+        [
+            "a video proxy with a negative duration",
+            "generate.image",
+            served(proxy),
+            { "x-usage-completion-video-seconds": "-1" },
+        ],
+        [
+            "an image proxy with a count that is not a number",
+            "generate.image",
+            served(proxy),
+            { "x-usage-completion-image-tokens": "not-a-number" },
+        ],
+    ] as const)(
+        "does not bill a proxy past the media ceiling: %s",
+        async (_name, eventType, candidate, usage) => {
+            const tracking = await trackResponse(
+                eventType,
+                requestTrackingFixture(),
+                eventType === "generate.image"
+                    ? media(usage, "video/mp4", proxy.modelId)
+                    : json(usage),
+                candidate,
+            );
+            expect(tracking).toMatchObject({
+                responseStatus: 502,
+                isBilledUsage: false,
+                usage: {},
+                errorTracking: { errorResponseCode: "usage_invalid" },
+                // The claim itself is kept for the error log.
+                errorOutput: { usage: expect.any(Object) },
+            });
+            expect(tracking.price).toBeUndefined();
+        },
+    );
+
+    it.each([
+        [
             "a proxy exactly at both ceilings",
             "generate.text",
             served(proxy),
@@ -4243,6 +4352,38 @@ describe("trackResponse community proxy usage", () => {
                 "x-usage-prompt-text-tokens": "2000000",
                 "x-usage-completion-text-tokens": "200000",
             },
+        ],
+        [
+            "a video proxy exactly at the seconds ceiling",
+            "generate.image",
+            served(videoProxy),
+            { "x-usage-completion-video-seconds": "600" },
+        ],
+        [
+            "an audio proxy exactly at the seconds ceiling",
+            "generate.audio",
+            served(proxy),
+            { "x-usage-prompt-audio-seconds": "36000" },
+        ],
+        [
+            "an image proxy exactly at the image token ceiling",
+            "generate.image",
+            served(imageProxy),
+            { "x-usage-completion-image-tokens": "1000000" },
+        ],
+        [
+            "an embeddings proxy exactly at the prompt ceiling",
+            "generate.embedding",
+            served(proxy),
+            { "x-usage-prompt-text-tokens": "2000000" },
+        ],
+        // Media ceilings only bind community proxies: an official video
+        // model reports its own seconds and is billed as reported.
+        [
+            "an official video model's seconds",
+            "generate.image",
+            candidateFixture("google/veo-3.1-fast"),
+            { "x-usage-completion-video-seconds": "1000000" },
         ],
         // An agent's usage is the sum of its own steps, and it is free.
         ["an agent", "generate.text", served(agent), overCompletion],
@@ -4252,20 +4393,21 @@ describe("trackResponse community proxy usage", () => {
             candidateFixture(),
             overCompletion,
         ],
-        // Embedding batches are sized by their input, not by one answer.
-        [
-            "a proxy's embeddings",
-            "generate.embedding",
-            served(proxy),
-            { "x-usage-prompt-text-tokens": "2000001" },
-        ],
     ] as const)(
         "still bills %s",
         async (_name, eventType, candidate, usage) => {
             const tracking = await trackResponse(
                 eventType,
                 requestTrackingFixture(),
-                json(usage),
+                eventType === "generate.image"
+                    ? media(
+                          usage,
+                          candidate.communityEndpoint === imageProxy
+                              ? "image/jpeg"
+                              : "video/mp4",
+                          candidate.communityEndpoint?.modelId ?? candidate.id,
+                      )
+                    : json(usage),
                 candidate,
             );
             expect(tracking).toMatchObject({

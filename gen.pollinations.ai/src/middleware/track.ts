@@ -1011,20 +1011,33 @@ export async function trackResponse(
 // completion bucket, is never charged.
 const MAX_PROXY_PROMPT_TOKENS = 2_000_000;
 const MAX_PROXY_COMPLETION_TOKENS = 200_000;
+// Media proxies report their own meters too, and the text ceilings do not
+// name them: video proxies answer with generated seconds, audio proxies with
+// transcribed or synthesized seconds, and image proxies with image tokens,
+// while embedding proxies bill prompt tokens. The ceilings sit far above any
+// legitimate report — the shared video schema caps a requested clip at 120 s
+// (flux-3-max up to 20 s, mirelo/sfx up to 120 s of source), the audio routes
+// cap uploads at 50 MB (about 7 h of the lowest-bitrate speech), an embedding
+// batch is at most 32 inputs, and official image models price orders of
+// magnitude below a million tokens per call — while staying far below the
+// values a lying endpoint can push.
+const MAX_PROXY_VIDEO_SECONDS = 600;
+const MAX_PROXY_AUDIO_SECONDS = 36_000;
+const MAX_PROXY_IMAGE_TOKENS = 1_000_000;
 
 function isImplausibleProxyUsage(
     eventType: EventType,
     candidate: FallbackCandidate,
     usage: Usage,
 ): boolean {
-    if (
-        eventType !== "generate.text" ||
-        candidate.communityEndpoint?.type !== "proxy"
-    ) {
+    if (candidate.communityEndpoint?.type !== "proxy") {
         return false;
     }
     let prompt = 0;
     let completion = 0;
+    let audioSeconds = 0;
+    let videoSeconds = 0;
+    let imageTokens = 0;
     for (const [type, amount] of Object.entries(usage)) {
         // Checked before it is summed: a negative count would cancel a large
         // one, and text that reads as a number ("0x1") would turn the sum
@@ -1033,10 +1046,34 @@ function isImplausibleProxyUsage(
         if (!Number.isFinite(amount) || amount < 0) return true;
         if (type.startsWith("prompt")) prompt += amount;
         else completion += amount;
+        if (type === "promptAudioSeconds" || type === "completionAudioSeconds")
+            audioSeconds += amount;
+        else if (
+            type === "promptVideoSeconds" ||
+            type === "completionVideoSeconds"
+        )
+            videoSeconds += amount;
+        else if (
+            type === "promptImageTokens" ||
+            type === "completionImageTokens"
+        )
+            imageTokens += amount;
     }
+    if (eventType === "generate.text") {
+        return (
+            prompt > MAX_PROXY_PROMPT_TOKENS ||
+            completion > MAX_PROXY_COMPLETION_TOKENS
+        );
+    }
+    // Non-text proxies (video, audio, image, embeddings) bill their own
+    // meters: seconds and image tokens on the media modalities, prompt
+    // tokens on embeddings. The text completion ceiling is not applied
+    // here because a token-priced image report is not a text claim.
     return (
-        prompt > MAX_PROXY_PROMPT_TOKENS ||
-        completion > MAX_PROXY_COMPLETION_TOKENS
+        videoSeconds > MAX_PROXY_VIDEO_SECONDS ||
+        audioSeconds > MAX_PROXY_AUDIO_SECONDS ||
+        imageTokens > MAX_PROXY_IMAGE_TOKENS ||
+        prompt > MAX_PROXY_PROMPT_TOKENS
     );
 }
 
