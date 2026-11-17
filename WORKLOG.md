@@ -20,31 +20,33 @@ Round 3 continues rounds 1–2 (issues 1–8, fork PRs #1–#11). Baseline: upst
 |---|---|
 | 2026-11-18 | fork/main fast-forwarded to upstream `bbccf2f5`; issues_mds rebased on new baseline |
 
-## Round 5 — alignment + issue reports for the two undocumented media findings (2026-11-18)
 
-Baseline: upstream `549feee` (fork/main verified identical, `ahead 0 / behind 0`). All branches and PRs #1–#16 preserved.
+## Round 5 — ledger hygiene + alignment (2026-11-18)
 
-Two fix branches existed without an issue report; both are now documented and linked:
+Baseline: upstream `549feee`; fork/main verified identical (`ahead 0 / behind 0`). All branches and fork PRs #1–#16 preserved.
 
-| # | Finding | Severity | Verification | Fix branch | PR |
+Two media findings had been written up under **duplicate issue numbers** (a second `issue10` and `issue11` were reused while those numbers already belonged to the community-usage and polli-SSRF reports). Renumbered, content preserved and tightened:
+
+| # | Finding | Severity | Evidence | Fix branch | PR |
 |---|---|---|---|---|---|
-| 12 | media JSON uploads decode base64 `before` the size check (100 MiB cap compared against the decoded buffer), so a ~40 MiB payload OOMs the isolate (1102) instead of 413; the privacy branch above it already pre-checks the encoded length | High (availability) | Decode order and the missing pre-decode guard confirmed at `549feee`; integration test asserts 413 for an oversized body | `solution10-json-upload-memory-cap` | fork [#15](https://github.com/NamanSoni78/pollinationsai/pull/15) |
-| 13 | media uploads accept agent-run tokens (`ag_`) that inherit the parent key's `secret` type, while DELETE already refuses them — low-trust agent code can create and gallery-publish media it cannot delete | Medium-High | Upload gate vs DELETE gate compared at `549feee`; integration test asserts 403 for `ag_` | `solution11-agent-run-token-upload-guard` | fork [#16](https://github.com/NamanSoni78/pollinationsai/pull/16) |
+| 12 | JSON upload path allocates ≈4.6× the decoded size before the size check, so a ~40 MiB payload kills the isolate (503 / `error code: 1102`) well below the documented 100 MiB cap | High (availability) | Live: 4 MiB and 24 MiB → 200, 40 MiB → 503/1102 on production; new pre-decode 413 test; full media suite 76/76 green on the fix branch | `solution10-json-upload-memory-cap` | fork [#15](https://github.com/NamanSoni78/pollinationsai/pull/15) |
+| 13 | Upload gate checks only `authResult.type`, so `ag_` agent-run tokens (which inherit the parent's `secret` type) can upload and gallery-publish, while DELETE already refuses them | Medium | Isolated test: `ag_` stub upload returns 200 on main, 403 with the fix; suite 76/76 green | `solution11-agent-run-token-upload-guard` | fork [#16](https://github.com/NamanSoni78/pollinationsai/pull/16) |
+
+Removed the two duplicate-numbered files (`issue10-json-upload-isolate-oom.md`, `issue11-agent-run-token-upload-bypass.md`); their content lives on in issues 12 and 13, and the unsubstituted `{B11}` marker in the agent-token report is fixed.
 
 ### Surfaces reviewed this round — controls held (no new issue accepted)
 
 | Surface | Evidence |
 |---|---|
-| Client IP derivation | `shared/client-ip.ts` reads only `cf-connecting-ip`; client headers cannot spoof the rate-limit identity |
+| Client IP derivation | `shared/client-ip.ts` reads only `cf-connecting-ip`; clients cannot spoof the rate-limit identity |
 | Realtime sessions | `routes/realtime.ts` `authorizeRealtimeSession` calls `auth.requireUser()` before minting; balance/reservation gates mirror the text path |
-| MCP proxy | `routes/mcp.ts` mounts `auth()` on `/mcp/:serverId`; caller cookies and all `MCP_USAGE_*` headers are stripped inbound, receipt headers stripped outbound, and requests are rewritten to `mcp.internal` (receipts come from in-repo servers, not publishers) |
+| MCP proxy | `routes/mcp.ts` mounts `auth()` on `/mcp/:serverId`; caller cookies and all `MCP_USAGE_*` headers are stripped inbound, receipt headers stripped outbound, requests rewritten to `mcp.internal` (receipts come from in-repo servers, not publishers) |
 | Sandbox leases (E2B / Azure) | Owner-keyed metadata checks, per-user running cap, lease-based billing, 24h ceiling; no cross-user handle reuse found |
-| Model registry resolution | `buildRegistry([...STATIC_ENTRIES, ...communityEntries])` with first-wins id/alias maps, and community ids are prefixed via `communityModelId()` — a community model cannot shadow an official id or alias |
-| Community model ids | `community/<github_username>/<name>`; collision with official namespace structurally impossible |
-| Media retrieval headers | `readMedia` sets `nosniff` + sandboxed CSP last, and only stores `header_*` metadata from the trusted generation `put()` |
-| Referrer handling | `middleware/track.ts` uses the Referer only for analytics; it never selects a tier or bypasses limits |
-| Preflight affordability | `canCoverEstimatedCharge` is documented as a deliberate lightweight check with overdraft settling into Quest Pollen debt — design, not a bug |
+| Model registry resolution | `buildRegistry([...STATIC_ENTRIES, ...communityEntries])` with first-wins id/alias maps; community ids are `community/<username>/<name>` via `communityModelId()`, so an official id or alias cannot be shadowed |
+| Media retrieval headers | `readMedia` applies `nosniff` + sandboxed CSP last, and only the trusted generation `put()` may replay stored `header_*` metadata |
+| Referrer handling | `middleware/track.ts` uses Referer for analytics only; it never selects a tier or bypasses a limit |
+| Preflight affordability | `canCoverEstimatedCharge` is documented as a deliberately lightweight check that settles overdraft into Quest Pollen debt — design, not a bug |
 
 ### Blocker recorded
 
-Upstream pull-request creation still returns `403 Resource not accessible by personal access token` even though the token reports `pull_requests=write`; fork PRs #15/#16 are the live review surface until an upstream-scoped token is supplied.
+Upstream pull-request creation still returns `403 Resource not accessible by personal access token` although the token reports `pull_requests=write`; fork PRs #15/#16 remain the live review surface until an upstream-scoped token is supplied.
