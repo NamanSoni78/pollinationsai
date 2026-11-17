@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import "dotenv/config";
+import { pathToFileURL } from "node:url";
 import axios from "axios";
 import {
     AttachmentBuilder,
@@ -24,6 +25,13 @@ const ORIGINAL_CATGPT =
 const SELFIE_CATGPT =
     "https://catgpt.pollinations.app/images/selfie-catgpt.png";
 const MODEL = "nanobanana-2-lite";
+
+/**
+ * Every reply spends the shared platform key on a text call, up to three paid
+ * image generations, and a media upload. One billed reply per user per window
+ * keeps that spend bounded no matter how fast mentions arrive.
+ */
+export const USER_COOLDOWN_MS = 60_000;
 
 function log(...args: any[]) {
     console.log(`[${new Date().toISOString()}]`, ...args);
@@ -129,63 +137,105 @@ async function publishImage(image: Buffer): Promise<void> {
     }
 }
 
-const processing = new Set<string>();
+/**
+ * Builds the mention handler. The gates run cheapest-first: only the
+ * designated channel (`CHANNEL_ID`, the one catch-up already reads) is
+ * billable, then the mention check, then the per-user cooldown.
+ *
+ * Dependencies are injectable so the test suite can drive the handler without
+ * touching Discord or the paid APIs — mirroring the swarm bot's
+ * `createInteractionHandler` seam.
+ */
+export function createMessageHandler({
+    channelId = CHANNEL_ID,
+    cooldownMs = USER_COOLDOWN_MS,
+    now = Date.now,
+    generateReply = generateCatReply,
+    downloadImage = fetchImage,
+    publish = publishImage,
+}: {
+    channelId?: string;
+    cooldownMs?: number;
+    now?: () => number;
+    generateReply?: typeof generateCatReply;
+    downloadImage?: typeof fetchImage;
+    publish?: typeof publishImage;
+} = {}) {
+    const processing = new Set<string>();
+    const lastSeenAt = new Map<string, number>();
 
-async function handleMessage(msg: Message, client: Client): Promise<void> {
-    if (msg.author.bot) return;
-    if (processing.has(msg.id)) return;
-    processing.add(msg.id);
-    setTimeout(() => processing.delete(msg.id), 300_000);
+    return async function handleMessage(
+        msg: Message,
+        client: Client,
+    ): Promise<void> {
+        if (msg.author.bot) return;
+        // Spend belongs to the designated channel: a mention anywhere else is
+        // not a billable request against the shared platform key.
+        if (msg.channelId !== channelId) return;
+        if (processing.has(msg.id)) return;
+        processing.add(msg.id);
+        setTimeout(() => processing.delete(msg.id), 300_000).unref?.();
 
-    // Without the Message Content intent, Discord only sends the text of messages that mention the bot
-    if (!client.user || !msg.mentions.users.has(client.user.id)) return;
+        // Without the Message Content intent, Discord only sends the text of messages that mention the bot
+        if (!client.user || !msg.mentions.users.has(client.user.id)) return;
 
-    const question = msg.content.replace(/<@!?\d+>/g, "").trim();
-    if (!question || question.startsWith("!")) return;
+        const question = msg.content.replace(/<@!?\d+>/g, "").trim();
+        if (!question || question.startsWith("!")) return;
 
-    log(`Question from ${msg.author.username}: "${question}"`);
-
-    try {
-        if ("sendTyping" in msg.channel)
-            await (msg.channel as any).sendTyping();
-    } catch {}
-
-    const avatarUrl = msg.author.displayAvatarURL({
-        size: 1024,
-        extension: "png",
-        forceStatic: true, // animated avatars ignore `extension` and return .gif, which the API rejects (400)
-    });
-    const catReply = await generateCatReply(question, avatarUrl);
-    const prompt = createPrompt(question, catReply, true);
-    const imageUrl = buildImageUrl(prompt, avatarUrl);
-
-    const maxRetries = 2;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-            const imageBuffer = await fetchImage(imageUrl);
-            const attachment = new AttachmentBuilder(imageBuffer, {
-                name: "catgpt.png",
-            });
-            await msg.reply({ files: [attachment] });
-            await publishImage(imageBuffer);
-            log(`Reply sent for "${question}"`);
+        const lastSeen = lastSeenAt.get(msg.author.id) ?? -Infinity;
+        if (now() - lastSeen < cooldownMs) {
+            log(`Cooldown skip for ${msg.author.username}`);
             return;
-        } catch (err: any) {
-            logError(
-                `Attempt ${attempt + 1}/${maxRetries + 1}: ${err.message}`,
-            );
-            if (attempt < maxRetries) {
-                const wait = 2000 * (attempt + 1);
-                log(`Retrying in ${wait}ms...`);
-                await new Promise((r) => setTimeout(r, wait));
-                continue;
-            }
-            try {
-                await msg.reply("😾 CatGPT couldn't be bothered. Try again.");
-            } catch {}
         }
-    }
+        lastSeenAt.set(msg.author.id, now());
+        if (lastSeenAt.size > 5_000) lastSeenAt.clear();
+
+        log(`Question from ${msg.author.username}: "${question}"`);
+
+        try {
+            if ("sendTyping" in msg.channel)
+                await (msg.channel as any).sendTyping();
+        } catch {}
+
+        const avatarUrl = msg.author.displayAvatarURL({
+            size: 1024,
+            extension: "png",
+            forceStatic: true, // animated avatars ignore `extension` and return .gif, which the API rejects (400)
+        });
+        const catReply = await generateReply(question, avatarUrl);
+        const prompt = createPrompt(question, catReply, true);
+        const imageUrl = buildImageUrl(prompt, avatarUrl);
+
+        const maxRetries = 2;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                const imageBuffer = await downloadImage(imageUrl);
+                const attachment = new AttachmentBuilder(imageBuffer, {
+                    name: "catgpt.png",
+                });
+                await msg.reply({ files: [attachment] });
+                await publish(imageBuffer);
+                log(`Reply sent for "${question}"`);
+                return;
+            } catch (err: any) {
+                logError(
+                    `Attempt ${attempt + 1}/${maxRetries + 1}: ${err.message}`,
+                );
+                if (attempt < maxRetries) {
+                    const wait = 2000 * (attempt + 1);
+                    log(`Retrying in ${wait}ms...`);
+                    await new Promise((r) => setTimeout(r, wait));
+                    continue;
+                }
+                try {
+                    await msg.reply("😾 CatGPT couldn't be bothered. Try again.");
+                } catch {}
+            }
+        }
+    };
 }
+
+const handleMessage = createMessageHandler();
 
 async function catchUpUnanswered(client: Client): Promise<void> {
     const channel = await client.channels.fetch(CHANNEL_ID);
@@ -239,67 +289,75 @@ async function cliAsk(
     log(`CLI comic posted for "${question}" → "${catReply}"`);
 }
 
-if (!TOKEN || !CHANNEL_ID) {
-    console.error("Missing BOT_TOKEN_CATGPT or CATGPT_CHANNEL_ID");
-    process.exit(1);
+function main() {
+    if (!TOKEN || !CHANNEL_ID) {
+        console.error("Missing BOT_TOKEN_CATGPT or CATGPT_CHANNEL_ID");
+        process.exit(1);
+    }
+
+    const client = new Client({
+        intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+        partials: [Partials.Channel, Partials.Message],
+    });
+
+    process.on("exit", (code) => logError(`Process exiting with code ${code}`));
+    process.on("uncaughtException", (err) => {
+        logError("UNCAUGHT EXCEPTION:", err.stack || err.message);
+        process.exit(1);
+    });
+    process.on("unhandledRejection", (reason) =>
+        logError("UNHANDLED REJECTION:", String(reason)),
+    );
+    process.on("SIGTERM", () => {
+        log("SIGTERM");
+        process.exit(0);
+    });
+    process.on("SIGINT", () => {
+        log("SIGINT");
+        process.exit(0);
+    });
+
+    client.on("error", (err) => logError("Discord error:", err.message));
+    client.once(Events.ClientReady, (c) => {
+        log(
+            `CatGPT bot online as ${c.user.tag} — channel ${CHANNEL_ID} (PID ${process.pid})`,
+        );
+        if (process.argv[2] === "ask") {
+            const question = process.argv[3];
+            if (!question) {
+                console.error('Usage: bot.ts ask "question" [avatarUrl]');
+                process.exit(1);
+            }
+            cliAsk(client, question, process.argv[4] || null)
+                .then(() => process.exit(0))
+                .catch((err) => {
+                    logError("CLI ask failed:", err.message);
+                    process.exit(1);
+                });
+            return;
+        }
+        c.user.setPresence({
+            status: "online",
+            activities: [{ name: "Mention me to ask 😾" }],
+        });
+        catchUpUnanswered(client).catch((err) =>
+            logError("Catch-up error:", err.message),
+        );
+    });
+    client.on(Events.MessageCreate, (msg) => {
+        handleMessage(msg, client).catch((err) =>
+            logError("Unhandled:", err.message),
+        );
+    });
+
+    client.login(TOKEN).catch((err) => {
+        logError("Login failed:", err.message);
+        process.exit(1);
+    });
 }
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-    partials: [Partials.Channel, Partials.Message],
-});
-
-process.on("exit", (code) => logError(`Process exiting with code ${code}`));
-process.on("uncaughtException", (err) => {
-    logError("UNCAUGHT EXCEPTION:", err.stack || err.message);
-    process.exit(1);
-});
-process.on("unhandledRejection", (reason) =>
-    logError("UNHANDLED REJECTION:", reason),
-);
-process.on("SIGTERM", () => {
-    log("SIGTERM");
-    process.exit(0);
-});
-process.on("SIGINT", () => {
-    log("SIGINT");
-    process.exit(0);
-});
-
-client.on("error", (err) => logError("Discord error:", err.message));
-client.once(Events.ClientReady, (c) => {
-    log(
-        `CatGPT bot online as ${c.user.tag} — channel ${CHANNEL_ID} (PID ${process.pid})`,
-    );
-    if (process.argv[2] === "ask") {
-        const question = process.argv[3];
-        if (!question) {
-            console.error('Usage: bot.ts ask "question" [avatarUrl]');
-            process.exit(1);
-        }
-        cliAsk(client, question, process.argv[4] || null)
-            .then(() => process.exit(0))
-            .catch((err) => {
-                logError("CLI ask failed:", err.message);
-                process.exit(1);
-            });
-        return;
-    }
-    c.user.setPresence({
-        status: "online",
-        activities: [{ name: "Mention me to ask 😾" }],
-    });
-    catchUpUnanswered(client).catch((err) =>
-        logError("Catch-up error:", err.message),
-    );
-});
-client.on(Events.MessageCreate, (msg) => {
-    handleMessage(msg, client).catch((err) =>
-        logError("Unhandled:", err.message),
-    );
-});
-
-client.login(TOKEN).catch((err) => {
-    logError("Login failed:", err.message);
-    process.exit(1);
-});
+// Importing this module (e.g. from the test suite) must never start the bot.
+const invokedDirectly =
+    process.argv[1] !== undefined &&
+    import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) main();
