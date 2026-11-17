@@ -242,6 +242,8 @@ export type ModelDefinition = {
     videoCapabilities?: VideoCapability[]; // Video-only: which frame controls the provider supports
     minDuration?: number; // Video and audio: minimum accepted duration in seconds
     maxDuration?: number; // Video and audio: maximum accepted duration in seconds
+    /** Video-only: ceiling for model-picked output length (adaptive edits), billed and gated by the preflight. */
+    adaptiveMaxDuration?: number;
     defaultDuration?: number; // Video-only: duration when caller omits the param
     allowedDurations?: number[]; // Video and audio: explicit set of valid durations (overrides min/max range)
     durationStep?: number; // Video-only: duration must be a multiple of this value

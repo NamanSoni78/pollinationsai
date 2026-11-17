@@ -1996,6 +1996,9 @@ const IMAGE_BASE_SERVICES = {
         minDuration: 4,
         maxDuration: 4,
         defaultDuration: 4,
+        // Adaptive reference-video edits pick their own output length, up to
+        // 30s, billed per output second at the reference-video rate.
+        adaptiveMaxDuration: 30,
     },
     "alibaba/happyhorse-1.1": {
         aliases: ["happyhorse", "happy-horse-1.1", "happyhorse-1.1"],

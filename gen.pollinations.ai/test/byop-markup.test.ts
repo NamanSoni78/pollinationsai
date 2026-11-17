@@ -861,6 +861,108 @@ describe("BYOP markup", () => {
         fetchSpy.mockRestore();
     });
 
+    it("gates per-second video preflight on the request's worst-case seconds", async () => {
+        // Per-second video bills the actual output seconds, so the mean is
+        // not a bound: an adaptive reference-video edit at 720p can bill the
+        // model-picked ceiling (30s) at the reference-video rate, and the
+        // preflight must gate on seconds x rate for that request.
+        const model = "bytedance/seedance-2.5";
+        const definition = getRegistryModelDefinition(model);
+        expect(getDefinedRequestEstimate(definition)).toBeNull();
+        // Without request facts the historical mean (or 0) still gates.
+        expect(getEstimatedPrice({ data: [] }, model, definition)).toBe(0);
+        expect(
+            getEstimatedPrice(
+                { data: [{ model, avg_cost_usd: 0.4112 }] },
+                model,
+                definition,
+            ),
+        ).toBe(0.4112);
+
+        // Adaptive reference-video edit at 720p: 30 output seconds at the
+        // 720p reference rate.
+        expect(
+            getEstimatedPrice({ data: [] }, model, definition, {
+                hasReferenceVideo: true,
+                adaptiveDuration: true,
+                resolution: "720p",
+            }),
+        ).toBeCloseTo(30 * 0.9676, 10);
+        // The mean never lowers the bound below the worst case.
+        expect(
+            getEstimatedPrice(
+                { data: [{ model, avg_cost_usd: 0.4112 }] },
+                model,
+                definition,
+                {
+                    hasReferenceVideo: true,
+                    adaptiveDuration: true,
+                    resolution: "720p",
+                },
+            ),
+        ).toBeCloseTo(30 * 0.9676, 10);
+        // A 480p adaptive edit gates at its own, lower bound.
+        expect(
+            getEstimatedPrice({ data: [] }, model, definition, {
+                hasReferenceVideo: true,
+                adaptiveDuration: true,
+            }),
+        ).toBeCloseTo(30 * 0.4304, 10);
+        // An explicit-duration plain render is gated at its requested bound,
+        // not at the adaptive ceiling.
+        expect(
+            getEstimatedPrice({ data: [] }, model, definition, {
+                requestedSeconds: 4,
+                resolution: "480p",
+            }),
+        ).toBeCloseTo(4 * 0.1028, 10);
+
+        // The preflight refuses a $0.01 paid balance for the 29-pollen worst
+        // case the request can bill...
+        const vars = {
+            auth: {
+                user: { id: "preflight-payer" },
+                apiKey: { id: "sk-test", pollenBalance: 0.001 },
+            },
+            balance: {
+                getBalance: async () => ({
+                    tierBalance: 0,
+                    packBalance: 0.01,
+                }),
+            },
+            model: testModel(model),
+            log: fakeLog(),
+        } as unknown as Parameters<typeof checkBalance>[0];
+        await expect(
+            checkBalance(vars, fakeStatsEnv(0.4112, model), undefined, {
+                hasReferenceVideo: true,
+                adaptiveDuration: true,
+                resolution: "720p",
+            }),
+        ).rejects.toMatchObject({ status: 402 });
+        // ...and admits a balance (and key budget) covering the bound.
+        const covered = {
+            ...vars,
+            auth: {
+                ...vars.auth,
+                apiKey: { id: "sk-test", pollenBalance: 30 },
+            },
+            balance: {
+                getBalance: async () => ({
+                    tierBalance: 0,
+                    packBalance: 30,
+                }),
+            },
+        } as unknown as Parameters<typeof checkBalance>[0];
+        await expect(
+            checkBalance(covered, fakeStatsEnv(0.4112, model), undefined, {
+                hasReferenceVideo: true,
+                adaptiveDuration: true,
+                resolution: "720p",
+            }),
+        ).resolves.toBeUndefined();
+    });
+
     it("retains legacy price estimates after a canonical rename", () => {
         const model = "openai/gpt-5.4-nano";
         const definition = getRegistryModelDefinition(model);

@@ -14,6 +14,9 @@ const logOps = debug("pollinations:seedance-2.5:ops");
 const logError = debug("pollinations:seedance-2.5:error");
 const MODEL = "bytedance/seedance-2.5";
 const DURATION = 4;
+// Registry-declared ceiling for adaptive edits (the schema documents "the
+// model picks the output length (up to 30s)"). The bill never exceeds it.
+const ADAPTIVE_MAX_DURATION = 30;
 // Edits and extensions can take longer than the default 6 minutes. Stay
 // under the 15-minute Durable Object alarm limit so the result gets cached.
 const PREDICTION_DEADLINE_MINUTES = 14;
@@ -115,7 +118,12 @@ export async function callSeedance25API(
         errorLabel: "Failed to download Seedance 2.5 output video",
     });
     const buffer = Buffer.from(await videoResponse.arrayBuffer());
-    const billedDuration = actualDurationSeconds ?? DURATION;
+    const reportedDuration = actualDurationSeconds ?? DURATION;
+    // A model-picked length beyond the declared ceiling is not a billable
+    // request shape: clamp the bill so the preflight's worst case holds.
+    const billedDuration = autoDuration
+        ? Math.min(reportedDuration, ADAPTIVE_MAX_DURATION)
+        : reportedDuration;
 
     return {
         buffer,
