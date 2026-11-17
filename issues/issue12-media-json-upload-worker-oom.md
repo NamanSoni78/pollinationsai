@@ -1,74 +1,49 @@
-# Issue 12 — media: an oversized JSON upload OOMs the Worker before the size check runs (413 documented, 1102 in practice)
+# Issue 12 — JSON upload path OOMs the media Worker far below its documented 100 MiB cap (isolate-killing DoS)
 
-| | |
-|---|---|
-| Severity | High (availability) |
-| Component | `media.pollinations.ai/src/index.ts` |
-| Baseline | upstream `549feee` (2026-11-17) |
-| Fix | `solution10-json-upload-memory-cap` |
-| PR | https://github.com/NamanSoni78/pollinationsai/pull/15 |
-| Upstream PR | blocked: the token reports `pull_requests=write` but upstream returns 403 "Resource not accessible by personal access token" |
-
-## Summary
-
-`MAX_BUFFERED_SIZE` is meant to bound the memory a base64 JSON upload may cost, but the limit is compared against the **decoded** buffer `after` `atob()` and the byte-array copy. A base64 JSON body therefore holds roughly four copies of the file (raw body text, the base64 string, the binary string from `atob`, and the `Uint8Array`) before any limit is enforced. Cloudflare terminates an isolate above 128 MiB, so a mid-size payload dies with Worker error `1102` instead of the documented `413`.
+- **Severity:** High (verified availability attack on production)
+- **Affected:** `media.pollinations.ai` `POST /upload`, `application/json` branch — upstream `pollinations/pollinations` main @ `549feee`
+- **Fix branch:** `solution10-json-upload-memory-cap` — **PR:** [#15](https://github.com/NamanSoni78/pollinationsai/pull/15)
+- **Numbering:** renumbered from the earlier duplicate `issue10` (numbers 10/11 were already assigned to the community-usage and polli-SSRF reports). Finding, branch and PR unchanged.
 
 ## Root cause
 
-```ts
-// index.ts:60-61
-const DEFAULT_MAX_SIZE = 104857600; // 100 MB
-const MAX_BUFFERED_SIZE = 104857600; // JSON base64 uploads still buffer in memory
-...
-// index.ts:~678-690  (JSON branch)
-binaryString = atob(base64Data);                    // whole file decoded, no limit yet
-const bytes = new Uint8Array(binaryString.length);  // second full copy
-for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
-fileBuffer = bytes.buffer;
-if (fileBuffer.byteLength > jsonMaxSize) {          // limit applied only here
-    return c.json(fileTooLargeError(jsonMaxSize), 413);
-}
-```
+The JSON upload path buffers the entire payload in isolate memory several times over before checking anything: the raw JSON body text (≈1.33× file size), the `JSON.parse` copy of the `data` string (≈1.33×), the `atob` binary string (1×), and the `Uint8Array` byte copy (1×) — a peak of ≈4.6× the decoded size. The decoded-size check (`fileBuffer.byteLength > jsonMaxSize`) runs only **after** all of those allocations, and `MAX_BUFFERED_SIZE` was set to 100 MiB. Cloudflare kills a Worker isolate above 128 MiB, so:
 
-The privacy branch ~20 lines above already pre-checks the **encoded** length, which is the correct pattern:
+- ~25–30 MiB decoded already exceeds the isolate limit,
+- the documented "JSON uploads remain limited to 100 MiB" cap was unsatisfiable,
+- the Worker dies mid-request (HTTP 503, body `error code: 1102`), killing **every other in-flight request sharing that isolate**.
 
-```ts
-if (privacyRequested && isImage(contentType) &&
-    base64Data.length > Math.ceil((MAX_PRIVACY_IMAGE_SIZE * 4) / 3)) {
-    return c.json(fileTooLargeError(MAX_PRIVACY_IMAGE_SIZE), 413);
-}
-```
+Any holder of a free `sk_` key can repeat this within the documented rate limits (50 req/10s per key, 100 uploads/min per account) to kill busy isolates in high-traffic colos.
 
-The general JSON path has no equivalent guard.
+Note the privacy branch ~20 lines above already pre-checks the **encoded** length (`base64Data.length > Math.ceil(MAX_PRIVACY_IMAGE_SIZE * 4 / 3)`); the general JSON path has no equivalent guard.
 
-## Reproduction (non-destructive)
+## Safe reproduction (non-destructive, own key — performed live 2026-11-17)
 
 ```bash
-# ~54 MB of base64 characters => ~40 MB decoded; 4 live copies ~186 MB > 128 MiB isolate limit
-python3 -c "print('{\"data\":\"' + 'A'*54000000 + '\"}')" > /tmp/big.json
-curl -i -X POST https://media.pollinations.ai/upload \
-  -H "Authorization: Bearer \$KEY" -H "Content-Type: application/json" \
-  --data-binary @/tmp/big.json
-# observed: Worker resource-limit failure (1102) / connection drop
-# expected: 413 file too large, before decoding
+# 40 MiB random payload as base64 JSON
+{ printf '{"data":"'; head -c 41943040 /dev/urandom | base64 -w0; printf '"}'; } | \
+curl -sS -X POST https://media.pollinations.ai/upload \
+  -H "Authorization: Bearer $SK_KEY" -H "Content-Type: application/json" --data-binary @-
 ```
 
-Deterministic proof without a key: the decode order above is unconditional for the JSON branch, so any payload whose decoded size pushes the four-copy working set past the isolate limit fails the same way. Payloads below the limit still upload normally, so this is purely an input-size memory bug.
+Observed on unpatched production (bounty key, own account):
 
-## Impact
+| Payload (decoded) | Result |
+|---|---|
+| 4 MiB | `200 OK` (control) |
+| 24 MiB | `200 OK` (control) |
+| 40 MiB | `503`, body `error code: 1102` (Worker exceeded resource limits) |
 
-One request per isolate kills a shared upload Worker. Uploads are the entry point for every generated-media path, so an attacker can repeatedly knock out media ingestion without any paid balance (the crash happens before billing).
+A payload **60% below the documented limit** crashes the Worker. The two control uploads (random bytes, untagged) remain on the bounty key's own account and expire via the 30-day lifecycle; the 40 MiB probe crashed before any storage write, so it left no residue.
 
-## Fix
+## Fix (`solution10-json-upload-memory-cap`)
 
-1. `MAX_BUFFERED_SIZE = 16 * 1024 * 1024` — 16 MiB decoded keeps the ~4.6x working set near 74 MiB, safely under the isolate limit.
-2. Reject on `base64Data.length > Math.ceil(MAX_BUFFERED_SIZE * 4 / 3)` **before** `atob()` (same pattern as the privacy branch), so oversized bodies never allocate.
-3. Integration test asserting 413 for an oversized JSON payload.
-
-Multipart and raw uploads stream straight to storage and keep the existing 400 MiB cap, so large files are unaffected.
+1. `MAX_BUFFERED_SIZE` 100 MiB → **16 MiB** (peak ≈ 74 MiB, safe margin under the 128 MiB isolate limit). Multipart and raw bodies already stream and keep the full cap.
+2. **Pre-decode size gate:** reject via `base64Data.length > Math.ceil(jsonMaxSize * 4 / 3)` → 413 **before** `atob`/byte-copy, so a missing or lying `Content-Length` can no longer drive the OOM.
+3. OpenAPI description and docs `maxFileSize` updated to `16 MiB (JSON)`.
 
 ## Verification
 
-- New integration test: oversized JSON payload returns 413 without decoding.
-- Existing media suite (upload, custom id, catalog, delete) unchanged and green.
-- Code path, constant and the missing pre-check confirmed at `549feee`.
+- New test `rejects JSON uploads above the memory-safe cap before decoding` → 413 pre-decode.
+- Full `media.pollinations.ai` suite: **76/76 green** on the fix branch (recorded when the branch was authored).
+- Re-checked against upstream `549feee`: the post-decode-only ordering and the 100 MiB constant are still present on main.
