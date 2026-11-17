@@ -105,3 +105,15 @@ Balance before and after the probes: `1.97499171` → `1.97499171` pollen (no sp
 ### Fix-PR staleness check
 
 Re-tested the removed lines of every open fix PR against upstream `549feee`: #1, #10, #11, #12, #13, #14 all still apply (the vulnerable code is still on main), so none needs a rebase and none is obsolete.
+
+### Round 6 addendum — payment-trigger authorization
+
+| Control | Evidence |
+|---|---|
+| Off-session charge trigger is internal-only | `POST /api/stripe/auto-top-up/trigger` requires `isInternalRequest` (bearer identical to `PLN_ENTER_TOKEN`, ≥ 32 chars, constant-time compare) plus an environment match before `processAutoTopUpForUser` runs (`routes/stripe.ts:285,543`) |
+| Checkout status is owner-scoped | `/api/stripe/checkout/sessions/:id` requires a session user and answers 404 unless `session.metadata.userId` matches the caller; another buyer's session is indistinguishable from a missing one |
+| Pack pricing is server-side | checkout builds Stripe `price_data` from the `pollen-packs` key in the path, never from a client-supplied amount; auto-top-up re-validates the pack's USD bounds |
+| Webhooks are signature-verified before crediting | `stripe-webhooks` rejects a missing `stripe-signature` with 400 and calls `verifyWebhookSignature` before any credit path; credits are keyed by `stripe_checkout_credits(session_id, user_id)` |
+| Portal redirects cannot leave the app | `/billing/portal` validates `body.redirect` and constrains `body.pack` to a known pollen pack key |
+
+Net result for round 6: two surfaces swept (enter authorization core, payment triggers), 0 new issues accepted, 6 open fix PRs confirmed still applicable to upstream `549feee`.
