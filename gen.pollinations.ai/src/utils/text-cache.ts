@@ -14,6 +14,7 @@ import {
 } from "@shared/schemas/safety.ts";
 import stableStringify from "fast-json-stable-stringify";
 import type { Context } from "hono";
+import { isResponsesFailure } from "@/text/responses/tracking.ts";
 import { parseBooleanLike } from "@/util.ts";
 
 // Parameters to exclude from cache key (auth + cache control). "stream" is
@@ -41,23 +42,63 @@ function isStreamingErrorResponse(
     response: Response,
     body: Uint8Array,
 ): boolean {
-    if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+    return isErrorResponseBody(response, body);
+}
+
+/**
+ * A completion that ends in an error must never become a cache entry: the
+ * entry is immutable and TTL-refreshing, cache hits skip auth/rate limits/
+ * billing, and SDK/CLI/MCP callers that reject finish_reason=error would
+ * replay the same failure forever. Mirror the billing-side scan
+ * (finishReasonError in middleware/track.ts): reject SSE protocol errors, JSON
+ * bodies carrying a top-level error, Responses bodies that failed, and any
+ * chat choice finishing with finish_reason=error. max_tokens truncation
+ * (status=incomplete, finish_reason=length) stays cacheable, matching the
+ * aca5490521 intent.
+ */
+function isErrorResponseBody(response: Response, body: Uint8Array): boolean {
+    const text = new TextDecoder().decode(body);
+    if (response.headers.get("content-type")?.includes("text/event-stream")) {
+        if (/(?:^|\r?\n)event:\s*error(?:\r?\n|$)/m.test(text)) return true;
+        return text.split(/\r?\n/).some((line) => {
+            if (!line.startsWith("data:")) return false;
+            const payload = line.slice("data:".length).trim();
+            if (!payload || payload === "[DONE]") return false;
+            try {
+                return isErrorCompletion(JSON.parse(payload));
+            } catch {
+                return false;
+            }
+        });
+    }
+    try {
+        return isErrorCompletion(JSON.parse(text));
+    } catch {
         return false;
     }
+}
 
-    const text = new TextDecoder().decode(body);
-    if (/(?:^|\r?\n)event:\s*error(?:\r?\n|$)/m.test(text)) return true;
-
-    return text.split(/\r?\n/).some((line) => {
-        if (!line.startsWith("data:")) return false;
-        try {
-            const event = JSON.parse(line.slice("data:".length).trim());
-            return Boolean(
-                event && typeof event === "object" && "error" in event,
-            );
-        } catch {
-            return false;
-        }
+function isErrorCompletion(value: unknown): boolean {
+    if (!value || typeof value !== "object") return false;
+    const event = value as {
+        error?: unknown;
+        type?: unknown;
+        response?: { error?: unknown };
+        choices?: unknown;
+    };
+    if (
+        (event.error && typeof event.error === "object") ||
+        event.type === "error" ||
+        (event.response && typeof event.response.error === "object") ||
+        isResponsesFailure(event)
+    ) {
+        return true;
+    }
+    const choices = event.choices;
+    if (!Array.isArray(choices)) return false;
+    return choices.some((choice) => {
+        if (!choice || typeof choice !== "object") return false;
+        return (choice as { finish_reason?: unknown }).finish_reason === "error";
     });
 }
 
