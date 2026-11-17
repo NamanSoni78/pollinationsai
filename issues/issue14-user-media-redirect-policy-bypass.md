@@ -2,6 +2,7 @@
 
 **Severity:** High
 **Status:** Confirmed by code-path analysis + live control probe + unit tests pinning the fix (2026-11-18, `bbccf2f5`)
+**Issue:** 14 (renumbered from a parallel-session 12 collision; branch name unchanged)
 **Fix:** PR https://github.com/NamanSoni78/pollinationsai/pull/17 (branch `solution12-user-media-redirect-validation`)
 
 ## Summary
