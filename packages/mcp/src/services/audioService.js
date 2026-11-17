@@ -8,6 +8,46 @@ import {
     fetchMediaLink,
 } from "../utils/coreUtils.js";
 
+export const MAX_TRANSCRIBE_AUDIO_BYTES = 25 * 1024 * 1024;
+export const MAX_TRANSFORM_AUDIO_BYTES = 50 * 1024 * 1024;
+const SOURCE_FETCH_TIMEOUT_MS = 30_000;
+
+function maxSizeError(maxBytes) {
+    return new Error(
+        `Source audio exceeds maximum size of ${Math.floor(maxBytes / (1024 * 1024))} MB`,
+    );
+}
+
+async function readBoundedBlob(response, maxBytes) {
+    const contentLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        await response.body?.cancel();
+        throw maxSizeError(maxBytes);
+    }
+    const contentType = response.headers.get("content-type") || undefined;
+    if (!response.body) {
+        return new Blob([], contentType ? { type: contentType } : undefined);
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            totalBytes += value.byteLength;
+            if (totalBytes > maxBytes) {
+                await reader.cancel();
+                throw maxSizeError(maxBytes);
+            }
+            chunks.push(value);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return new Blob(chunks, contentType ? { type: contentType } : undefined);
+}
+
 function publicAudioUrl(source) {
     let url;
     try {
@@ -15,19 +55,28 @@ function publicAudioUrl(source) {
     } catch {
         throw new Error("source must be a valid public HTTPS URL");
     }
-    const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const hostname = url.hostname
+        .replace(/^\[|\]$/g, "")
+        .replace(/\.+$/, "")
+        .toLowerCase();
     const isIpAddress =
         hostname.includes(":") ||
         (hostname.split(".").length === 4 &&
             hostname
                 .split(".")
                 .every((part) => /^\d+$/.test(part) && Number(part) <= 255));
+    const isPrivateHostname =
+        !hostname ||
+        !hostname.includes(".") ||
+        hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname.endsWith(".local") ||
+        hostname.endsWith(".internal");
     if (
         url.protocol !== "https:" ||
         url.username ||
         url.password ||
-        hostname === "localhost" ||
-        hostname.endsWith(".localhost") ||
+        isPrivateHostname ||
         isIpAddress
     ) {
         throw new Error(
@@ -38,12 +87,13 @@ function publicAudioUrl(source) {
 }
 
 /** Fetch the audio bytes we were asked to process from a validated public URL. */
-async function fetchPublicAudio(source) {
+async function fetchPublicAudio(source, maxBytes = MAX_TRANSFORM_AUDIO_BYTES) {
     let response;
     try {
         // Workers reject redirect: "error"; use "manual" and refuse 3xx below.
         response = await fetch(source, {
             redirect: "manual",
+            signal: AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS),
         });
     } catch {
         throw new Error(
@@ -60,10 +110,11 @@ async function fetchPublicAudio(source) {
         );
     }
     if (!response.ok) {
+        await response.body?.cancel();
         throw new Error(`Source returned HTTP ${response.status}`);
     }
     return {
-        blob: await response.blob(),
+        blob: await readBoundedBlob(response, maxBytes),
         filename: source.pathname.split("/").pop() || "audio",
     };
 }
@@ -76,7 +127,10 @@ async function fetchPublicAudio(source) {
 async function transformSpeech(params, context, { endpoint, name }) {
     requireApiKey(context);
     const { source, ...fields } = params;
-    const { blob, filename } = await fetchPublicAudio(publicAudioUrl(source));
+    const { blob, filename } = await fetchPublicAudio(
+        publicAudioUrl(source),
+        MAX_TRANSFORM_AUDIO_BYTES,
+    );
 
     const form = new FormData();
     form.append("file", blob, filename);
@@ -104,6 +158,7 @@ export async function transcribeAudio(params, context) {
     requireApiKey(context);
     const { blob, filename } = await fetchPublicAudio(
         publicAudioUrl(params.source),
+        MAX_TRANSCRIBE_AUDIO_BYTES,
     );
 
     const form = new FormData();
