@@ -31,6 +31,31 @@ type GenerationAccessEnv = {
     Variables: GenerationAccessVariables;
 };
 
+/**
+ * The validated `duration` parameter, when the route declares one and the
+ * caller set it (GET query or POST body — the OpenAI-compatible image routes
+ * pass it through). Per-second video and audio models scale their cost with
+ * it, so the preflight estimate must too (issue: a 15s request preflighted
+ * at one second of the rate overspends the wallet and key budget 15x).
+ */
+function queryDuration(query: unknown): number | undefined {
+    const duration = (query as { duration?: unknown } | undefined)?.duration;
+    return typeof duration === "number" &&
+        Number.isFinite(duration) &&
+        duration > 0
+        ? duration
+        : undefined;
+}
+
+function durationFromRequest(req: {
+    valid: (target: never) => unknown;
+}): number | undefined {
+    return (
+        queryDuration(req.valid("query" as never)) ??
+        queryDuration(req.valid("json" as never))
+    );
+}
+
 export async function checkBalance(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
@@ -38,6 +63,7 @@ export async function checkBalance(
         ModelVariables["model"],
         "resolved" | "definition"
     > = vars.model,
+    durationSeconds?: number,
 ): Promise<void> {
     const { auth, balance, log } = vars;
     if (!auth.user?.id) return;
@@ -48,6 +74,7 @@ export async function checkBalance(
             await getModelStats(env.KV, log),
             model.resolved,
             model.definition,
+            durationSeconds,
         ),
         Boolean(auth.apiKey?.byopMarkupApplies),
     );
@@ -117,10 +144,15 @@ export async function requireModelAttemptAccess(
     candidate: FallbackCandidate,
 ): Promise<void> {
     if (candidate.definition && c.var.model.requested.includes(",")) {
-        await checkBalance(c.var, c.env, {
-            resolved: candidate.id,
-            definition: candidate.definition,
-        });
+        await checkBalance(
+            c.var,
+            c.env,
+            {
+                resolved: candidate.id,
+                definition: candidate.definition,
+            },
+            durationFromRequest(c.req),
+        );
         await reserveApiKeyBudget(c.var, c.env);
     }
     await enforceModelRateLimit(c, candidate);
@@ -166,10 +198,11 @@ export const apiKeyBudgetReservation = createMiddleware<GenerationAccessEnv>(
 export async function requireGenerationAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    durationSeconds?: number,
 ): Promise<void> {
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
-    await checkBalance(vars, env);
+    await checkBalance(vars, env, vars.model, durationSeconds);
 }
 
 /**
@@ -180,9 +213,10 @@ export async function requireGenerationAccess(
 async function requireListAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    durationSeconds?: number,
 ): Promise<void> {
     if (!vars.model.requested.includes(",")) {
-        return requireGenerationAccess(vars, env);
+        return requireGenerationAccess(vars, env, durationSeconds);
     }
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
@@ -196,7 +230,7 @@ async function requireListAccess(
     let refusal: unknown;
     for (const model of listed) {
         try {
-            return await checkBalance(vars, env, model);
+            return await checkBalance(vars, env, model, durationSeconds);
         } catch (error) {
             if (!(error instanceof PaymentRequiredError)) throw error;
             refusal ??= error;
@@ -207,7 +241,11 @@ async function requireListAccess(
 
 export const generationAccess = createMiddleware<GenerationAccessEnv>(
     async (c, next) => {
-        await requireListAccess(c.var, c.env);
+        await requireListAccess(
+            c.var,
+            c.env,
+            durationFromRequest(c.req),
+        );
         await next();
     },
 );

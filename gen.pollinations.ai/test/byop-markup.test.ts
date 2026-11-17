@@ -861,6 +861,91 @@ describe("BYOP markup", () => {
         fetchSpy.mockRestore();
     });
 
+    it("sizes per-second estimates by the requested duration, not one second", () => {
+        const seedance = getRegistryModelDefinition("bytedance/seedance-2.0");
+        // A request that states its duration is priced for the whole video:
+        // 15s at the $0.18/s base rate, never a single second of it.
+        expect(getDefinedRequestEstimate(seedance, 1)).toBe(0.18);
+        expect(getDefinedRequestEstimate(seedance, 15)).toBeCloseTo(2.7, 12);
+        // Caller silent: the model's default duration (5s), else its maximum.
+        expect(getDefinedRequestEstimate(seedance)).toBeCloseTo(0.9, 12);
+        const sfx = getRegistryModelDefinition("mirelo/sfx-2.0");
+        expect(getDefinedRequestEstimate(sfx)).toBeCloseTo(1.2, 12);
+        // Megapixel pricing keeps the declared unit: duration must not leak in.
+        const fluxMax = getRegistryModelDefinition("black-forest-labs/flux.2-max");
+        expect(getDefinedRequestEstimate(fluxMax, 15)).toBe(
+            getDefinedRequestEstimate(fluxMax),
+        );
+        // A believable Tinybird median still wins over the defined estimate.
+        expect(
+            getEstimatedPrice(
+                { data: [{ model: "bytedance/seedance-2.0", avg_cost_usd: 1 }] },
+                "bytedance/seedance-2.0",
+                seedance,
+                15,
+            ),
+        ).toBe(1);
+    });
+
+    it("preflights a 15s video at 15 seconds of the rate", async () => {
+        // No price history and Tinybird unreachable: the defined estimate is
+        // the only preflight, and it must carry the requested duration.
+        const tinybirdDown = {
+            ...fakeStatsEnv(0, "bytedance/seedance-2.0"),
+            KV: { get: async () => null, put: async () => undefined },
+        } as unknown as CloudflareBindings;
+        const fetchSpy = vi
+            .spyOn(globalThis, "fetch")
+            .mockRejectedValue(new Error("Tinybird unreachable"));
+        const vars = {
+            auth: {
+                user: { id: "preflight-payer" },
+                apiKey: { id: "sk-test", pollenBalance: 0.5 },
+            },
+            balance: {
+                getBalance: async () => ({
+                    tierBalance: 0,
+                    packBalance: 0.5,
+                }),
+            },
+            model: testModel("bytedance/seedance-2.0"),
+            log: fakeLog(),
+        } as unknown as Parameters<typeof checkBalance>[0];
+        // 15s at $0.18/s is $2.70: the wallet and key budget both refuse where
+        // the old one-second estimate ($0.18) admitted the request and let it
+        // settle into an overdraft.
+        await expect(
+            checkBalance(vars, tinybirdDown, undefined, 15),
+        ).rejects.toMatchObject({ status: 402 });
+        // The model's default duration (5s = $0.90) also exceeds this wallet.
+        await expect(
+            checkBalance(vars, tinybirdDown),
+        ).rejects.toMatchObject({ status: 402 });
+        // A wallet that affords the default (5s) but not the request (15s)
+        // still serves the affordable one.
+        const richer = {
+            ...vars,
+            auth: {
+                user: { id: "preflight-payer" },
+                apiKey: { id: "sk-test", pollenBalance: 1.5 },
+            },
+            balance: {
+                getBalance: async () => ({
+                    tierBalance: 0,
+                    packBalance: 1.5,
+                }),
+            },
+        } as unknown as Parameters<typeof checkBalance>[0];
+        await expect(
+            checkBalance(richer, tinybirdDown, undefined, 15),
+        ).rejects.toMatchObject({ status: 402 });
+        await expect(
+            checkBalance(richer, tinybirdDown, undefined, 5),
+        ).resolves.toBeUndefined();
+        expect(fetchSpy).toHaveBeenCalledTimes(4);
+        fetchSpy.mockRestore();
+    });
+
     it("retains legacy price estimates after a canonical rename", () => {
         const model = "openai/gpt-5.4-nano";
         const definition = getRegistryModelDefinition(model);
