@@ -284,3 +284,7 @@ The registry-wide scan found 53 of 93 image-input text models without `promptIma
 - `fork/main` already at `6538ea2721` (0/0 vs upstream — synced by a concurrent session; no push from this session).
 - `issues_mds` appends issues 34-35 and this round additively on top of round 10 (`458cf198ae`); no existing branch touched (`ls-remote` checked before push — `solution30/31-*` names are unique; session 6's round-10 branches are `solution12/14/15/16/18/19-*`).
 - Upstream PR creation re-verified this round: `403 Resource not accessible by personal access token`; fork PRs #39-#40 are the live review surface.
+
+### Round 11 addendum — mid-session upstream movement (2026-11-18)
+
+Upstream moved twice more while this round's fixes were being verified: `a7aed04e24` (APIDOCS.md regeneration, no security surface) and `5bdb82327b` (Microsoft-Decision-1.1 on Azure, #19988). Diff-audit of the latter against this round's bug classes: **clean** — text-only modality (no astra-class image-rate omission; a `hasImagePart` 400-guard in `systemOneClient.ts` covers the primary and both fallback ids via `split(":")[0]`), token-priced with no per-second fields (no preflight class), `paidOnly: false` + tier-gated like its sibling decision-1, fallback cost sheets (Vercel list / OpenRouter +5.5%) are a documented pricing decision. `fork/main` fast-forwarded `a7aed04e24 → 5bdb82327b` (0 unique commits, no force). Fix branches `solution30/31-*` are based on `6538ea2721`; neither commit touches their files (verified: `git merge-tree` clean vs both), so no rebase is needed.
