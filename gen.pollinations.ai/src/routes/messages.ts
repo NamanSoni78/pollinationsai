@@ -15,6 +15,7 @@ import {
 import { chatToMessagesStream } from "../text/messages/stream.ts";
 import {
     chatToMessagesResponse,
+    completionFinishError,
     MessagesRequestError,
     messagesError,
     messagesToChatRequest,
@@ -219,6 +220,10 @@ export function createMessagesRoutes(dispatch: Dispatch) {
                 "Content-Type",
                 "application/json; charset=utf-8",
             );
+            const finishError = completionFinishError(completion.data);
+            if (finishError) {
+                return errorResponse(502, finishError, responseHeaders);
+            }
             try {
                 return new Response(
                     JSON.stringify(
