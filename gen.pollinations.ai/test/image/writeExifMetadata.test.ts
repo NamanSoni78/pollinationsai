@@ -39,3 +39,82 @@ describe("writeExifMetadata", () => {
         expect(out).toEqual(png);
     });
 });
+
+describe("writeExifMetadata embedding limits", () => {
+    it("never embeds caller-supplied input media URLs", async () => {
+        const params = {
+            model: "flux",
+            prompt: "a cat",
+            image: [
+                "https://private.example/signed.png?token=SECRET-SIGNED-URL-TOKEN",
+            ],
+            reference_images: ["https://private.example/ref.png?sig=abc123"],
+            reference_videos: ["https://private.example/ref.mp4?sig=def456"],
+            reference_audios: ["https://private.example/ref.mp3?sig=ghi789"],
+        };
+
+        const out = await writeExifMetadata(MINIMAL_JPEG, params, {});
+
+        let bin = "";
+        for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]);
+        const exif = load(bin);
+        const userComment = exif.Exif?.[
+            TagValues.ExifIFD.UserComment
+        ] as string;
+
+        expect(userComment).not.toContain("SECRET-SIGNED-URL-TOKEN");
+        expect(userComment).not.toContain("ref.png");
+        expect(userComment).not.toContain("ref.mp4");
+        expect(userComment).not.toContain("ref.mp3");
+        expect(userComment).not.toContain("private.example");
+        expect(JSON.parse(userComment)).toMatchObject({
+            model: "flux",
+            prompt: "a cat",
+        });
+    });
+
+    it("caps the embedded payload for a 32k-character prompt", async () => {
+        const hugePrompt = "A".repeat(32_000);
+        const out = await writeExifMetadata(
+            MINIMAL_JPEG,
+            {
+                model: "flux",
+                prompt: hugePrompt,
+                originalPrompt: hugePrompt,
+            },
+            { isMature: false },
+        );
+
+        let bin = "";
+        for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]);
+        const exif = load(bin);
+        const userComment = exif.Exif?.[
+            TagValues.ExifIFD.UserComment
+        ] as string;
+
+        // Pre-fix this embedded the full 32k prompt (and hosted it verbatim on
+        // the public media cache); now it is a truncated, still-parseable
+        // provenance object.
+        expect(userComment.length).toBeLessThanOrEqual(4_096);
+        const parsed = JSON.parse(userComment) as { prompt: string };
+        expect(parsed.prompt.length).toBeLessThanOrEqual(1_001);
+        expect(parsed.prompt.startsWith("AAAA")).toBe(true);
+    });
+
+    it("keeps ordinary prompts intact", async () => {
+        const out = await writeExifMetadata(
+            MINIMAL_JPEG,
+            { model: "flux", prompt: "a watercolor lighthouse at dawn" },
+            {},
+        );
+        let bin = "";
+        for (let i = 0; i < out.length; i++) bin += String.fromCharCode(out[i]);
+        const exif = load(bin);
+        const userComment = exif.Exif?.[
+            TagValues.ExifIFD.UserComment
+        ] as string;
+        expect(JSON.parse(userComment)).toMatchObject({
+            prompt: "a watercolor lighthouse at dawn",
+        });
+    });
+});
