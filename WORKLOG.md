@@ -150,3 +150,11 @@ Baseline: upstream `549feee` (current HEAD); fork/main verified identical (no sy
 - Upstream PR creation re-verified this session: `403 Resource not accessible by personal access token` on `POST /repos/pollinations/pollinations/pulls`. Fork PRs #21–#24 remain the live review surface until an upstream-scoped token is supplied.
 - `issues_mds` was already rebased onto `549feee` by the round 5 session; this round appends issues 17–20 on top (fast-forward, no force).
 
+## Round 8 — session 4: `pollinations-mcp` remote audio fetch memory cap, timeout, and SSRF hostname hardening (2026-11-17)
+
+Baseline: upstream `549feee`; `fork/main` identical; all prior issues (1–20) and branches (`solution1-*` through `solution20-*`) preserved untouched.
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 21 | `pollinations-mcp` (`packages/mcp/src/services/audioService.js`) buffers uncapped remote audio via `await response.blob()` (128 MiB Worker OOM via `transcribe_audio`/`isolate_speech`/`change_voice`), omits a fetch timeout, and allows trailing-dot `localhost.` / `.local` / `.internal` / single-label intranet hostnames in `publicAudioUrl` | High | 4 new unit tests in `packages/mcp/test/audioService.test.js` (trailing-dot & internal host rejection, `AbortSignal` deadline + `Content-Length` pre-check at 25 MiB / 50 MiB, streaming reader cancellation on oversized chunked stream) — full MCP suite 46/46 passing | `solution21-mcp-audio-fetch-caps` | fork [#25](https://github.com/NamanSoni78/pollinationsai/pull/25) |
+
