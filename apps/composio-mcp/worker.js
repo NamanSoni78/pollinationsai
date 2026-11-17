@@ -8,6 +8,14 @@ import {
 const COMPOSIO_API_URL = "https://backend.composio.dev/api/v3.1";
 const COMPOSIO_TOOL_CALL_RATE = "composio.tool_call.v1";
 
+/**
+ * Upper bound on the `tools` array of a single COMPOSIO_MULTI_EXECUTE_TOOL
+ * call. The array sizes both the billed units and the actions executed under
+ * the platform Composio key, so an uncapped array turns one HTTP request into
+ * an unbounded spend and execution burst. Mirrors the exa-mcp fetch caps.
+ */
+export const MAX_MULTI_EXECUTE_TOOLS = 25;
+
 class ComposioFailure extends Error {
     constructor(status, message, cost = 0) {
         super(message);
@@ -246,6 +254,20 @@ function routerUsage(payload, status) {
     };
 }
 
+function assertMultiExecuteBounds(payload) {
+    const tools =
+        payload?.method === "tools/call" &&
+        payload.params?.name === "COMPOSIO_MULTI_EXECUTE_TOOL"
+            ? payload.params.arguments?.tools
+            : undefined;
+    if (Array.isArray(tools) && tools.length > MAX_MULTI_EXECUTE_TOOLS) {
+        throw new ComposioFailure(
+            400,
+            `Too many tools in one COMPOSIO_MULTI_EXECUTE_TOOL call (max ${MAX_MULTI_EXECUTE_TOOLS}).`,
+        );
+    }
+}
+
 async function proxyRouter(request, userId, payload, env, fetchImpl) {
     const incomingSession = request.headers.get("mcp-session-id");
     let session;
@@ -386,6 +408,7 @@ export function createWorker({ fetchImpl }) {
                     .clone()
                     .json()
                     .catch(() => null);
+                assertMultiExecuteBounds(payload);
                 response = await proxyRouter(
                     request,
                     userId,
