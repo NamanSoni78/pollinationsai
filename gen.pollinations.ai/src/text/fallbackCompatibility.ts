@@ -1,5 +1,7 @@
 import {
     type CommunityEndpointRuntime,
+    MAX_COMMUNITY_COMPLETION_TOKENS,
+    MAX_COMMUNITY_PROMPT_TOKENS,
     usesAgentRunToken,
 } from "@shared/community-endpoints.ts";
 import type { ModelDefinition } from "@shared/registry/registry.ts";
@@ -41,6 +43,62 @@ function requestedCompletionTokens(request: Record<string, unknown>): number {
             (key) => (typeof request[key] === "number" ? request[key] : 0),
         ),
     );
+}
+
+// Media and file payloads are billed by their own units, not as prompt text.
+const NON_TEXT_PART_TYPES = new Set([
+    "image_url",
+    "input_image",
+    "input_audio",
+    "audio",
+    "file",
+    "input_file",
+    "input_image_url",
+]);
+
+/**
+ * Conservative prompt-size estimate (text characters / 4) for the community
+ * proxy gates: enough to refuse requests whose honest billing the platform
+ * would refuse anyway, without over-counting binary attachments.
+ */
+function estimateRequestPromptTokens(request: Record<string, unknown>): number {
+    const sources = Array.isArray(request.messages)
+        ? request.messages
+        : Array.isArray(request.input)
+          ? request.input
+          : [];
+    return Math.ceil(estimateTextCharacters(sources) / 4);
+}
+
+function estimateTextCharacters(value: unknown): number {
+    if (typeof value === "string") return value.length;
+    if (!value || typeof value !== "object") return 0;
+    if (Array.isArray(value))
+        return value.reduce(
+            (total, item) => total + estimateTextCharacters(item),
+            0,
+        );
+    const record = value as Record<string, unknown>;
+    if (
+        typeof record.type === "string" &&
+        NON_TEXT_PART_TYPES.has(record.type)
+    )
+        return 0;
+    let total = 0;
+    for (const [key, item] of Object.entries(record)) {
+        if (
+            key === "image_url" ||
+            key === "input_image" ||
+            key === "input_audio" ||
+            key === "audio" ||
+            key === "file" ||
+            key === "input_file" ||
+            key === "data"
+        )
+            continue;
+        total += estimateTextCharacters(item);
+    }
+    return total;
 }
 
 function hasToolHistory(value: unknown): boolean {
@@ -120,6 +178,22 @@ export function textCapabilityError(
         requestedCompletionTokens(request) > definition.maxCompletionTokens
     )
         return `This model supports at most ${definition.maxCompletionTokens} output tokens`;
+    // Billing never charges a proxy-reported usage claim past its ceilings
+    // (the implausible-usage guard in middleware/track.ts zeroes such
+    // charges), so a community request that could legitimately generate
+    // that much work would be delivered for free while the publisher pays
+    // for it. Refuse those requests up front. Agents report usage through
+    // their own runtime path and are exempt.
+    if (communityEndpoint?.type === "proxy" && !usesAgentRunToken(communityEndpoint)) {
+        const billableCompletionTokens = Math.min(
+            definition.maxCompletionTokens ?? Number.POSITIVE_INFINITY,
+            MAX_COMMUNITY_COMPLETION_TOKENS,
+        );
+        if (requestedCompletionTokens(request) > billableCompletionTokens)
+            return `Community text models serve at most ${MAX_COMMUNITY_COMPLETION_TOKENS} output tokens per request`;
+        if (estimateRequestPromptTokens(request) > MAX_COMMUNITY_PROMPT_TOKENS)
+            return `Community text models accept at most ${MAX_COMMUNITY_PROMPT_TOKENS} prompt tokens per request`;
+    }
     const referenceImages = countParts(request, ["image_url", "input_image"]);
     // Agents hand images to their own base model or code, which decides.
     const agent = communityEndpoint && usesAgentRunToken(communityEndpoint);

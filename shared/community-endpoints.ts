@@ -91,6 +91,16 @@ export type CommunityEndpointApi = z.infer<typeof CommunityEndpointApiSchema>;
 
 export const MAX_COMMUNITY_CONTEXT_LENGTH = 10_000_000;
 
+/**
+ * Ceilings a community proxy's self-reported text usage is billed against
+ * (see the implausible-usage guard in gen.pollinations.ai's track middleware):
+ * a claim beyond these is never charged. Requests that could legitimately
+ * produce this much work are refused up front by the text capability gates,
+ * so an honest over-ceiling generation is never delivered for free.
+ */
+export const MAX_COMMUNITY_PROMPT_TOKENS = 2_000_000;
+export const MAX_COMMUNITY_COMPLETION_TOKENS = 200_000;
+
 export const COMMUNITY_ENDPOINT_CAPABILITIES = [
     "tool_calling",
     "reasoning",

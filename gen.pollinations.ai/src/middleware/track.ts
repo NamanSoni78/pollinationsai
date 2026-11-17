@@ -95,6 +95,10 @@ import {
 } from "@/middleware/generation-cache.ts";
 import type { LoggerVariables } from "@/middleware/logger.ts";
 import type { ModelVariables } from "@/middleware/model.ts";
+import {
+    MAX_COMMUNITY_COMPLETION_TOKENS,
+    MAX_COMMUNITY_PROMPT_TOKENS,
+} from "@shared/community-endpoints.ts";
 import { apiErrorStatus } from "@/text/errors.ts";
 import {
     getResponsesEventUsage,
@@ -1008,9 +1012,11 @@ export async function trackResponse(
 
 // A community proxy reports its own usage and its owner earns from it, so a
 // text call that claims more than this, summed over every prompt and every
-// completion bucket, is never charged.
-const MAX_PROXY_PROMPT_TOKENS = 2_000_000;
-const MAX_PROXY_COMPLETION_TOKENS = 200_000;
+// completion bucket, is never charged. The ceilings are shared with the
+// request-side capability gates (fallbackCompatibility.ts) so a request that
+// could legitimately generate this much work is refused up front.
+const MAX_PROXY_PROMPT_TOKENS = MAX_COMMUNITY_PROMPT_TOKENS;
+const MAX_PROXY_COMPLETION_TOKENS = MAX_COMMUNITY_COMPLETION_TOKENS;
 
 function isImplausibleProxyUsage(
     eventType: EventType,
