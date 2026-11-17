@@ -603,6 +603,7 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(10.0),
             promptCachedTokens: perMillion(1.0),
             promptCacheWriteTokens: perMillion(12.5),
+            promptImageTokens: perMillion(10.0),
             completionTextTokens: perMillion(50.0),
         },
         ...defineCostVariants(
@@ -611,6 +612,7 @@ const TEXT_BASE_SERVICES = {
                     promptTextTokens: perMillion(20.0),
                     promptCachedTokens: perMillion(2.0),
                     promptCacheWriteTokens: perMillion(25.0),
+                    promptImageTokens: perMillion(20.0),
                     completionTextTokens: perMillion(75.0),
                 },
             },
@@ -716,6 +718,7 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(8),
             promptCachedTokens: perMillion(0.4),
             promptCacheWriteTokens: perMillion(10),
+            promptImageTokens: perMillion(8),
             completionTextTokens: perMillion(40),
         },
         ...defineCostVariants(
@@ -724,6 +727,7 @@ const TEXT_BASE_SERVICES = {
                     promptTextTokens: perMillion(16),
                     promptCachedTokens: perMillion(0.8),
                     promptCacheWriteTokens: perMillion(20),
+                    promptImageTokens: perMillion(16),
                     completionTextTokens: perMillion(60),
                 },
             },
