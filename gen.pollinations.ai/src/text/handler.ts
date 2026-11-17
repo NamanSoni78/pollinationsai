@@ -133,6 +133,7 @@ export async function generateChatAttempt(
     c: TextContext,
     requestData: RequestData,
     candidate: FallbackCandidate,
+    rejectErrorCompletion = false,
 ): Promise<ChatCompletion> {
     const portkey = c.env.PORTKEY;
     // An upstream without SSE is asked for JSON, then its answer is replayed
@@ -150,6 +151,26 @@ export async function generateChatAttempt(
     );
     if (!attemptData.stream) {
         requireChatCompletionUsage(result);
+        // A completion that finished with finish_reason=error is a failed
+        // generation. Chat Completions keeps the marker in its JSON contract,
+        // and the Responses adapter maps it to status=failed, but the plain
+        // text routes have no error channel: without this gate the partial
+        // body is served as a 200 answer (and cached by the text cache).
+        if (rejectErrorCompletion) {
+            for (const choice of result.choices ?? []) {
+                if (choice?.finish_reason !== "error") continue;
+                const message = (
+                    choice as { error?: { message?: unknown } }
+                ).error?.message;
+                throw new UpstreamError(502, {
+                    message:
+                        typeof message === "string" && message
+                            ? message
+                            : "Upstream ended generation with finish_reason=error",
+                    requestUrl: result.upstreamRequestUrl,
+                });
+            }
+        }
         // A stop sequence can truncate the answer to nothing. That is the
         // completion the caller asked for, not a provider failure, so it must
         // not be reported as an empty response.
@@ -421,7 +442,13 @@ async function generateTextResponse(
             );
         const { result: completion, candidate } = await withModelFallback(
             candidates,
-            (attempt) => generateChatAttempt(c, requestData, attempt),
+            (attempt) =>
+                generateChatAttempt(
+                    c,
+                    requestData,
+                    attempt,
+                    contentResponse,
+                ),
             c.var.track?.attempts,
             (attempt) => requireModelAttemptAccess(c, attempt),
         );
