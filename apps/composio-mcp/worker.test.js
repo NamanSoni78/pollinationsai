@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+    COMPOSIO_TOOL_CALL_PRICE,
     MCP_USAGE_HEADERS,
     MCP_USER_ID_HEADER,
 } from "../../shared/registry/mcp.ts";
-import { createWorker } from "./worker.js";
+import { createWorker, MAX_MULTI_EXECUTE_TOOLS } from "./worker.js";
 
 function createHarness(toolStatus = 200) {
     const calls = [];
@@ -153,6 +154,114 @@ test("thin-proxies the generic Composio router and reports executed actions", as
     assert.equal(
         new Headers(proxiedCalls[1].init.headers).get("mcp-session-id"),
         "upstream-session",
+    );
+});
+
+test("rejects an oversized multi-execute batch before proxying it", async () => {
+    const { worker, env, calls } = createHarness();
+    const before = calls.length;
+    const response = await worker.fetch(
+        new Request("https://composio.internal", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                [MCP_USER_ID_HEADER]: "user-1",
+                "mcp-session-id": btoa(
+                    JSON.stringify(["trs_user_1", "upstream-session"]),
+                ),
+            },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 3,
+                method: "tools/call",
+                params: {
+                    name: "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    arguments: {
+                        tools: Array.from(
+                            { length: MAX_MULTI_EXECUTE_TOOLS + 1 },
+                            () => ({
+                                slug: "GITHUB_ADD_A_COMMENT",
+                                arguments: {},
+                            }),
+                        ),
+                    },
+                },
+            }),
+        }),
+        env,
+    );
+    assert.equal(response.status, 400);
+    assert.deepEqual(JSON.parse(await response.text()), {
+        error: "connected_apps_error",
+        message: `Too many tools in one COMPOSIO_MULTI_EXECUTE_TOOL call (max ${MAX_MULTI_EXECUTE_TOOLS}).`,
+    });
+    assert.equal(
+        response.headers.get(MCP_USAGE_HEADERS.adjustmentUnits),
+        "0",
+    );
+    assert.equal(calls.length, before);
+});
+
+test("accepts a multi-execute batch at the cap and bills one unit per tool", async () => {
+    const { worker, env } = createHarness();
+    const initialize = await worker.fetch(
+        new Request("https://composio.internal", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                [MCP_USER_ID_HEADER]: "user-1",
+            },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "test", version: "1" },
+                },
+            }),
+        }),
+        env,
+    );
+    assert.equal(initialize.status, 200);
+    const sessionId = initialize.headers.get("mcp-session-id");
+    const call = await worker.fetch(
+        new Request("https://composio.internal", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                [MCP_USER_ID_HEADER]: "user-1",
+                "mcp-session-id": sessionId,
+            },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/call",
+                params: {
+                    name: "COMPOSIO_MULTI_EXECUTE_TOOL",
+                    arguments: {
+                        tools: Array.from(
+                            { length: MAX_MULTI_EXECUTE_TOOLS },
+                            () => ({
+                                slug: "GITHUB_ADD_A_COMMENT",
+                                arguments: {},
+                            }),
+                        ),
+                    },
+                },
+            }),
+        }),
+        env,
+    );
+    assert.equal(call.status, 200);
+    assert.equal(
+        call.headers.get(MCP_USAGE_HEADERS.adjustmentUnits),
+        String(MAX_MULTI_EXECUTE_TOOLS),
+    );
+    assert.equal(
+        call.headers.get(MCP_USAGE_HEADERS.cost),
+        String(MAX_MULTI_EXECUTE_TOOLS * COMPOSIO_TOOL_CALL_PRICE),
     );
 });
 
