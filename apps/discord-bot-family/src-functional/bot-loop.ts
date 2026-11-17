@@ -236,13 +236,36 @@ async function handleClientReady(readyClient: Client, config: BotConfig) {
 }
 
 /**
- * Process a single message
+ * Process a single message.
+ *
+ * One billed reply per user per bot per window: every qualifying message
+ * (a mention, a reply, a DM, or a conversation-channel post) spends the
+ * shared platform key on a paid completion, so this bounds what a single
+ * user can spend no matter how fast they post — the same gate the
+ * catgpt-bot and opposite-prompt-bot handlers enforce.
  */
-async function processMessage(
+export const USER_COOLDOWN_MS = 60_000;
+
+const userLastReplyAt = new Map<string, number>();
+
+/** Test-only: forget the per-user reply cooldowns. */
+export function resetSpendGatesForTests(): void {
+    userLastReplyAt.clear();
+}
+
+export interface ProcessMessageOptions {
+    /** Injectable for tests: the per-user reply cooldown window. */
+    cooldownMs?: number;
+    /** Injectable for tests: the clock the cooldown reads. */
+    now?: () => number;
+}
+
+export async function processMessage(
     msg: Message,
     client: Client,
     config: BotConfig,
     generateText: GenerateTextWithHistory,
+    options: ProcessMessageOptions = {},
 ): Promise<void> {
     log(
         "Received message in channel %s from %s: %s",
@@ -353,7 +376,27 @@ async function processMessage(
             return;
         }
     }
-    // Human mentions and DMs: always respond
+    // Human mentions and DMs: always respond — but only once per user per
+    // window, because every response spends the shared platform key on a
+    // paid completion. The key is per bot, so a user conversing with several
+    // family bots still gets one reply from each within the window.
+    const cooldownMs = options.cooldownMs ?? USER_COOLDOWN_MS;
+    const now = options.now ?? Date.now;
+    const cooldownKey = `${config.name}:${msg.author.id}`;
+    const lastReplyAt = userLastReplyAt.get(cooldownKey) ?? -Infinity;
+    if (now() - lastReplyAt < cooldownMs) {
+        log(
+            "Cooldown skip for %s on %s (%d ms since last reply)",
+            msg.author.username,
+            config.name,
+            now() - lastReplyAt,
+        );
+        return;
+    }
+    userLastReplyAt.set(cooldownKey, now());
+    // Bounded like the other handlers: a long-lived process cannot grow this
+    // map without limit.
+    if (userLastReplyAt.size > 5_000) userLastReplyAt.clear();
 
     // Random delay in global channels to desynchronize bots (2-15s)
     if (isGlobalChannel && !isDirected) {
