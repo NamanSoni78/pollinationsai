@@ -14,6 +14,7 @@ import {
     callDirectResponses,
     type DirectResponsesTarget,
     resolveDirectResponsesTarget,
+    responsesReasoningEffortRemap,
     responsesTargetFromConfig,
 } from "@/text/responses/client.ts";
 import { generateCreateResponse } from "@/text/responses/handler.ts";
@@ -808,3 +809,75 @@ it.each([
         });
     },
 );
+
+describe("native Responses reasoning-effort remaps (#19789 parity)", () => {
+    /** The target the handler builds: resolve, then carry the effort remap. */
+    async function remappedTarget(
+        modelId: string,
+        input: CreateResponseRequest,
+    ): Promise<DirectResponsesTarget> {
+        const target = resolveDirectResponsesTarget(modelId, input);
+        if (!target) throw new Error(`expected direct target for ${modelId}`);
+        const remap = await responsesReasoningEffortRemap(modelId, input);
+        return remap === undefined
+            ? target
+            : { ...target, reasoningEffort: remap };
+    }
+
+    it("remaps a rejected effort level to the level the provider accepts", async () => {
+        const input = request({
+            model: "openai/gpt-6.1-sol",
+            reasoning: { effort: "none" },
+        });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body.reasoning).toMatchObject({ effort: "low" });
+    });
+
+    it("remaps max to xhigh on the 2024-12-01-preview Azure family", async () => {
+        const input = request({
+            model: "openai/gpt-5.4-mini",
+            reasoning: { effort: "max" },
+        });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body.reasoning).toMatchObject({ effort: "xhigh" });
+    });
+
+    it("strips the effort parameter a strip-reasoning deployment rejects", async () => {
+        const input = request({
+            model: "mistralai/mistral-large-3",
+            reasoning: { effort: "medium" },
+        });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body).not.toHaveProperty("reasoning");
+    });
+
+    it("keeps a caller's other reasoning fields when stripping the effort", async () => {
+        const input = request({
+            model: "mistralai/mistral-large-3",
+            reasoning: { effort: "medium", summary: "auto" },
+        });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body.reasoning).toEqual({ summary: "auto" });
+    });
+
+    it("leaves accepted levels untouched", async () => {
+        const input = request({
+            model: "openai/gpt-6.1-sol",
+            reasoning: { effort: "high" },
+        });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body.reasoning).toMatchObject({ effort: "high" });
+    });
+
+    it("adds nothing when the caller sent no effort", async () => {
+        const input = request({ model: "openai/gpt-6.1-sol" });
+        const target = await remappedTarget(input.model, input);
+        const body = buildDirectResponsesRequestBody(input, target);
+        expect(body).not.toHaveProperty("reasoning");
+    });
+});

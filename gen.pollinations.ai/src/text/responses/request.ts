@@ -66,6 +66,32 @@ export function buildDirectResponsesRequestBody(
     delete body.safe;
     delete body.client_metadata;
 
+    // The provider-level effort remap the Chat pipeline applies via the
+    // model's transform (#19789): remap the caller's rejected level to the
+    // level the provider accepts, or strip the parameter entirely when the
+    // transform does. Only touched when the caller set an effort and the
+    // model's transform produced a mapping (target.reasoningEffort). Runs
+    // before the forced-tools override below so that "none" wins last.
+    const reasoningRecord = isPlainObject(body.reasoning)
+        ? (body.reasoning as Record<string, unknown>)
+        : undefined;
+    if (
+        reasoningRecord &&
+        typeof reasoningRecord.effort === "string" &&
+        target.reasoningEffort !== undefined
+    ) {
+        if (target.reasoningEffort === null) {
+            const { effort: _stripped, ...restReasoning } = reasoningRecord;
+            if (Object.keys(restReasoning).length === 0) delete body.reasoning;
+            else body.reasoning = restReasoning;
+        } else {
+            body.reasoning = {
+                ...reasoningRecord,
+                effort: target.reasoningEffort,
+            };
+        }
+    }
+
     const toolChoice = body.tool_choice;
     if (
         target.disableReasoningForForcedTools &&

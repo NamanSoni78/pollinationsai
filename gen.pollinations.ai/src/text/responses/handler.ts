@@ -48,6 +48,7 @@ import {
     callDirectResponses,
     type DirectResponsesTarget,
     resolveDirectResponsesTarget,
+    responsesReasoningEffortRemap,
     responsesTargetFromConfig,
 } from "./client.js";
 import {
@@ -232,9 +233,25 @@ async function handleDirectResponse(
                     c,
                     attempt,
                 );
+                // The Chat pipeline runs the model's transform before its
+                // provider call (#19789); the native Responses path never
+                // did, so the effort levels those remaps exist for reached
+                // these deployments raw. Carry the remapped value on the
+                // target so the request body builder applies it.
+                const effortRemap = await responsesReasoningEffortRemap(
+                    attempt.id,
+                    request,
+                );
+                const target =
+                    effortRemap === undefined
+                        ? responsesClient.target
+                        : {
+                              ...responsesClient.target,
+                              reasoningEffort: effortRemap,
+                          };
                 const result = await callDirectResponses(
                     buffered ? { ...request, stream: false } : request,
-                    responsesClient.target,
+                    target,
                     responsesClient.fetcher,
                 );
                 if (request.stream && !buffered) {

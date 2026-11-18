@@ -29,6 +29,15 @@ export type DirectResponsesTarget = {
     serviceTier?: string;
     imageConversionModel?: string;
     /**
+     * The reasoning effort the model's own transform maps the caller's value
+     * to — the same remap the Chat pipeline applies (#19789) but which this
+     * native path used to skip, so providers received the rejected levels
+     * raw. `null` means the transform strips the parameter entirely (the
+     * deployment 500s on it); `undefined` leaves the request untouched (the
+     * caller sent no effort, or the model has no transform).
+     */
+    reasoningEffort?: string | null;
+    /**
      * Ask for a stream even when the caller wants JSON. Cloudflare ends a
      * subrequest to Azure that has no response headers after ~125 s, and a
      * long JSON answer only sends them at the end.
@@ -116,6 +125,31 @@ export function resolveDirectResponsesTarget(
     return target?.imageConversionModel
         ? { ...target, imageConversionModel: modelId }
         : target;
+}
+
+/**
+ * The reasoning effort the model's own transform maps the caller's value to —
+ * the same remap the Chat pipeline applies before its provider call
+ * (#19789) but which the native Responses path used to skip entirely, so
+ * the effort levels providers reject reached these same deployments raw.
+ * `null` means the transform strips the parameter entirely (the deployment
+ * 500s on it); `undefined` means leave the request untouched (the caller
+ * sent no effort, or the model has no transform).
+ */
+export async function responsesReasoningEffortRemap(
+    modelId: string,
+    request: CreateResponseRequest,
+): Promise<string | null | undefined> {
+    const modelDef = findModelByName(modelId);
+    const effort = reasoningEffort(request);
+    if (!modelDef?.transform || effort === undefined) return undefined;
+    const transformed = await modelDef.transform([], {
+        model: modelId,
+        reasoning_effort: effort,
+    });
+    return typeof transformed.options.reasoning_effort === "string"
+        ? transformed.options.reasoning_effort
+        : null;
 }
 
 function parseJson(text: string): unknown {
