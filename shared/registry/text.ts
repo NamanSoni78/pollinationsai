@@ -2866,6 +2866,9 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(4),
             promptCachedTokens: perMillion(0.2),
             promptCacheWriteTokens: perMillion(4),
+            // Kimi reports image input separately (observed on the Azure
+            // twin, which prices it at the same input-text rate).
+            promptImageTokens: perMillion(4),
             completionTextTokens: perMillion(20),
         },
         title: "Kimi K3.1 Pro Highspeed",
@@ -3817,6 +3820,8 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            // Vercel reports image input separately from text tokens.
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.2",
@@ -3841,6 +3846,8 @@ const TEXT_BASE_SERVICES = {
             // Vercel AI Gateway Meta route, verified 2026-10-23.
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            // Vercel reports image input separately from text tokens.
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.3",

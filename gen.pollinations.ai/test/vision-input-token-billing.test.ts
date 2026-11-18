@@ -25,6 +25,9 @@ const SEPARATELY_REPORTING_VISION_MODELS = [
     "tencent/hy4-flash",
     "mistralai/mistral-large-3",
     "meta/llama-4-maverick",
+    "moonshotai/kimi-k3.1-pro-highspeed",
+    "meta/muse-spark-1.2",
+    "meta/muse-spark-1.3",
     "pollinations/midijourney",
     "pollinations/midijourney-large",
 ] as const;
@@ -106,6 +109,32 @@ describe("vision input token billing", () => {
             quotedBy: parent,
         });
         expect(billing.cost.promptImageTokens ?? 0).toBeCloseTo(0.005, 15);
+    });
+
+    it("meters image tokens on the hy4-flash OpenRouter fallback route too", () => {
+        const parent = TEXT_SERVICES["tencent/hy4-flash"];
+        const fallback = TEXT_SERVICES["tencent/hy4-flash:openrouter"];
+        const fallbackCost = fallback.cost as Record<
+            string,
+            number | undefined
+        >;
+        expect(fallbackCost.promptImageTokens).toBeDefined();
+
+        const billing = calculateUsageBilling({
+            model: "tencent/hy4-flash",
+            usage: {
+                promptTextTokens: 1_000,
+                promptImageTokens: 10_000,
+                completionTextTokens: 1_000,
+            },
+            servedBy: fallback,
+            quotedBy: parent,
+        });
+        // list x 1.055 OpenRouter fee, 10k image tokens
+        expect(billing.cost.promptImageTokens ?? 0).toBeCloseTo(
+            (10_000 * 0.035 * 1.055) / 1_000_000,
+            15,
+        );
     });
 
     it("still bills image tokens on the already-priced control model", () => {

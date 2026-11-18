@@ -682,6 +682,9 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.035) * 1.055,
                 promptCachedTokens: perMillion(0.0015) * 1.055,
+                // OpenRouter passes the gateway's image-token split through;
+                // price it at the route's list x fee rate like every other line.
+                promptImageTokens: perMillion(0.035) * 1.055,
                 completionTextTokens: perMillion(0.1405) * 1.055,
             },
         },
