@@ -1607,13 +1607,13 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // OpenRouter base Alibaba peak rates (00:00–14:00 UTC, 2026-09-23),
-            // including the account's 5.5% credit-purchase fee. Alibaba
-            // halves them the rest of the day; costs are not time-based, so
-            // the peak rate applies all day and never undercharges.
-            promptTextTokens: perMillion(1.122) * 1.055,
-            promptCachedTokens: perMillion(0.1122) * 1.055,
-            completionTextTokens: perMillion(3.366) * 1.055,
+            // OpenRouter alibaba/fp8 rates (2026-11-18; the pinned route,
+            // excluding the pricier alibaba/fp8/us-east-1 variant), including
+            // the account's 5.5% credit-purchase fee. No current Alibaba
+            // endpoint halves rates off-peak any more.
+            promptTextTokens: perMillion(1.416) * 1.055,
+            promptCachedTokens: perMillion(0.118) * 1.055,
+            completionTextTokens: perMillion(2.832) * 1.055,
         },
         title: "DeepSeek V4 Pro 0813",
         description: "Deep reasoning and strong coding for demanding problems",
@@ -1807,7 +1807,9 @@ const TEXT_BASE_SERVICES = {
         },
         billing: {
             ...openRouterGeminiBilling({
-                searchCostPerThousandRequests: 7 * 1.055,
+                // AI Studio bills web_search $0.014 per request
+                // (2026-11-18); the sheet had $7/1K — half the charge.
+                searchCostPerThousandRequests: 14 * 1.055,
                 storageCostPerMillionTokenHours: 1 * 1.055,
             }),
             resolveTotalCost: reportedTextCost(1.055),
@@ -2751,14 +2753,15 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // OpenRouter Inceptron int4 rates (2026-11-11), including the
+            // OpenRouter inceptron/int4 rates (2026-11-18; the pinned route
+            // re-priced since the 2026-11-11 verification), including the
             // account's 5.5% credit-purchase fee. Same int4 checkpoint as
             // Moonshot's own endpoint; no separate cache-write rate.
-            promptTextTokens: perMillion(0.6) * 1.055,
-            promptCachedTokens: perMillion(0.16) * 1.055,
-            promptCacheWriteTokens: perMillion(0.6) * 1.055,
-            promptImageTokens: perMillion(0.6) * 1.055,
-            completionTextTokens: perMillion(3.5) * 1.055,
+            promptTextTokens: perMillion(0.8125) * 1.055,
+            promptCachedTokens: perMillion(0.17) * 1.055,
+            promptCacheWriteTokens: perMillion(0.8125) * 1.055,
+            promptImageTokens: perMillion(0.8125) * 1.055,
+            completionTextTokens: perMillion(3.75) * 1.055,
         },
         title: "Kimi K2.7 Code",
         description:
@@ -3256,9 +3259,15 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            promptTextTokens: perMillion(0.14) * 1.055,
-            promptCachedTokens: perMillion(0.0028) * 1.055,
-            completionTextTokens: perMillion(0.28) * 1.055,
+            // OpenRouter venice/fp8 rates (2026-11-18), including the
+            // account's 5.5% credit-purchase fee. The xiaomi/fp8 endpoint
+            // this sheet was originally costed from is delisted; venice/fp8
+            // is the only endpoint still serving the model, with a single
+            // prompt rate for every input modality.
+            promptTextTokens: perMillion(0.4) * 1.055,
+            promptCachedTokens: perMillion(0.08) * 1.055,
+            promptImageTokens: perMillion(0.4) * 1.055,
+            completionTextTokens: perMillion(2) * 1.055,
         },
         title: "MiMo V2.5",
         description: "Efficient multimodal reasoning for agents and coding",
@@ -3280,10 +3289,13 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // OpenRouter Xiaomi FP8 endpoint, verified 2026-08-22.
-            promptTextTokens: perMillion(0.435) * 1.055,
-            promptCachedTokens: perMillion(0.0036) * 1.055,
-            completionTextTokens: perMillion(0.87) * 1.055,
+            // OpenRouter digitalocean rates (2026-11-18), including the
+            // account's 5.5% credit-purchase fee. The Xiaomi FP8 endpoint
+            // this sheet was costed from (verified 2026-08-22) is delisted;
+            // digitalocean is the only endpoint still serving the model.
+            promptTextTokens: perMillion(0.48) * 1.055,
+            promptCachedTokens: perMillion(0.096) * 1.055,
+            completionTextTokens: perMillion(1.8) * 1.055,
         },
         title: "MiMo V2.5 Pro",
         description: "Long-context reasoning and coding with higher capability",

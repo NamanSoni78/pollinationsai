@@ -557,13 +557,16 @@ export const portkeyConfig: PortkeyConfigMap = {
         "cohere/command-a-plus",
         "Cohere",
     ),
+    // OpenRouter delisted xiaomi/fp8 (2026-11-18); venice/fp8 and
+    // digitalocean are the only endpoints still serving these models, and
+    // the registry sheets are costed to their published rates.
     "xiaomi/mimo-v2.5": createPinnedOpenRouterConfig(
         "xiaomi/mimo-v2.5",
-        "xiaomi/fp8",
+        "venice/fp8",
     ),
     "xiaomi/mimo-v2.5-pro": createPinnedOpenRouterConfig(
         "xiaomi/mimo-v2.5-pro",
-        "xiaomi/fp8",
+        "digitalocean",
     ),
     "minimax/minimax-m2.7": createPinnedOpenRouterConfig(
         "minimax/minimax-m2.7",
