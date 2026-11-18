@@ -162,11 +162,18 @@ function transformStreamCompletions(
                     onEvent(event) {
                         let data = event.data;
                         if (data.trim() !== "[DONE]") {
-                            const completion = JSON.parse(
-                                data,
-                            ) as ChatCompletion;
-                            transform(completion);
-                            data = JSON.stringify(completion);
+                            try {
+                                const completion = JSON.parse(
+                                    data,
+                                ) as ChatCompletion;
+                                transform(completion);
+                                data = JSON.stringify(completion);
+                            } catch {
+                                // Leave non-JSON events (keep-alives,
+                                // comments, empty frames) unchanged; the
+                                // usage validator and the public stream apply
+                                // their own validation after the tee.
+                            }
                         }
                         const fields: string[] = [];
                         if (event.event !== undefined)

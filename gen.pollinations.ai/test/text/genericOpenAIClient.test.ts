@@ -1386,6 +1386,133 @@ describe("genericOpenAIClient", () => {
         expect(completion.usage?.completion_tokens).toBe(0);
     });
 
+    it("tolerates non-JSON keep-alive frames while transforming a stream (hideReasoning)", async () => {
+        const encoder = new TextEncoder();
+        vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(
+                            encoder.encode("data: keep-alive\n\n"),
+                        );
+                        controller.enqueue(
+                            encoder.encode(": ping comment\n\n"),
+                        );
+                        controller.enqueue(
+                            encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [
+                                        {
+                                            index: 0,
+                                            delta: {
+                                                content: "ok",
+                                                reasoning: "scratch",
+                                            },
+                                        },
+                                    ],
+                                })}\n\n`,
+                            ),
+                        );
+                        controller.enqueue(
+                            encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [
+                                        { index: 0, finish_reason: "stop" },
+                                    ],
+                                    usage: {
+                                        prompt_tokens: 2,
+                                        completion_tokens: 1,
+                                    },
+                                })}\n\n`,
+                            ),
+                        );
+                        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                        controller.close();
+                    },
+                }),
+                {
+                    headers: {
+                        "content-type": "text/event-stream; charset=utf-8",
+                    },
+                },
+            ),
+        );
+
+        const completion = await genericOpenAIClient(
+            [{ role: "user", content: "hello" }],
+            {
+                model: "provider-model",
+                stream: true,
+                reasoning: { exclude: true },
+            },
+            {
+                endpoint: "https://portkey.test/chat",
+            },
+        );
+
+        const text = await new Response(
+            completion.responseStream as ReadableStream,
+        ).text();
+
+        // The keep-alive frame passes through unchanged, the delta is
+        // transformed (reasoning stripped), billing usage survives, and the
+        // stream completes with [DONE] instead of erroring mid-answer.
+        expect(text).toContain("data: keep-alive");
+        expect(text).toContain('"content":"ok"');
+        expect(text).not.toContain("scratch");
+        expect(text).toContain("data: [DONE]\n\n");
+    });
+
+    it("tolerates an empty data frame while transforming a stream", async () => {
+        const encoder = new TextEncoder();
+        vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () =>
+            new Response(
+                new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(encoder.encode("data:\n\n"));
+                        controller.enqueue(
+                            encoder.encode(
+                                `data: ${JSON.stringify({
+                                    choices: [
+                                        {
+                                            index: 0,
+                                            delta: { content: "hi" },
+                                        },
+                                    ],
+                                })}\n\n`,
+                            ),
+                        );
+                        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                        controller.close();
+                    },
+                }),
+                {
+                    headers: {
+                        "content-type": "text/event-stream; charset=utf-8",
+                    },
+                },
+            ),
+        );
+
+        const completion = await genericOpenAIClient(
+            [{ role: "user", content: "hello" }],
+            {
+                model: "provider-model",
+                stream: true,
+                include_reasoning: false,
+            },
+            {
+                endpoint: "https://portkey.test/chat",
+            },
+        );
+
+        const text = await new Response(
+            completion.responseStream as ReadableStream,
+        ).text();
+        expect(text).toContain('"content":"hi"');
+        expect(text).toContain("data: [DONE]\n\n");
+    });
+
     it("appends a DONE event when an upstream SSE stream omits it", async () => {
         vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () => {
             const encoder = new TextEncoder();
