@@ -389,10 +389,33 @@ export async function callVertexAIGeminiImageAPI(
     )?.inlineData;
     if (!imagePart?.data) throw noImageError(data);
 
-    const usage = mapVertexGeminiImageUsage(
-        data.usageMetadata,
-        config.cachedInput,
-    );
+    let usage: Usage;
+    try {
+        usage = mapVertexGeminiImageUsage(
+            data.usageMetadata,
+            config.cachedInput,
+        );
+    } catch (error) {
+        // The image was delivered, so Vertex rendered and billed it; settle
+        // the readable top-level token legs when the modality receipt is
+        // missing or inconsistent.
+        if (!(error instanceof UpstreamError)) throw error;
+        const meta = data.usageMetadata;
+        const isCount = (value: unknown): value is number =>
+            Number.isSafeInteger(value) && (value as number) >= 0;
+        const settle: Usage = {};
+        if (isCount(meta?.promptTokenCount) && meta.promptTokenCount > 0)
+            settle.promptTextTokens = meta.promptTokenCount;
+        if (
+            isCount(meta?.candidatesTokenCount) &&
+            meta.candidatesTokenCount > 0
+        )
+            settle.completionTextTokens = meta.candidatesTokenCount;
+        throw Object.assign(
+            error,
+            Object.keys(settle).length ? { billedUsage: settle } : {},
+        );
+    }
     const imageBuffer = base64ToBuffer(imagePart.data);
     let finalImageBuffer = imageBuffer;
     try {

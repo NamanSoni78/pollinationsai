@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
@@ -29,6 +30,36 @@ type VercelImageResponse = {
         cost?: number;
     };
 };
+
+/**
+ * The gateway completed (and billed) the call once an image or a valid
+ * receipt leg is in hand. Without a trustworthy receipt, settle the legs
+ * that are readable: the prompt rates are equal across modalities on this
+ * route, and the completion leg is a reported-token floor.
+ */
+function settleVercelGeminiUsage(
+    google: VertexGeminiImageUsage | undefined,
+    reported: VercelImageResponse["usage"],
+): Usage | undefined {
+    const isCount = (value: unknown): value is number =>
+        Number.isSafeInteger(value) && (value as number) >= 0;
+    const usage: Usage = {};
+    const promptTokens = isCount(google?.promptTokenCount)
+        ? google.promptTokenCount
+        : isCount(reported?.prompt_tokens)
+          ? reported.prompt_tokens
+          : undefined;
+    if (promptTokens !== undefined && promptTokens > 0)
+        usage.promptTextTokens = promptTokens;
+    const completionTokens = isCount(google?.candidatesTokenCount)
+        ? google.candidatesTokenCount
+        : isCount(reported?.completion_tokens)
+          ? reported.completion_tokens
+          : undefined;
+    if (completionTokens !== undefined && completionTokens > 0)
+        usage.completionTextTokens = completionTokens;
+    return Object.keys(usage).length ? usage : undefined;
+}
 
 export async function callVercelGeminiImageAPI(
     prompt: string,
@@ -64,21 +95,23 @@ export async function callVercelGeminiImageAPI(
     try {
         const data = (await response.json()) as VercelImageResponse;
         const choice = data.choices?.[0];
-        const image = choice?.message?.images?.[0]?.image_url?.url;
-        if (!image?.startsWith("data:image/")) {
-            throw UpstreamError.fromProvider(
-                choice?.finish_reason === "content_filter" ? 400 : 502,
-                {
-                    message: "Vercel Google returned no image",
-                    ...(choice?.finish_reason === "content_filter" && {
-                        errorCode: "content_policy_violation",
-                    }),
-                },
-            );
-        }
         const google =
             choice?.message?.provider_metadata?.google?.usageMetadata;
         const reported = data.usage;
+        const image = choice?.message?.images?.[0]?.image_url?.url;
+        if (!image?.startsWith("data:image/")) {
+            const filtered = choice?.finish_reason === "content_filter";
+            // A filtered completion is not billed; any other 200 with
+            // readable usage legs was processed and billed upstream.
+            const settle = filtered
+                ? undefined
+                : settleVercelGeminiUsage(google, reported);
+            throw UpstreamError.fromProvider(filtered ? 400 : 502, {
+                message: "Vercel Google returned no image",
+                ...(filtered && { errorCode: "content_policy_violation" }),
+                ...(settle ? { billedUsage: settle } : {}),
+            });
+        }
         if (
             !google ||
             typeof reported?.cost !== "number" ||
@@ -90,8 +123,17 @@ export async function callVercelGeminiImageAPI(
                 (google.candidatesTokenCount ?? NaN) +
                     (google.thoughtsTokenCount ?? 0)
         ) {
+            // The image was delivered above, so the call completed and was
+            // billed by the gateway even though the receipt is unusable.
+            const settle = settleVercelGeminiUsage(google, reported);
             throw new Error(
                 "Vercel returned invalid image billing usage metadata",
+                // Ride the settle on the error so the rewrap below keeps it.
+                {
+                    cause: new UpstreamError(502, {
+                        ...(settle ? { billedUsage: settle } : {}),
+                    }),
+                },
             );
         }
         // The gateway's standard image_tokens is zero. Google's details carry
@@ -136,6 +178,15 @@ export async function callVercelGeminiImageAPI(
                         ? error.errorCode
                         : undefined,
                 cause: error,
+                // A delivered image was already billed upstream; keep any
+                // settle that the failed leg computed.
+                billedUsage:
+                    error instanceof UpstreamError
+                        ? error.billedUsage
+                        : error instanceof Error &&
+                            error.cause instanceof UpstreamError
+                          ? error.cause.billedUsage
+                          : undefined,
             },
         );
     }

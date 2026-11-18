@@ -105,14 +105,27 @@ export async function callAlibabaVideo(
         throw UpstreamError.fromProvider(502, {
             message: "Alibaba returned no video",
         });
+    // The video URL is in hand, so the task SUCCEEDED and DashScope billed
+    // it; if a duration leg is unusable the guard still settles the
+    // requested duration (plus the reported input seconds when readable).
+    const reportedInput = result.usage?.input_video_duration;
+    const inputLeg =
+        typeof reportedInput === "number" &&
+        Number.isFinite(reportedInput) &&
+        reportedInput > 0
+            ? { promptVideoSeconds: reportedInput }
+            : {};
     const outputSeconds = requireAlibabaUsage(
         result.usage?.output_video_duration,
         "output video duration",
+        false,
+        { completionVideoSeconds: duration, ...inputLeg },
     );
     const inputSeconds = requireAlibabaUsage(
         result.usage?.input_video_duration,
         "input video duration",
         true,
+        { completionVideoSeconds: outputSeconds },
     );
     const video = await fetchUpstream(url, {
         errorLabel: "Failed to download Alibaba video",

@@ -1,4 +1,5 @@
 import { collectUpstreamHeaders, UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import type {
     AuthResult,
@@ -118,21 +119,32 @@ export async function callInferencePortImage(
     } else if (imageUrl) {
         buffer = (await downloadUserImage(imageUrl)).buffer;
     } else {
+        // One image per request on this route; InferencePort charges PAYG
+        // credits on completed jobs, and a 200 here is a completed job.
+        const reported = data.usage?.image_count;
+        const settled: Usage | undefined =
+            Number.isInteger(reported) && (reported ?? 0) > 0
+                ? { completionImageTokens: reported as number }
+                : { completionImageTokens: 1 };
         throw new UpstreamError(502, {
             message: `InferencePort ${INFERENCEPORT_TITLE} returned no image`,
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
             responseBody: responseSummary,
             upstreamHeaders: collectUpstreamHeaders(response.headers),
+            billedUsage: settled,
         });
     }
 
     const imageCount = data.usage?.image_count;
     if (!Number.isInteger(imageCount) || !imageCount || imageCount < 0) {
+        // The image is in hand, so the completed job was charged; one image
+        // per request is the request-derived quantity.
         throw new UpstreamError(502, {
             message: "InferencePort returned no valid image usage",
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
+            billedUsage: { completionImageTokens: 1 },
         });
     }
     // payg_credits_charged is the total for these images, not an extra fee.

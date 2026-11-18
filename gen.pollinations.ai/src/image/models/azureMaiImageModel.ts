@@ -1,4 +1,5 @@
 import { collectUpstreamHeaders, UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import type {
     AuthResult,
@@ -180,24 +181,47 @@ export async function callAzureMaiImage(
         dataCount: Array.isArray(data.data) ? data.data.length : undefined,
         usage: data.usage,
     });
+    // Azure bills a completed render even when the receipt or payload is
+    // unusable; settle every reported leg that is readable.
+    const settleMaiUsage = (includeOutput: boolean): Usage | undefined => {
+        const promptTextTokens = tokenCount(data.usage?.num_input_text_tokens);
+        const promptImageTokens = tokenCount(
+            data.usage?.num_input_image_tokens,
+        );
+        const completionImageTokens = includeOutput
+            ? tokenCount(data.usage?.num_output_tokens)
+            : 0;
+        const usage: Usage = {
+            ...(promptTextTokens > 0 ? { promptTextTokens } : {}),
+            ...(promptImageTokens > 0 ? { promptImageTokens } : {}),
+            ...(completionImageTokens > 0 ? { completionImageTokens } : {}),
+        };
+        return Object.keys(usage).length ? usage : undefined;
+    };
     if (!encodedImage) {
+        const settle = settleMaiUsage(true);
         throw new UpstreamError(502, {
             message: `Azure ${route.title} returned no image`,
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
             responseBody: responseSummary,
             upstreamHeaders: collectUpstreamHeaders(response.headers),
+            ...(settle ? { billedUsage: settle } : {}),
         });
     }
 
     const completionImageTokens = tokenCount(data.usage?.num_output_tokens);
     if (completionImageTokens === 0) {
+        const settle = settleMaiUsage(false);
         throw new UpstreamError(502, {
             message: `Azure ${route.title} returned no billing metadata`,
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
             responseBody: responseSummary,
             upstreamHeaders: collectUpstreamHeaders(response.headers),
+            // The image was delivered, so the render was billed; the input
+            // legs are the readable part of the receipt.
+            ...(settle ? { billedUsage: settle } : {}),
         });
     }
     const promptTextTokens = tokenCount(data.usage?.num_input_text_tokens);

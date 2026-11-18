@@ -76,9 +76,16 @@ export async function callSeedream5ProVercelAPI(
         cost < 0 ||
         !result.images[0]
     ) {
+        // The gateway completed (and billed) the generation when either the
+        // image or a valid cost receipt is in hand; settle the per-image
+        // units the success path bills.
+        const delivered =
+            (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) ||
+            Boolean(result.images[0]);
         throw UpstreamError.fromProvider(502, {
             message:
                 "Seedream Vercel response is missing image or valid billed cost",
+            ...(delivered ? { billedUsage: { completionImageTokens: 1 } } : {}),
         });
     }
     const image = result.images[0];
