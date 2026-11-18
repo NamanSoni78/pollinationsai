@@ -37,6 +37,8 @@ export type RewardProposal = {
     userId: string;
     /** Replaces the scope-derived key, e.g. to pay once per Discord account. */
     idempotencyKey?: string;
+    /** Record as already claimed: occupies the key without being claimable. */
+    preClaimed?: boolean;
 };
 
 export type QuestProgress = QuestGoal & {
@@ -73,6 +75,7 @@ export function toReward(
         url: quest.url ?? null,
         amount: quest.rewardAmount,
         bucket: quest.balanceBucket,
+        ...(proposal.preClaimed ? { preClaimed: true } : {}),
     };
 }
 

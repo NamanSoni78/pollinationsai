@@ -772,18 +772,41 @@ export async function evaluateUser(
                   first && first.mergedAt <= pr.mergedAt ? first : pr,
               undefined,
           );
+    // A pre-claimed row under the PR's own id. Closing references derive from
+    // the PR body, which its author can edit after the payout — once the link
+    // to a paid quest is gone, that quest's id drops out of the `ids` guard
+    // and the PR would re-qualify for the next bounty or the default reward.
+    // The marker keeps the PR permanently in the earned set and its
+    // idempotency key makes it exactly-once, while `preClaimed` means it can
+    // never credit pollen.
+    const prMarker = (pr: MergedPrNode) => ({
+        quest: {
+            ...mergedPrQuest,
+            id: `github:merged_pr:${pr.number}`,
+            title: `Merged PR #${pr.number} (payout marker)`,
+            rewardAmount: 1,
+        },
+        userId: user.id,
+        preClaimed: true,
+    });
+
     const prProposals = mergedPrs.flatMap((pr) => {
         const closes = pr.closingIssuesReferences.nodes
             .filter((issue) => issue.repository.nameWithOwner === REPO)
             .map((issue) => issue.number);
+        const prId = `github:merged_pr:${pr.number}`;
         // Labels, quests and closing issues can change after a PR paid, so a
         // PR that could map to an id the account earned has already paid.
         const ids = [
-            `github:merged_pr:${pr.number}`,
+            prId,
             ...closes.map((number) => `github:issue:${number}`),
             ...(pr === firstPr ? [mergedPrQuest.id] : []),
         ];
-        if (ids.some((id) => earned.has(id))) return [];
+        if (earned.has(prId)) return [];
+        // A PR blocked by a quest it closed (or the legacy first-PR reward)
+        // pays nothing now — and the marker keeps it from paying later when
+        // its closing references are edited away.
+        if (ids.some((id) => earned.has(id))) return [prMarker(pr)];
         const quest = closes
             .flatMap((number) => quests.get(number) ?? [])
             .sort((a, b) => b.rewardAmount - a.rewardAmount)[0];
@@ -791,20 +814,21 @@ export async function evaluateUser(
             ? toIssueQuestDefinition(quest)
             : {
                   ...mergedPrQuest,
-                  id: `github:merged_pr:${pr.number}`,
+                  id: prId,
                   title: `Merged PR #${pr.number}: ${pr.title}`,
                   url: pr.url,
               };
-        return [
-            {
-                quest: {
-                    ...definition,
-                    rewardAmount:
-                        labelReward(pr.labels.nodes) || definition.rewardAmount,
-                },
-                userId: user.id,
+        const payment = {
+            quest: {
+                ...definition,
+                rewardAmount:
+                    labelReward(pr.labels.nodes) || definition.rewardAmount,
             },
-        ];
+            userId: user.id,
+        };
+        // A payment under a quest's id leaves the PR's own id unrecorded; add
+        // the marker so the PR is exhausted either way.
+        return definition.id === prId ? [payment] : [payment, prMarker(pr)];
     });
 
     return {
