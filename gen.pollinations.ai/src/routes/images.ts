@@ -27,8 +27,23 @@ import { normalizedJsonBody } from "@/middleware/generation-cache.ts";
 import { applySafetyToInput, withSafetyHeaders } from "@/middleware/safety.ts";
 import { IMAGE_DIMENSIONS_HEADER } from "@/schemas/image.ts";
 import { arrayBufferToBase64 } from "@/util.ts";
+import { readResponseBytes } from "@shared/response-bytes.ts";
 
 // --- Helpers ---
+
+/**
+ * One shared cap for the JSON envelope path (`b64_json`). The binary routes
+ * stream and cache; only the base64-in-JSON conversion multiplies the media in
+ * memory, so the sum of every transient copy has to stay far below the
+ * isolate's 128 MB ceiling.
+ */
+const B64_JSON_MEDIA_LIMIT_BYTES = 24 * 1024 * 1024;
+
+const B64_JSON_MEDIA_TOO_LARGE = (total: number) =>
+    new UpstreamError(413, {
+        message: `Generated media is too large to inline as b64_json: ${total} bytes (max ${B64_JSON_MEDIA_LIMIT_BYTES}); request response_format "url" instead`,
+        errorCode: "image_too_large",
+    });
 
 const QUALITY_MAP: Record<string, string> = { standard: "medium", hd: "high" };
 const PASSTHROUGH_PARAMS = [
@@ -440,7 +455,16 @@ export const formatOpenAIImageResponse = createMiddleware<Env>(
             return;
         }
 
-        const base64 = arrayBufferToBase64(await response.arrayBuffer());
+        // The b64_json conversion multiplies the media across transient copies
+        // (raw bytes + binary string + base64 + the JSON body), and POST routes
+        // accept video models whose outputs reach tens of MB. Read through the
+        // shared byte cap so one inline request cannot exhaust the isolate.
+        const bytes = await readResponseBytes(
+            response,
+            B64_JSON_MEDIA_LIMIT_BYTES,
+            B64_JSON_MEDIA_TOO_LARGE,
+        );
+        const base64 = arrayBufferToBase64(bytes);
         c.res = withSafetyHeaders(
             c,
             c.json(
