@@ -112,6 +112,7 @@ import {
     generateModel3d,
     generateSimpleText,
     generateTextContent,
+    imageJsonBodyLimit,
     simpleAudioQuerySchema,
     textBodyLimit,
 } from "./generation-handlers.ts";
@@ -1258,6 +1259,7 @@ export const proxyRoutes = new Hono<Env>()
         apiKeyBudgetReservation,
         handleSimpleAudio,
     )
+    .use("/v1/images/generations", imageJsonBodyLimit)
     .post(
         "/v1/images/generations",
         describeRoute({
@@ -1295,6 +1297,7 @@ export const proxyRoutes = new Hono<Env>()
         deduplicateGeneration,
         every(apiKeyBudgetReservation, handleImageGeneration),
     )
+    .use("/v1/images/edits", imageJsonBodyLimit)
     .post(
         "/v1/images/edits",
         describeRoute({

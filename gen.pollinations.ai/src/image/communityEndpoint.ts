@@ -25,6 +25,7 @@ import {
 import { readResponseText } from "@shared/response-bytes.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import { detectVideoMimeType } from "@shared/video-mime.ts";
+import { MAX_IMAGE_SIZE } from "../userImage.ts";
 import type { ImageGenerationResult } from "./createAndReturnImages.ts";
 import type { VideoGenerationResult } from "./createAndReturnVideos.ts";
 import type { ImageParams } from "./params.ts";
@@ -151,11 +152,24 @@ export async function callCommunityVideoEndpoint(
     };
 }
 
+/**
+ * Community endpoints have no per-model `maxReferenceImages` (their params
+ * validate against the substituted default image model), so the platform-side
+ * download fan-out is capped here instead — at the same eight sources the
+ * multipart edit path accepts.
+ */
+const MAX_COMMUNITY_EDIT_IMAGES = 8;
+
 async function imageEditFormData(
     endpoint: CommunityEndpointRuntime,
     prompt: string,
     safeParams: CommunityImageParams,
 ): Promise<FormData> {
+    if (safeParams.image.length > MAX_COMMUNITY_EDIT_IMAGES) {
+        throw new UpstreamError(400, {
+            message: `Too many input images in request (max ${MAX_COMMUNITY_EDIT_IMAGES}).`,
+        });
+    }
     const formData = new FormData();
     formData.append("model", endpoint.upstreamModel);
     formData.append("prompt", prompt);
@@ -170,12 +184,18 @@ async function imageEditFormData(
         formData.append("output_format", "png");
     }
 
+    // One shared byte budget across every source image — the same mechanism
+    // the text path's image inlining uses — so many small sources cannot
+    // multiply into an unbounded retained payload.
+    let remainingBytes = MAX_IMAGE_SIZE;
     const imageField = safeParams.image.length === 1 ? "image" : "image[]";
     for (const [index, imageUrl] of safeParams.image.entries()) {
         const { buffer, mimeType } = await downloadUserImage(
             imageUrl,
             AbortSignal.timeout(COMMUNITY_ENDPOINT_TIMEOUT_MS),
+            remainingBytes,
         );
+        remainingBytes -= buffer.length;
         const extension = mimeType.split("/")[1];
         formData.append(
             imageField,
