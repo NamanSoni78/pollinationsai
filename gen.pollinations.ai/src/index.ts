@@ -275,8 +275,12 @@ app.use("*", cors(PERMISSIVE_CORS_OPTIONS))
         url.pathname = `/api${stripTrailingSlash(url.pathname)}`;
         return fetchEnter(c, url);
     })
-    // The read-only quest catalog. Per-account quest rewards live under
-    // /account/quests.
+    // The read-only quest catalog reaches Enter too (one KV read per
+    // request; a 60 s miss rebuilds it from D1 and GitHub), so it shares
+    // gen's edge limit exactly like /account above — defense before the
+    // hop, on top of enter's own limiter. Per-account quest rewards live
+    // under /account/quests.
+    .use("/quests/catalog", edgeRateLimit)
     .all("/quests/catalog", (c) => {
         if (c.req.method !== "GET" && c.req.method !== "HEAD") {
             return notFound();
