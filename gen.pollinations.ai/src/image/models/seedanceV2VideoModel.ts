@@ -121,6 +121,14 @@ export async function callSeedanceV2API(
 
     const videoResponse = await fetchUpstream(videoUrl, {
         errorLabel: `Failed to download ${definition.title} output video`,
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed its output seconds;
+        // a failed download still settles them.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds: actualDurationSeconds ?? duration,
+            },
+        });
     });
     const buffer = Buffer.from(await videoResponse.arrayBuffer());
     logOps(

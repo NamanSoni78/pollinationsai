@@ -270,6 +270,20 @@ export async function callVeoReplicateAPI(
             });
         const response = await fetchUpstream(output, {
             errorLabel: "Failed to download Veo video",
+        }).catch((error: unknown) => {
+            // The prediction succeeded, so Replicate billed the output
+            // seconds (and audio when requested); a failed download still
+            // settles them.
+            const durationSeconds =
+                videoOutputDurationSeconds ?? params.duration ?? 4;
+            throw Object.assign(error as object, {
+                billedUsage: {
+                    completionVideoSeconds: durationSeconds,
+                    ...(generateAudio
+                        ? { completionAudioSeconds: durationSeconds }
+                        : {}),
+                },
+            });
         });
         const durationSeconds =
             videoOutputDurationSeconds ?? params.duration ?? 4;

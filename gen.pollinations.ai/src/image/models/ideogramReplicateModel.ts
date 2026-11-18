@@ -175,6 +175,12 @@ async function callIdeogramReplicateAPI(
 
     const imageResponse = await fetchUpstream(outputUrl, {
         errorLabel: `Failed to download ${variant.displayName} output image`,
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed the flat per-image
+        // charge; a failed download still settles it.
+        throw Object.assign(error as object, {
+            billedUsage: { completionImageTokens: 1 },
+        });
     });
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
     logOps(

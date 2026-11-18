@@ -280,6 +280,15 @@ async function generateWanVideo(
 
     const videoResponse = await fetchUpstream(videoUrl, {
         errorLabel: `Failed to download ${config.displayName} output video`,
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed its output seconds;
+        // a failed download still settles them.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds:
+                    actualDurationSeconds ?? requestedDuration,
+            },
+        });
     });
     const buffer = Buffer.from(await videoResponse.arrayBuffer());
     logOps(
