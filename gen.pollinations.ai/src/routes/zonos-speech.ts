@@ -4,6 +4,14 @@ import {
     createAudioTokenUsage,
 } from "@shared/registry/usage-headers.ts";
 
+/**
+ * The GPU service writes response headers with the first encoded audio byte,
+ * so a deadline on the tunnel fetch bounds time-to-first-byte. After that the
+ * body streams until completion, bounded by the service's own watchdog and
+ * the caller's disconnect (which propagates through the tunnel).
+ */
+const ZONOS_FIRST_BYTE_TIMEOUT_MS = 60_000;
+
 export async function generateZonosSpeech(
     binding: Fetcher | undefined,
     text: string,
@@ -23,14 +31,32 @@ export async function generateZonosSpeech(
     }
 
     const endpoint = "http://127.0.0.1:1920/speech";
-    const response = await ensureUpstreamOk(
-        await binding.fetch(endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, format }),
-        }),
-        endpoint,
+    const deadline = new AbortController();
+    const timer = setTimeout(
+        () => deadline.abort(),
+        ZONOS_FIRST_BYTE_TIMEOUT_MS,
     );
+    let response: Response;
+    try {
+        response = await ensureUpstreamOk(
+            await binding.fetch(endpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text, format }),
+                signal: deadline.signal,
+            }),
+            endpoint,
+        );
+    } catch (error) {
+        if (deadline.signal.aborted) {
+            throw new UpstreamError(504, {
+                message: `ZONOS3-Mini did not start speaking within ${ZONOS_FIRST_BYTE_TIMEOUT_MS / 1000} seconds.`,
+            });
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+    }
     const bytes = new TextEncoder().encode(text).byteLength;
     return new Response(response.body, {
         headers: {
