@@ -90,6 +90,7 @@ function chatUsage(usage: ResponseUsage): JsonObject {
                           : {}),
                       audio_tokens: inputDetails.audio_tokens ?? 0,
                       image_tokens: inputDetails.image_tokens ?? 0,
+                      video_tokens: inputDetails.video_tokens ?? 0,
                   },
               }
             : {}),
@@ -98,6 +99,7 @@ function chatUsage(usage: ResponseUsage): JsonObject {
                   completion_tokens_details: {
                       reasoning_tokens: outputDetails.reasoning_tokens ?? 0,
                       audio_tokens: outputDetails.audio_tokens ?? 0,
+                      image_tokens: outputDetails.image_tokens ?? 0,
                       accepted_prediction_tokens:
                           outputDetails.accepted_prediction_tokens ?? 0,
                       rejected_prediction_tokens:
