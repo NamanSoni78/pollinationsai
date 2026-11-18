@@ -2,14 +2,17 @@ import { communityEmbeddingsUrl } from "@shared/community-endpoint-urls.ts";
 import {
     COMMUNITY_ENDPOINT_TIMEOUT_MS,
     type CommunityEndpointRuntime,
+    communityEndpointErrorDetail,
     normalizeCommunityEndpointBearerToken,
 } from "@shared/community-endpoints.ts";
-import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
+import { MAX_COMMUNITY_MEDIA_RESPONSE_BYTES } from "@shared/community-media.ts";
+import { UpstreamError } from "@shared/error.ts";
 import type { Usage } from "@shared/registry/registry.ts";
 import {
     buildUsageHeaders,
     getOpenAIEmbeddingUsage,
 } from "@shared/registry/usage-headers.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import { CreateEmbeddingResponseSchema } from "@/schemas/embeddings.ts";
 import { badRequest, inputToText, normalizeInputs } from "./input.ts";
@@ -78,8 +81,37 @@ export async function generateCommunityEmbeddings(
         });
     }
 
-    await ensureUpstreamOk(response, upstreamUrl);
-    const body = await response.json().catch(() => null);
+    // Bound the publisher's response the way the image/video community
+    // paths do (fetchCommunityMediaJson): the endpoint is untrusted, so
+    // never buffer more than MAX_COMMUNITY_MEDIA_RESPONSE_BYTES — error
+    // bodies included — instead of response.json(), which buffers whatever
+    // the endpoint streams. The cap is enforced against the declared
+    // content-length before reading and against the running byte count
+    // while streaming.
+    const bodyText = await readResponseText(
+        response,
+        MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
+        () =>
+            UpstreamError.fromProvider(502, {
+                message: "Community endpoint response is too large",
+            }),
+    );
+    if (!response.ok) {
+        const detail = communityEndpointErrorDetail(bodyText);
+        throw UpstreamError.fromProvider(response.status, {
+            message: detail
+                ? `Community embedding endpoint responded ${response.status}: ${detail}`
+                : `Community embedding endpoint responded ${response.status}`,
+            responseBody: bodyText,
+            requestUrl: new URL(upstreamUrl),
+        });
+    }
+    let body: unknown;
+    try {
+        body = JSON.parse(bodyText);
+    } catch {
+        body = null;
+    }
     const usage = getOpenAIEmbeddingUsage(body);
 
     const parsed = CreateEmbeddingResponseSchema.safeParse({
