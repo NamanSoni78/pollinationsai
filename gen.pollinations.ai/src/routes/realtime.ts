@@ -126,6 +126,9 @@ type RealtimeBillingContext = {
     usage: Usage;
     cacheUsage: RealtimeCacheUsage;
     missingCacheDetailsWarned: boolean;
+    /** Responses the provider started but has not finished; their usage
+     * receipt (`response.done`) has not arrived yet. */
+    inFlightResponses: number;
     settlementInFlight: boolean;
     settlementAttempts: number;
     settled: boolean;
@@ -923,10 +926,12 @@ function collectBillingEvents(
     c: Context<Env>,
     upstream: WebSocket,
     billing: RealtimeBillingContext,
+    onResponseFinished?: () => void,
 ): void {
     const log = c.get("log").getChild("realtime");
     upstream.addEventListener("message", (event) => {
         const eventData = parseEventData(event.data);
+        const responseFinished = trackInFlightResponses(billing, eventData);
         const responseBilling = extractResponseBilling(eventData);
         if (responseBilling) {
             addUsage(billing.usage, responseBilling.usage);
@@ -944,12 +949,39 @@ function collectBillingEvents(
                     { model: billing.resolvedModelRequested },
                 );
             }
+            onResponseFinished?.();
             return;
         }
 
         const transcriptionUsage = extractInputTranscriptionUsage(eventData);
         if (transcriptionUsage) addUsage(billing.usage, transcriptionUsage);
+        if (responseFinished) onResponseFinished?.();
     });
+}
+
+/** Count `response.created` against the terminal response events so a
+ * client disconnect can tell whether the provider still owes a usage
+ * receipt. `response.done` is the only event that carries usage; failed and
+ * cancelled responses never bill. */
+function trackInFlightResponses(
+    billing: RealtimeBillingContext,
+    eventData: unknown,
+): boolean {
+    const event = asRecord(eventData);
+    if (event.type === "response.created") {
+        billing.inFlightResponses += 1;
+    } else if (
+        event.type === "response.done" ||
+        event.type === "response.failed" ||
+        event.type === "response.cancelled"
+    ) {
+        billing.inFlightResponses = Math.max(
+            0,
+            billing.inFlightResponses - 1,
+        );
+        return true;
+    }
+    return false;
 }
 
 function extractInputTranscriptionUsage(eventData: unknown): Usage | null {
@@ -1039,6 +1071,95 @@ function wireClose(
     });
 }
 
+/** How long a client disconnect keeps the upstream socket open waiting for
+ * the in-flight response's usage receipt. Azure and OpenAI report a
+ * response's usage only in its terminal `response.done`, after every audio
+ * delta has already been streamed to the client; closing the upstream when
+ * the client goes away settles before that receipt and bills the delivered
+ * audio at $0. */
+const REALTIME_RECEIPT_GRACE_MS = 5_000;
+
+/** Reply on the given socket to complete the other side's close handshake,
+ * so the closing peer observes its own close code (the platform's WebSocket
+ * pairs only deliver the code when the handshake is answered). */
+function replyToClose(
+    socket: WebSocket,
+    event: { code: number; reason: string; wasClean: boolean },
+): void {
+    if (!event.wasClean || socket.readyState === WebSocket.CLOSED) return;
+    const closeCode = normalizeCloseCode(event.code);
+    if (closeCode) socket.close(closeCode, event.reason);
+    else socket.close();
+}
+
+/** Wires the client (downstream) side of the proxy. When the client
+ * disconnects while the provider still owes a response, the upstream is
+ * kept half-open for a bounded grace window so the in-flight receipt can
+ * still arrive and be billed; settlement then runs on the receipt, on the
+ * upstream's own close, or when the window expires — never before. Returns
+ * a callback to invoke whenever a response finishes, which settles early
+ * once nothing is in flight. */
+function wireDownstreamClose(
+    c: Context<Env>,
+    downstream: WebSocket,
+    upstream: WebSocket,
+    tracking: RealtimeBillingContext,
+): () => void {
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const settleGrace = () => {
+        if (graceTimer === undefined) return;
+        if (tracking.inFlightResponses > 0 || tracking.settled) return;
+        clearTimeout(graceTimer);
+        graceTimer = undefined;
+        closeSocket(upstream, 1000, "Realtime client disconnected");
+        scheduleRealtimeSettlement(c, tracking);
+    };
+
+    const onDownstreamGone = (
+        event: { code: number; reason: string; wasClean: boolean },
+        errored: boolean,
+    ) => {
+        if (errored) closeSocket(downstream, 1011, "Realtime proxy error");
+        // A running grace window owns the upstream's fate: a follow-up
+        // close/error event for the same disconnect must not cut it short.
+        if (graceTimer !== undefined) return;
+        if (tracking.inFlightResponses > 0 && !tracking.settled) {
+            // Complete the client's close handshake, then keep the
+            // half-open upstream waiting for the in-flight receipt.
+            replyToClose(downstream, event);
+            graceTimer = setTimeout(() => {
+                graceTimer = undefined;
+                closeSocket(
+                    upstream,
+                    1000,
+                    "Realtime receipt grace expired",
+                );
+                scheduleRealtimeSettlement(c, tracking);
+            }, REALTIME_RECEIPT_GRACE_MS);
+            return;
+        }
+        try {
+            closeSocket(upstream, event.code, event.reason);
+            replyToClose(downstream, event);
+        } finally {
+            scheduleRealtimeSettlement(c, tracking);
+        }
+    };
+
+    downstream.addEventListener("close", (event) => {
+        onDownstreamGone(event, false);
+    });
+    downstream.addEventListener("error", () => {
+        onDownstreamGone(
+            { code: 1011, reason: "Realtime proxy error", wasClean: false },
+            true,
+        );
+    });
+
+    return settleGrace;
+}
+
 function proxyRealtimeWebSockets(
     c: Context<Env>,
     upstream: WebSocket,
@@ -1057,7 +1178,13 @@ function proxyRealtimeWebSockets(
     let maiConfigured = false;
 
     downstream.binaryType = "arraybuffer";
-    collectBillingEvents(c, upstream, tracking);
+    const responseFinishedDuringGrace = wireDownstreamClose(
+        c,
+        downstream,
+        upstream,
+        tracking,
+    );
+    collectBillingEvents(c, upstream, tracking, responseFinishedDuringGrace);
     forwardMessage(
         downstream,
         upstream,
@@ -1158,7 +1285,6 @@ function proxyRealtimeWebSockets(
                       c.var.model.resolved,
                   ),
     );
-    wireClose(c, downstream, upstream, tracking);
     wireClose(c, upstream, downstream, tracking);
     downstream.accept({ allowHalfOpen: true });
     upstream.accept({ allowHalfOpen: true });
@@ -1552,6 +1678,7 @@ async function createRealtimeBillingContext(
         usage: {},
         cacheUsage: { audioTokens: 0, imageTokens: 0 },
         missingCacheDetailsWarned: false,
+        inFlightResponses: 0,
         settlementInFlight: false,
         settlementAttempts: 0,
         settled: false,

@@ -174,7 +174,7 @@ function describeRealtimeWebSocket(path: "/realtime" | "/v1/realtime") {
             "",
             `**Models:** ${REALTIME_MODEL_NAMES.map((model) => `\`${model}\``).join(", ")}.`,
             "",
-            "**Billing:** requires a positive balance and settles one session total when the socket closes.",
+            "**Billing:** requires a positive balance and settles one session total when the socket closes. If the client disconnects while a response is still streaming, the session waits up to 5 seconds for that response's usage receipt before settling.",
         ].join("\n"),
         responses: {
             101: {
