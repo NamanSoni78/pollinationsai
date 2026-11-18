@@ -115,16 +115,25 @@ export function readImageDimensions(
 export async function downloadUserImage(
     imageUrl: string,
     signal?: AbortSignal,
+    maxBytes?: number,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-    const { bytes, mimeType } = await fetchUserImage(imageUrl, { signal });
+    const { bytes, mimeType } = await fetchUserImage(imageUrl, {
+        ...(signal && { signal }),
+        ...(maxBytes !== undefined && { maxBytes }),
+    });
     return { buffer: Buffer.from(bytes), mimeType };
 }
 
 export async function downloadImageAsBase64(
     imageUrl: string,
     signal?: AbortSignal,
+    maxBytes?: number,
 ): Promise<{ base64: string; mimeType: string }> {
-    const { buffer, mimeType } = await downloadUserImage(imageUrl, signal);
+    const { buffer, mimeType } = await downloadUserImage(
+        imageUrl,
+        signal,
+        maxBytes,
+    );
     return { base64: buffer.toString("base64"), mimeType };
 }
 
