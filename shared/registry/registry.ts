@@ -246,6 +246,13 @@ export type ModelDefinition = {
     allowedDurations?: number[]; // Video and audio: explicit set of valid durations (overrides min/max range)
     durationStep?: number; // Video-only: duration must be a multiple of this value
     maxReferenceImages?: number; // Models with image input: effective accepted reference images
+    /**
+     * Per-reference-image megapixel ceiling the provider enforces by resizing
+     * (BFL documents 4 MP for the FLUX.2 family: inputs over 4 MP are
+     * resized, output is capped at 4 MP). The preflight worst case for
+     * per-megapixel models multiplies the reference count by this ceiling.
+     */
+    maxInputMegapixels?: number;
     maxReferenceVideos?: number; // Models with video input: effective accepted reference videos
     supportsTransparency?: boolean; // Image-only: `transparent=true` returns a PNG with alpha; other models reject it
     /** Output-token limit enforced on public requests and fallback routes. */
