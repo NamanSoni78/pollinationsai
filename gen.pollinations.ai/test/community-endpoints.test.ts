@@ -1053,6 +1053,53 @@ describe("community endpoint helpers", () => {
         ).toThrow("Endpoint URL cannot include credentials");
     });
 
+    it("refuses platform zones as community asset URL destinations", () => {
+        // The image/video community paths fetch asset URLs the publisher's
+        // response carries (firstCommunityImageBytes/firstCommunityVideoBytes
+        // -> normalizeCommunityAssetUrl). Those URLs must not be able to
+        // point back at the platform's own zones: each accepted zone URL
+        // makes gen issue an anonymous nested platform generation that bills
+        // no one, and a self-referential community URL loops the request
+        // against the platform until the asset deadline. The stored
+        // endpoint base URL is a separate validator
+        // (validateCommunityEndpointUrl); this layer guards what the
+        // publisher's response body can direct the gateway to fetch.
+        for (const url of [
+            "https://image.pollinations.ai/image.png",
+            "https://gen.pollinations.ai/v1/chat/completions",
+            "https://api.pollinations.ai/x",
+            "https://media.pollinations.ai/y",
+            "https://enter.pollinations.ai/api/anything",
+            "https://mcp.pollinations.ai/mcp/composio",
+            "https://pollinations.ai/logo.png",
+            "https://something.myceli.ai/z",
+            "https://image.pollinations.ai./image.png",
+        ]) {
+            expect(() =>
+                normalizeCommunityAssetUrl(
+                    url,
+                    "https://publisher.example.com/v1",
+                ),
+            ).toThrow("Image URL cannot target the platform's own zone");
+        }
+
+        // Attacker-owned lookalikes and ordinary publisher hosts stay
+        // reachable — the rule is zone-scoped, not name-scoped.
+        for (const url of [
+            "https://evil.pollinations.ai.attacker.com/image.png",
+            "https://notpollinations.ai/image.png",
+            "https://pollinations-ai.example.com/image.png",
+            "https://cdn.publisher.example.com/image.png",
+        ]) {
+            expect(() =>
+                normalizeCommunityAssetUrl(
+                    url,
+                    "https://publisher.example.com/v1",
+                ),
+            ).not.toThrow();
+        }
+    });
+
     it("derives the OpenAI-compatible audio transcription URL", () => {
         expect(
             communityAudioTranscriptionsUrl("https://api.example.com/v1"),
