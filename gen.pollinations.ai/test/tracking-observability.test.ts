@@ -20,6 +20,8 @@ import {
     user as userTable,
 } from "@shared/db/better-auth.ts";
 import { handleError, UpstreamError } from "@shared/error.ts";
+import { throwTextError } from "../src/text/errors.ts";
+import type { ServiceError } from "../src/text/types.ts";
 import { modelInfoFromDefinition } from "@shared/registry/model-info.ts";
 import {
     type BillingAdjustment,
@@ -2806,6 +2808,110 @@ describe("tracking observability", () => {
         ).toBeGreaterThanOrEqual(100);
         expect(fallback.tokenCountCompletionText).toBe(500);
         expect(fallback.isBilledUsage).toBe(true);
+    });
+
+    it("settles a client-paid failure only when the error funnel propagates billedUsage", async () => {
+        const tinybirdRequests: Request[] = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation(
+            async (input, init) => {
+                tinybirdRequests.push(new Request(input, init));
+                return new Response("ok");
+            },
+        );
+        const before = await getUserBalance(drizzle(env.DB), trackingUser.id);
+
+        // Mirrors the real route boundary (text/handler.ts's catch): every
+        // text-client error passes through throwTextError before the
+        // settlement middleware sees it. The thrown error carries the
+        // billedUsage the client attached for a provider-paid failure — the
+        // exact shape issue 88's fix sites (and handler.ts:199-205's
+        // empty-completion throw) attach.
+        const app = new Hono<Env>();
+        app.use("*", requestId());
+        app.use("*", logger);
+        app.use("*", async (c, next) => {
+            c.set("auth", {
+                user: trackingUser,
+                requireUser: () => trackingUser,
+                requireModelAccess: () => {},
+            });
+            c.set("balance", {
+                getBalance: async () => ({ tierBalance: 1, packBalance: 0 }),
+            });
+            c.set("model", {
+                requested: "openai/gpt-5.4-nano",
+                resolved: "openai/gpt-5.4-nano",
+                definition: getRegistryModelDefinition("openai/gpt-5.4-nano"),
+            });
+            await next();
+        });
+        app.post("/v1/chat/completions", track("generate.text"), () => {
+            try {
+                throw Object.assign(
+                    new Error(
+                        "Chat Completions provider returned an empty response",
+                    ),
+                    {
+                        status: 502,
+                        upstreamStatus: 502,
+                        errorCode: "empty_response",
+                        billedUsage: {
+                            promptTextTokens: 100000,
+                            completionTextTokens: 20000,
+                        },
+                    },
+                );
+            } catch (thrown: unknown) {
+                throwTextError(thrown as ServiceError);
+            }
+        });
+        app.onError(handleError);
+
+        const ctx = createExecutionContext();
+        const response = await app.fetch(
+            new Request(
+                "https://gen.pollinations.ai/v1/chat/completions",
+                {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        model: "openai/gpt-5.4-nano",
+                        stream: false,
+                        messages: [{ role: "user", content: "test" }],
+                    }),
+                },
+            ),
+            {
+                DB: env.DB,
+                ENVIRONMENT: "test",
+                LOG_LEVEL: "debug",
+                LOG_FORMAT: "text",
+                BETTER_AUTH_SECRET: "test_secret",
+                TINYBIRD_INGEST_URL:
+                    "https://tinybird.test/v0/events?name=generation_event_v2",
+                TINYBIRD_INGEST_TOKEN: "test_tinybird_token",
+            } as CloudflareBindings,
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+
+        expect(response.status).toBe(502);
+        const generationRows = tinybirdRequests.filter((request) =>
+            request.url.includes("generation_event_v2"),
+        );
+        expect(generationRows).toHaveLength(1);
+        const event = (await generationRows[0].json()) as TinybirdEvent;
+        expect(event).toMatchObject({
+            isBilledUsage: true,
+            tokenCountPromptText: 100000,
+            tokenCountCompletionText: 20000,
+        });
+        expect(event.totalPrice).toBeGreaterThan(0);
+        const after = await getUserBalance(drizzle(env.DB), trackingUser.id);
+        expect(after.tierBalance + after.packBalance).toBeCloseTo(
+            before.tierBalance + before.packBalance - event.totalPrice,
+            6,
+        );
     });
 
     it.each([false, true])(
