@@ -165,7 +165,7 @@ describe("usage-guard settlement sweep (the issue-82 named residual)", () => {
         );
     });
 
-    it("B1: Azure MAI delivered image with unusable receipt settles input legs", async () => {
+    it("B1: Azure MAI delivered image with unusable receipt settles input legs plus the published output schedule", async () => {
         syncImageEnv(
             { AZURE_MYCELI_PROD_API_KEY: "test-key" } as CloudflareBindings,
             ["AZURE_MYCELI_PROD_API_KEY"],
@@ -204,7 +204,106 @@ describe("usage-guard settlement sweep (the issue-82 named residual)", () => {
             (error) => {
                 expect(error.status).toBe(502);
                 expect(error.message).toContain("no billing metadata");
-                expect(error.billedUsage).toEqual({ promptTextTokens: 12 });
+                expect(error.billedUsage).toEqual({
+                    promptTextTokens: 12,
+                    // 2.7-Flash: $10 per 1,000 images at $10/M output →
+                    // 1,000 tokens per delivered image (Microsoft, 2026-11).
+                    completionImageTokens: 1000,
+                });
+            },
+        );
+    });
+
+    it("B1b: Azure MAI delivered image with no receipt at all settles the published output schedule", async () => {
+        syncImageEnv(
+            { AZURE_MYCELI_PROD_API_KEY: "test-key" } as CloudflareBindings,
+            ["AZURE_MYCELI_PROD_API_KEY"],
+        );
+        const providerFetch = mockImageProviderFetch();
+        providerFetch.mockImplementation((input) => {
+            const url = new URL(
+                input instanceof Request ? input.url : String(input),
+            );
+            if (url.pathname.startsWith("/mai/v1/images/")) {
+                return Promise.resolve(
+                    json({
+                        data: [
+                            {
+                                b64_json: Buffer.from("png").toString("base64"),
+                            },
+                        ],
+                    }),
+                );
+            }
+            return Promise.resolve(new Response("unexpected", { status: 404 }));
+        });
+        await expectBilled(
+            () =>
+                callAzureMaiImage(
+                    "a dog",
+                    baseParams("microsoft/mai-image-2.7"),
+                    {
+                        id: "user-1",
+                        type: "api_key",
+                        apiKey: { id: "key-1" },
+                    } as never,
+                ),
+            (error) => {
+                expect(error.status).toBe(502);
+                expect(error.billedUsage).toEqual({
+                    // 2.7: $35 per 1,000 images at $34/M output → 1,030.
+                    completionImageTokens: 1030,
+                });
+            },
+        );
+    });
+
+    it("B1c: Azure MAI 2.6-Flash settles its own measured per-image schedule", async () => {
+        syncImageEnv(
+            { AZURE_MYCELI_PROD_API_KEY: "test-key" } as CloudflareBindings,
+            ["AZURE_MYCELI_PROD_API_KEY"],
+        );
+        const providerFetch = mockImageProviderFetch();
+        providerFetch.mockImplementation((input) => {
+            const url = new URL(
+                input instanceof Request ? input.url : String(input),
+            );
+            if (url.pathname.startsWith("/mai/v1/images/")) {
+                return Promise.resolve(
+                    json({
+                        data: [
+                            {
+                                b64_json: Buffer.from("png").toString("base64"),
+                            },
+                        ],
+                        usage: {
+                            num_input_text_tokens: 30,
+                            num_input_image_tokens: 8,
+                        },
+                    }),
+                );
+            }
+            return Promise.resolve(new Response("unexpected", { status: 404 }));
+        });
+        await expectBilled(
+            () =>
+                callAzureMaiImage(
+                    "a dog",
+                    baseParams("microsoft/mai-image-2.6-flash"),
+                    {
+                        id: "user-1",
+                        type: "api_key",
+                        apiKey: { id: "key-1" },
+                    } as never,
+                ),
+            (error) => {
+                expect(error.status).toBe(502);
+                expect(error.billedUsage).toEqual({
+                    promptTextTokens: 30,
+                    promptImageTokens: 8,
+                    // 2.6 Flash: $19.46 per 1,000 images at $19/M → 1,024.
+                    completionImageTokens: 1024,
+                });
             },
         );
     });
