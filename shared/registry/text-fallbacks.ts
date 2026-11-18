@@ -639,9 +639,13 @@ export const TEXT_FALLBACKS = {
         "mistralai/mistral-large-3:aws": {
             supportedParameters: CHAT_PARAMETERS.mistralLarge,
             provider: "aws",
-            // Bedrock US Standard reports image input in the prompt total.
+            // Bedrock's OpenAI-compatible surface reports image input
+            // separately (pinned by the AWS usage fixture in
+            // test/text/generateTextPortkey.test.ts); it bills at the input
+            // rate.
             cost: {
                 promptTextTokens: perMillion(0.5),
+                promptImageTokens: perMillion(0.5),
                 completionTextTokens: perMillion(1.5),
             },
         },
@@ -678,6 +682,9 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.035) * 1.055,
                 promptCachedTokens: perMillion(0.0015) * 1.055,
+                // OpenRouter passes the gateway's image-token split through;
+                // price it at the route's list x fee rate like every other line.
+                promptImageTokens: perMillion(0.035) * 1.055,
                 completionTextTokens: perMillion(0.1405) * 1.055,
             },
         },

@@ -91,6 +91,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.2),
+            promptImageTokens: perMillion(0.2),
             promptCachedTokens: perMillion(0.02),
             completionTextTokens: perMillion(1.25),
         },
@@ -117,6 +118,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.05),
+            promptImageTokens: perMillion(0.05),
             promptCachedTokens: perMillion(0.005),
             completionTextTokens: perMillion(0.4),
         },
@@ -192,6 +194,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(1.75),
+            promptImageTokens: perMillion(1.75),
             promptCachedTokens: perMillion(0.175),
             // Azure exposes cache writes as an input-token subtype and has no
             // separate Global Standard write meter for this checkpoint.
@@ -227,6 +230,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(2.5),
+            promptImageTokens: perMillion(2.5),
             promptCachedTokens: perMillion(0.25),
             completionTextTokens: perMillion(15.0),
         },
@@ -238,6 +242,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(5.0),
+                    promptImageTokens: perMillion(5.0),
                     promptCachedTokens: perMillion(0.5),
                     completionTextTokens: perMillion(22.5),
                 },
@@ -286,6 +291,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.75),
+            promptImageTokens: perMillion(0.75),
             promptCachedTokens: perMillion(0.075),
             completionTextTokens: perMillion(4.5),
         },
@@ -317,6 +323,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(5.0),
+            promptImageTokens: perMillion(5.0),
             promptCachedTokens: perMillion(0.5),
             completionTextTokens: perMillion(30.0),
         },
@@ -326,6 +333,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(10.0),
+                    promptImageTokens: perMillion(10.0),
                     promptCachedTokens: perMillion(1.0),
                     completionTextTokens: perMillion(45.0),
                 },
@@ -376,6 +384,7 @@ const TEXT_BASE_SERVICES = {
         // 2026-10-12).
         cost: {
             promptTextTokens: perMillion(4.0),
+            promptImageTokens: perMillion(4.0),
             promptCachedTokens: perMillion(0.4),
             promptCacheWriteTokens: perMillion(5.0),
             completionTextTokens: perMillion(20.0),
@@ -384,6 +393,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(8.0),
+                    promptImageTokens: perMillion(8.0),
                     promptCachedTokens: perMillion(0.8),
                     promptCacheWriteTokens: perMillion(10.0),
                     completionTextTokens: perMillion(30.0),
@@ -433,6 +443,7 @@ const TEXT_BASE_SERVICES = {
         // Above 272K prompt tokens the higher rates apply to the full request.
         cost: {
             promptTextTokens: perMillion(1),
+            promptImageTokens: perMillion(1),
             promptCachedTokens: perMillion(0.05),
             promptCacheWriteTokens: perMillion(1.25),
             completionTextTokens: perMillion(5),
@@ -441,6 +452,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(2),
+                    promptImageTokens: perMillion(2),
                     promptCachedTokens: perMillion(0.1),
                     promptCacheWriteTokens: perMillion(2.5),
                     completionTextTokens: perMillion(7.5),
@@ -489,6 +501,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(2.0),
+            promptImageTokens: perMillion(2.0),
             promptCachedTokens: perMillion(0.2),
             promptCacheWriteTokens: perMillion(2.5),
             completionTextTokens: perMillion(12.0),
@@ -497,6 +510,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(4.0),
+                    promptImageTokens: perMillion(4.0),
                     promptCachedTokens: perMillion(0.4),
                     promptCacheWriteTokens: perMillion(5.0),
                     completionTextTokens: perMillion(18.0),
@@ -545,6 +559,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.2),
+            promptImageTokens: perMillion(0.2),
             promptCachedTokens: perMillion(0.02),
             promptCacheWriteTokens: perMillion(0.25),
             completionTextTokens: perMillion(1.2),
@@ -553,6 +568,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(0.4),
+                    promptImageTokens: perMillion(0.4),
                     promptCachedTokens: perMillion(0.04),
                     promptCacheWriteTokens: perMillion(0.5),
                     completionTextTokens: perMillion(1.8),
@@ -601,6 +617,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(10.0),
+            promptImageTokens: perMillion(10.0),
             promptCachedTokens: perMillion(1.0),
             promptCacheWriteTokens: perMillion(12.5),
             completionTextTokens: perMillion(50.0),
@@ -609,6 +626,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(20.0),
+                    promptImageTokens: perMillion(20.0),
                     promptCachedTokens: perMillion(2.0),
                     promptCacheWriteTokens: perMillion(25.0),
                     completionTextTokens: perMillion(75.0),
@@ -2212,6 +2230,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.75),
+            promptImageTokens: perMillion(0.75),
             promptCachedTokens: perMillion(0.075),
             completionTextTokens: perMillion(4.5),
         },
@@ -2235,6 +2254,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(5.0),
+            promptImageTokens: perMillion(5.0),
             promptCachedTokens: perMillion(0.5),
             completionTextTokens: perMillion(30.0),
         },
@@ -2243,6 +2263,7 @@ const TEXT_BASE_SERVICES = {
             {
                 long_context: {
                     promptTextTokens: perMillion(10.0),
+                    promptImageTokens: perMillion(10.0),
                     promptCachedTokens: perMillion(1.0),
                     completionTextTokens: perMillion(45.0),
                 },
@@ -2814,6 +2835,7 @@ const TEXT_BASE_SERVICES = {
         // https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-moonshot-ai-kimi-k3.html
         cost: {
             promptTextTokens: perMillion(3),
+            promptImageTokens: perMillion(3),
             promptCachedTokens: perMillion(0.3),
             promptCacheWriteTokens: perMillion(3.75),
             completionTextTokens: perMillion(15),
@@ -2844,6 +2866,9 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(4),
             promptCachedTokens: perMillion(0.2),
             promptCacheWriteTokens: perMillion(4),
+            // Kimi reports image input separately (observed on the Azure
+            // twin, which prices it at the same input-text rate).
+            promptImageTokens: perMillion(4),
             completionTextTokens: perMillion(20),
         },
         title: "Kimi K3.1 Pro Highspeed",
@@ -2898,6 +2923,7 @@ const TEXT_BASE_SERVICES = {
         cost: {
             // Vercel AI Gateway list rates (2026-11-16). Vercel adds no gateway fee.
             promptTextTokens: perMillion(0.035),
+            promptImageTokens: perMillion(0.035),
             promptCachedTokens: perMillion(0.0015),
             completionTextTokens: perMillion(0.1405),
         },
@@ -3619,6 +3645,7 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 0.75,
         cost: {
             promptTextTokens: perMillion(0.25),
+            promptImageTokens: perMillion(0.25),
             completionTextTokens: perMillion(1.0),
         },
         title: "Llama 4 Maverick",
@@ -3793,6 +3820,8 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            // Vercel reports image input separately from text tokens.
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.2",
@@ -3817,6 +3846,8 @@ const TEXT_BASE_SERVICES = {
             // Vercel AI Gateway Meta route, verified 2026-10-23.
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            // Vercel reports image input separately from text tokens.
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.3",
@@ -3919,6 +3950,7 @@ const TEXT_BASE_SERVICES = {
         paidOnly: false,
         cost: {
             promptTextTokens: perMillion(0.5),
+            promptImageTokens: perMillion(0.5),
             promptCachedTokens: perMillion(0.05),
             completionTextTokens: perMillion(1.5),
         },
