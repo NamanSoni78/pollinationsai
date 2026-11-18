@@ -1,4 +1,4 @@
-# Issue 57 — Images JSON routes: uncapped provider-output buffering with ~5x `b64_json` memory multiplication on video models (shared-isolate OOM)
+# Issue 65 — Images JSON routes: uncapped provider-output buffering with ~5x `b64_json` memory multiplication on video models (shared-isolate OOM)
 
 ## Finding
 
@@ -31,7 +31,7 @@ High (availability of the shared gen Worker). Any caller with a valid key (zero 
 
 ## Fix
 
-Branch `solution57-images-b64-video-cap` (fork PR #77), minimal patch to the b64 branch of `formatOpenAIImageResponse`:
+Branch `solution57-images-b64-video-cap` (fork PR #77; branch name keeps its original solution57 numbering per the rounds-3–14 concurrent-session convention), minimal patch to the b64 branch of `formatOpenAIImageResponse`:
 
 - read the media through the shared `readResponseBytes` cap (24 MiB) — over-cap declared (content-length) or streamed sizes fail fast with 413 (`errorCode: image_too_large`) **before** the conversion
 - `response_format: "url"` path unchanged; under-cap media inlines byte-exactly as before

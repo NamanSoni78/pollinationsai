@@ -666,13 +666,13 @@ Baseline unchanged: upstream `52fd0a6c8`, `fork/main` identical (0/0, no push ne
 - `issues_mds`: appended additively on `5fee8c48f` (issues 1-63 + this round's issue 64). The concurrent session's PRs #68-#71 have no issue MDs at this push; if they file next, the next free index is 65 (their branch prefixes 57-60 are already stale against the filed 57-63 and do not collide with any filed issue number).
 - No live probes this round (all verification via isolated tests; the sonilo vendor cap via fal's published model pages). Probe spend: 0.
 
-## Round 17 (session 16): images b64_json video OOM (2026-11-18)
+## Round 17 (session 16): images b64_json video OOM (2026-11-18; renumbered issue 65 after a concurrent session claimed 57)
 
 Baseline: upstream `52fd0a6c8` (fork/main identical 0/0; no new upstream commits since the round-15/16 ledger base — fresh-surface audit, not a diff-audit). Two parallel subagents swept (a) enter auth/quests/promo/oauth/admin — clean, no gate-passing finding; (b) gen images/jobs/media/audio/mcp — one gate-passing candidate + one addendum.
 
 | # | Finding | Severity | Verification | Fix branch | PR |
 |---|---|---|---|---|---|
-| 57 | Images JSON routes buffer the entire provider output and multiply it ~5x (binary string + btoa + JSON.stringify) before returning `b64_json` (default format); both POST routes accept video models whose outputs reach tens of MB — one request peaks at 150-300 MB inside the shared 128 MB isolate (error 1102 kills all in-flight requests); no provider-output byte cap exists anywhere in the official model fleet (26 bare `arrayBuffer()` sites) | High (availability) | 4 worker-level tests red-on-analysis/green-with-fix (over-cap declared + streamed → 413 pre-conversion; under-cap passthrough byte-exact; url path unaffected); openai-image-cache regressions 24/24; tsc clean | `solution57-images-b64-video-cap` | fork [#77](https://github.com/NamanSoni78/pollinationsai/pull/77) |
+| 65 | Images JSON routes buffer the entire provider output and multiply it ~5x (binary string + btoa + JSON.stringify) before returning `b64_json` (default format); both POST routes accept video models whose outputs reach tens of MB — one request peaks at 150-300 MB inside the shared 128 MB isolate (error 1102 kills all in-flight requests); no provider-output byte cap exists anywhere in the official model fleet (26 bare `arrayBuffer()` sites) | High (availability) | 4 worker-level tests red-on-analysis/green-with-fix (over-cap declared + streamed → 413 pre-conversion; under-cap passthrough byte-exact; url path unaffected); openai-image-cache regressions 24/24; tsc clean | `solution57-images-b64-video-cap` | fork [#77](https://github.com/NamanSoni78/pollinationsai/pull/77) |
 
 Addendum resolved as duplicate: audio multipart body-limit gap = issue 56 scope — `solution54` already mounts `multipartBodyLimit` on `.use("*", multipartBodyLimit)` for audio routes (routes/audio.ts:4487) and images/edits (proxy.ts:1299); not re-filed.
 
