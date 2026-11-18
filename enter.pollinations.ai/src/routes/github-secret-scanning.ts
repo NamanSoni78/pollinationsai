@@ -4,6 +4,7 @@ import * as schema from "@shared/db/better-auth.ts";
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import type { Env } from "../env.ts";
@@ -88,8 +89,27 @@ function hasValidSignature(
     }
 }
 
+/**
+ * GitHub secret scanning payloads are a short list of matches. Without a
+ * pre-read ceiling an anonymous caller can force this route to buffer (and
+ * then copy, for `crypto.verify`) an attacker-sized body inside the shared
+ * enter isolate before the signature check can reject it.
+ */
+const WEBHOOK_BODY_LIMIT_BYTES = 1024 * 1024;
+
+const webhookBodyLimit = bodyLimit({
+    maxSize: WEBHOOK_BODY_LIMIT_BYTES,
+    onError: () => {
+        throw new HTTPException(413, {
+            message:
+                "GitHub secret scanning webhook payloads can be at most 1 MiB",
+        });
+    },
+});
+
 export const githubSecretScanningRoutes = new Hono<Env>().post(
     "/github-secret-scanning",
+    webhookBodyLimit,
     async (c) => {
         const keyId = c.req.header("Github-Public-Key-Identifier");
         const signature = c.req.header("Github-Public-Key-Signature");
