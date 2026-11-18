@@ -639,9 +639,13 @@ export const TEXT_FALLBACKS = {
         "mistralai/mistral-large-3:aws": {
             supportedParameters: CHAT_PARAMETERS.mistralLarge,
             provider: "aws",
-            // Bedrock US Standard reports image input in the prompt total.
+            // Bedrock's OpenAI-compatible surface reports image input
+            // separately (pinned by the AWS usage fixture in
+            // test/text/generateTextPortkey.test.ts); it bills at the input
+            // rate.
             cost: {
                 promptTextTokens: perMillion(0.5),
+                promptImageTokens: perMillion(0.5),
                 completionTextTokens: perMillion(1.5),
             },
         },

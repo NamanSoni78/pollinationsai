@@ -625,18 +625,21 @@ describe("static provider fallbacks", () => {
         const fallback = TEXT_SERVICES["openai/gpt-6-astra:aws"];
         expect(primary.cost).toEqual({
             promptTextTokens: 10 / 1_000_000,
+            promptImageTokens: 10 / 1_000_000,
             promptCachedTokens: 1 / 1_000_000,
             promptCacheWriteTokens: 12.5 / 1_000_000,
             completionTextTokens: 50 / 1_000_000,
         });
         expect(fallback.cost).toEqual({
             promptTextTokens: 10 / 1_000_000,
+            promptImageTokens: 10 / 1_000_000,
             promptCachedTokens: 1 / 1_000_000,
             promptCacheWriteTokens: 12.5 / 1_000_000,
             completionTextTokens: 50 / 1_000_000,
         });
         expect(fallback.costVariants?.long_context).toEqual({
             promptTextTokens: 20 / 1_000_000,
+            promptImageTokens: 20 / 1_000_000,
             promptCachedTokens: 2 / 1_000_000,
             promptCacheWriteTokens: 25 / 1_000_000,
             completionTextTokens: 75 / 1_000_000,
