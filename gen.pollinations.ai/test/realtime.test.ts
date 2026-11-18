@@ -1365,6 +1365,112 @@ test("deducts aggregate session usage from paid pack balance on close", async ()
     expect(telemetry.totalPrice).toBeCloseTo(expectedCharge, 8);
 });
 
+test("bills the in-flight response when the client disconnects before response.done", async () => {
+    const session = await openPaidRealtimeSession({
+        name: "disconnect-grace-receipt-key",
+    });
+
+    // The provider starts a response whose audio deltas reach the client,
+    // but its usage receipt (response.done) has not been sent yet.
+    const created = nextMessage(session.client);
+    session.upstream.server.send(
+        JSON.stringify({ type: "response.created", response: {} }),
+    );
+    await expect(created).resolves.toBeTruthy();
+
+    // Client disconnects mid-response (audio already delivered).
+    session.client.close();
+
+    // The provider's receipt arrives after the disconnect; the session must
+    // still be listening for it instead of having settled at $0.
+    session.upstream.server.send(
+        JSON.stringify({
+            type: "response.done",
+            response: {
+                usage: {
+                    input_tokens: 135,
+                    output_tokens: 75,
+                    input_token_details: {
+                        text_tokens: 100,
+                        audio_tokens: 10,
+                        image_tokens: 5,
+                        cached_tokens: 20,
+                        cached_tokens_details: {
+                            text_tokens: 20,
+                            audio_tokens: 0,
+                            image_tokens: 0,
+                        },
+                    },
+                    output_token_details: {
+                        text_tokens: 50,
+                        audio_tokens: 25,
+                    },
+                },
+            },
+        }),
+    );
+
+    await waitForTinybirdRequests(session.upstream);
+    await waitOnExecutionContext(session.ctx);
+    expect(session.upstream.tinybirdRequests).toHaveLength(1);
+
+    const telemetry = JSON.parse(
+        await session.upstream.tinybirdRequests[0].text(),
+    ) as Record<string, unknown>;
+    const expectedCharge = 0.003553 * 0.75;
+    expect(telemetry.totalPrice).toBeCloseTo(expectedCharge, 8);
+    expect(telemetry.tokenCountCompletionAudio).toBe(25);
+
+    const user = await waitForPackBalanceBelow(session.userId, 1);
+    expect(user?.packBalance).toBeCloseTo(1 - expectedCharge, 8);
+    session.upstream.maybeServer?.close();
+});
+
+test("still settles immediately when the client disconnects with no response in flight", async () => {
+    const session = await openPaidRealtimeSession({
+        name: "disconnect-idle-settle-key",
+        estimatedCost: 0.2,
+    });
+    expect(await getApiKeyBalance(session.apiKeyId)).toBeCloseTo(0.8, 8);
+
+    // No in-flight response: the upstream must close and the reservation
+    // release without waiting out a grace window.
+    const upstreamClose = nextClose(session.upstream.server);
+    session.client.close(1000, "done");
+    await expect(upstreamClose).resolves.toMatchObject({ code: 1000 });
+    await waitOnExecutionContext(session.ctx);
+    expect(await waitForApiKeyBalanceAbove(session.apiKeyId, 0.9)).toBeCloseTo(
+        1,
+        7,
+    );
+});
+
+test("settles at the grace deadline when the provider never sends the receipt", async () => {
+    const session = await openPaidRealtimeSession({
+        name: "disconnect-grace-expiry-key",
+        estimatedCost: 0.2,
+    });
+    expect(await getApiKeyBalance(session.apiKeyId)).toBeCloseTo(0.8, 8);
+
+    const created = nextMessage(session.client);
+    session.upstream.server.send(
+        JSON.stringify({ type: "response.created", response: {} }),
+    );
+    await expect(created).resolves.toBeTruthy();
+
+    session.client.close();
+    // The provider hangs: no response.done ever arrives. The session must
+    // close the upstream and settle (releasing the reservation) once the
+    // grace window expires instead of holding the socket open indefinitely.
+    const upstreamClose = nextClose(session.upstream.server);
+    await expect(upstreamClose).resolves.toBeTruthy();
+    await waitOnExecutionContext(session.ctx);
+    expect(await waitForApiKeyBalanceAbove(session.apiKeyId, 0.9)).toBeCloseTo(
+        1,
+        7,
+    );
+}, 15_000);
+
 test("releases a realtime API key reservation when the session has no usage", async () => {
     const session = await openPaidRealtimeSession({
         name: "unused-budgeted-realtime-key",
