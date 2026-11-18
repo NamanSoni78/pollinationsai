@@ -22,3 +22,5 @@ Wave 2 of SECURITY_AUDIT.md is now fully swept (sessions 3–5 combined). Next f
 | community asset-URL destination policy (response-body layer) | R21 | covered (round 21) | issue 78 fixed — companion to issue 57's stored-base-URL layer; zone rule now on both validators |
 | apps/ask-jev-mcp public worker (limiter + body guard) | R21 | covered (round 21) | issue 79 fixed — sibling apps/mcp parity; exa-mcp-class unrouted workers flagged as day-one findings if ever routed |
 | OpenRouter endpoint-level price parity (registry-wide vs /endpoints API) | R21 | covered (round 21) | issue 80 fixed (5 sheets + 2 dead pins); residuals recorded in issue 80 for the next re-priced/delisted endpoints |
+
+| gen realtime Scribe pre-connect queue + fresh-corner axes (scripts/secrets, DOs+R2, enter observability/drizzle/x402, test fixtures, dot-configs, enter route enumeration, gen residual routes) | R23 | covered (round 23) | issue 84 (Scribe queue cap) fixed on `solution74-scribe-realtime-queue-cap` (PR #96); everything else swept clean; settlement residual map handed to concurrent rounds 21-22 (issues 81/82) with the lyria delta recorded in issue 84's companion note |
