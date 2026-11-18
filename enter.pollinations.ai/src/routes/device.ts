@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { createAuth } from "../auth.ts";
@@ -97,6 +98,23 @@ function generateUserCode(length: number): string {
 }
 
 /**
+ * RFC 6749 / RFC 8628 bodies are KB-scale (client ids, code verifiers,
+ * scopes). The pre-parse ceiling keeps an anonymous caller from buffering
+ * an unbounded body inside the shared enter isolate before these handlers
+ * (or the session gate on /approve) ever run; it is shared with the OAuth
+ * token endpoint, which delegates the device grant here.
+ */
+export const tokenEndpointBodyLimit = bodyLimit({
+    maxSize: 64 * 1024,
+    onError: () => {
+        throw new HTTPException(413, {
+            message:
+                "Device and OAuth token request bodies can be at most 64 KiB",
+        });
+    },
+});
+
+/**
  * OAuth-style requests are form-encoded on the wire (RFC 6749 §3.2,
  * RFC 8628 §3.1); JSON is accepted for the pre-discovery clients that have
  * always sent it — including without a content-type header.
@@ -128,6 +146,7 @@ export async function parseFormOrJsonBody<TEnv extends Env>(
  * POST /token    — polled by the CLI to receive the minted API key
  */
 export const deviceRoutes = new Hono<Env>()
+    .use(tokenEndpointBodyLimit)
     .post("/code", async (c) => {
         const body = await parseFormOrJsonBody(c);
         if (body.client_id && !(await isKnownDeviceClient(c, body.client_id))) {

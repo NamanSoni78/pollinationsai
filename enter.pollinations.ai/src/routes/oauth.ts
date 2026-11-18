@@ -20,6 +20,7 @@ import {
     generateCode,
     handleUserinfo,
     parseFormOrJsonBody,
+    tokenEndpointBodyLimit,
 } from "./device.ts";
 
 const KV_TTL = 600; // 10 minutes — codes are single-use and short-lived
@@ -148,7 +149,7 @@ export const oauthRoutes = new Hono<Env>()
             return c.json({ code });
         },
     )
-    .post("/token", async (c) => {
+    .post("/token", tokenEndpointBodyLimit, async (c) => {
         // RFC 6749 §5.1: every token-endpoint response is uncacheable —
         // including the device grant delegated below (its own legacy
         // /api/device/token endpoint is left byte-identical).
