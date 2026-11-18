@@ -371,12 +371,14 @@ def generate_image(prompt: str, token: str, width: int = 2048, height: int = 204
         "height": height,
         "quality": "hd",
         "seed": seed,
-        "key": token,
         "image": "https://raw.githubusercontent.com/pollinations/pollinations/main/operations/news/prompts/brand/characters-ref.jpg",
     }
+    # The key travels in the Authorization header, never in the URL: query
+    # strings land in access logs and in transport-error messages.
+    headers = {"Authorization": f"Bearer {token}"}
     # One attempt: a failed picture stops the run, and a person reruns it.
     try:
-        response = requests.get(base_url, params=params, timeout=300)
+        response = requests.get(base_url, params=params, headers=headers, timeout=300)
     except requests.exceptions.RequestException as e:
         print(f"  Request error: {e}")
         return None, None
