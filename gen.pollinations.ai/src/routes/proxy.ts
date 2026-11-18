@@ -708,6 +708,10 @@ export const proxyRoutes = new Hono<Env>()
             getVisibleModelEntriesForEventType(c, "generate.embedding"),
         ),
     )
+    // The register route is mounted before auth() and parses the caller's
+    // JSON body (image/handler.ts) to read the GPU token, so gate the body
+    // size here too — the JSON-side sibling of the multipart/text routes.
+    .use("/register", jsonBodyLimit)
     .post("/register", handleRegisterServer)
     .get("/register", handleRegisterServer)
     // Auth required for all endpoints below (API key only - no session cookies)

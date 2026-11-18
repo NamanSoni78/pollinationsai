@@ -206,3 +206,57 @@ describe("jsonBodyLimit", () => {
         }
     });
 });
+
+describe("register body limit", () => {
+    // POST /register is mounted before auth() and parses the caller's JSON
+    // body to read the GPU token, so the gate must reject an oversized
+    // declaration before any parse — unauthenticated.
+    test("rejects an oversized declared JSON body on /register before parsing", async () => {
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "content-length": String(60 * 1024 * 1024),
+            },
+            body: "x",
+        });
+
+        try {
+            const body = await response.text();
+            expect(response.status).toBe(413);
+            expect(body).toMatch(/32 MiB/i);
+        } finally {
+            await wait();
+        }
+    });
+
+    test("still parses and rejects unauthorized normal-size register bodies", async () => {
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url: "https://gpu.example.com" }),
+        });
+
+        try {
+            const body = await response.text();
+            expect(response.status).toBe(401);
+            expect(body).toMatch(/Unauthorized/i);
+        } finally {
+            await wait();
+        }
+    });
+
+    test("leaves the body-less GET /register list flow untouched", async () => {
+        const { response, wait } = await fetchWorker("/register", {
+            method: "GET",
+        });
+
+        try {
+            // No token: the list is also token-gated, but the body gate
+            // must not turn that into a 413.
+            expect(response.status).not.toBe(413);
+        } finally {
+            await wait();
+        }
+    });
+});
