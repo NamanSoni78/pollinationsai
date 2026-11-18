@@ -163,4 +163,90 @@ describe("Nova 2 Lite media input", () => {
 
         expect(messages).toEqual(input);
     });
+
+    it("rejects a second video part without fetching it", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(MP4_BYTES, {
+                headers: { "content-type": "video/mp4" },
+            }),
+        );
+
+        await expect(
+            transform(
+                [
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                type: "video_url",
+                                video_url: { url: "https://example.com/1.mp4" },
+                            },
+                            {
+                                type: "video_url",
+                                video_url: { url: "https://example.com/2.mp4" },
+                            },
+                        ],
+                    },
+                ],
+                {},
+            ),
+        ).rejects.toMatchObject({
+            status: 400,
+            message:
+                "This model supports at most 1 video per request.",
+        });
+        // The first video is fetched; the second must be rejected on count
+        // before any bytes are spent on it.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("caps a single inline video at the Bedrock 25 MB base64 payload limit", async () => {
+        // 19 MB of raw bytes: within the generic 20 MB per-image cap that
+        // fetchUserImage would apply, but over the 18.75 MB that still fits
+        // AWS's 25 MB base64-inclusive inline-video payload limit.
+        const oversized = new Uint8Array(19 * 1024 * 1024);
+        oversized.set(MP4_BYTES, 0);
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            new Response(oversized, {
+                headers: { "content-type": "video/mp4" },
+            }),
+        );
+
+        await expect(
+            transform(videoMessage("https://example.com/big.mp4"), {}),
+        ).rejects.toMatchObject({
+            status: 400,
+            errorCode: "image_too_large",
+        });
+    });
+
+    it.each([
+        ["a missing container", { type: "video_url" }],
+        ["a null container", { type: "video_url", video_url: null }],
+        [
+            "a string container",
+            { type: "video_url", video_url: "https://example.com/clip.mp4" },
+        ],
+        ["a non-string url", { type: "video_url", video_url: { url: 123 } }],
+        [
+            "a non-string mime_type",
+            {
+                type: "video_url",
+                video_url: {
+                    url: `data:video/mp4;base64,${MP4_BASE64}`,
+                    mime_type: 7,
+                },
+            },
+        ],
+    ] as const)(
+        "answers 400, not a TypeError, for %s",
+        async (_name, part) => {
+            await expect(
+                transform(
+                    [{ role: "user", content: [part as never] }],
+                    {},
+                ),
+            ).rejects.toMatchObject({ status: 400 });
+        },
+    );
 });
