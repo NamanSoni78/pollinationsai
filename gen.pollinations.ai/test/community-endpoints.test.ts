@@ -1792,6 +1792,86 @@ describe("community endpoint helpers", () => {
                 ),
             });
         });
+
+        it("rejects more than eight edit sources before fetching any", async () => {
+            const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                const request = new Request(input, init);
+                if (request.url.startsWith("https://input.example.com/")) {
+                    return new Response(new Uint8Array(TEST_PNG_BYTES));
+                }
+                return Response.json({
+                    data: [{ b64_json: TEST_PNG_BASE64 }],
+                    usage: OPENAI_IMAGE_USAGE,
+                });
+            });
+            vi.stubGlobal("fetch", fetchMock);
+
+            await expect(
+                callCommunityImageEndpoint(
+                    await imageEndpoint("request"),
+                    "make it blue",
+                    {
+                        ...imageParams,
+                        image: Array.from(
+                            { length: 9 },
+                            (_, i) => `https://input.example.com/${i}.png`,
+                        ),
+                    },
+                    secret,
+                ),
+            ).rejects.toMatchObject({
+                status: 400,
+                message: "Too many input images in request (max 8).",
+            });
+            expect(fetchMock).not.toHaveBeenCalled();
+        });
+
+        it("bounds edit downloads at one shared byte budget", async () => {
+            // Two 12 MB sources: each fits the per-image 20 MB cap, but their
+            // sum exceeds the shared budget, so the second must be rejected
+            // while the bytes are streaming in, before the endpoint POST.
+            const largeSource = (bytes: number) => {
+                const body = new Uint8Array(bytes);
+                body.set(TEST_PNG_BYTES, 0);
+                return body;
+            };
+            const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                const request = new Request(input, init);
+                if (request.url.startsWith("https://input.example.com/")) {
+                    return new Response(largeSource(12 * 1024 * 1024));
+                }
+                return Response.json({
+                    data: [{ b64_json: TEST_PNG_BASE64 }],
+                    usage: OPENAI_IMAGE_USAGE,
+                });
+            });
+            vi.stubGlobal("fetch", fetchMock);
+
+            await expect(
+                callCommunityImageEndpoint(
+                    await imageEndpoint("request"),
+                    "make it blue",
+                    {
+                        ...imageParams,
+                        image: [
+                            "https://input.example.com/first.png",
+                            "https://input.example.com/second.png",
+                        ],
+                    },
+                    secret,
+                ),
+            ).rejects.toMatchObject({
+                status: 400,
+                errorCode: "image_too_large",
+            });
+            // First source downloaded in full, second rejected mid-read;
+            // the community endpoint itself is never called.
+            const inputFetches = fetchMock.mock.calls.filter(
+                ([input]) =>
+                    String(input).startsWith("https://input.example.com/"),
+            );
+            expect(inputFetches).toHaveLength(2);
+        });
     });
 
     describe("community video endpoint billing", () => {

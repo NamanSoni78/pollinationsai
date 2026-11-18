@@ -6,6 +6,7 @@ import {
 } from "@shared/schemas/openai.ts";
 import { SafeSchema, type SafeValue } from "@shared/schemas/safety.ts";
 import type { Context } from "hono";
+import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -36,6 +37,42 @@ export const textBodyLimit = bodyLimit({
             message: "Request body exceeds the 32 MiB limit",
         });
     },
+});
+
+/**
+ * JSON bodies on the image routes are fully buffered by the Hono json
+ * validator / `c.req.json()` before any handler-level validation runs, so
+ * they need a declared-size pre-parse ceiling — the JSON flavor of the
+ * multipart body limit. Without it a body up to the platform's request
+ * ceiling is parsed, then every `image` entry (URL or data URI) is
+ * downloaded/decoded before the first downstream cap fires.
+ *
+ * Declared content-length only, like the multipart limit: a re-wrapped
+ * stream changes request semantics, so chunked bodies rely on the platform's
+ * request-body ceiling plus the post-parse caps (per-model reference-image
+ * caps; the community edit path's count cap and shared byte budget).
+ * 52 MiB covers every legitimate request the multipart limit already accepts.
+ */
+export const IMAGE_JSON_BODY_LIMIT_BYTES = 52 * 1024 * 1024;
+
+export const imageJsonBodyLimit = createMiddleware(async (c, next) => {
+    const contentType = c.req.header("content-type") || "";
+    if (!contentType.includes("application/json")) {
+        return next();
+    }
+    const contentLengthHeader = c.req.raw.headers.get("content-length");
+    if (contentLengthHeader) {
+        const contentLength = Number.parseInt(contentLengthHeader, 10);
+        if (
+            !Number.isNaN(contentLength) &&
+            contentLength > IMAGE_JSON_BODY_LIMIT_BYTES
+        ) {
+            throw new HTTPException(413, {
+                message: "JSON request body exceeds the 52 MiB limit",
+            });
+        }
+    }
+    return next();
 });
 
 export const simpleAudioQuerySchema = z.object({
