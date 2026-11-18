@@ -445,6 +445,51 @@ describe("generateTextPortkey", () => {
         expect(billing.price.totalPrice).toBe(0.000972);
     });
 
+    it("bills image input tokens on Mistral Large 3 at the input-text rate", () => {
+        // The Azure Mistral-Large-3 deployment cannot fetch remote image URLs,
+        // so Gen inlines them (requiresBase64ImageUrls) and the model answers
+        // vision requests. Azure chat/completions reports image input as an
+        // inclusive prompt_tokens_details detail, so the carve-out moves those
+        // tokens onto the promptImageTokens line — without a rate in the cost
+        // sheet, convertUsage zero-fills it and every image token bills at $0.
+        const usage = openaiUsageToUsage({
+            prompt_tokens: 1000,
+            completion_tokens: 100,
+            total_tokens: 1100,
+            prompt_tokens_details: { image_tokens: 400 },
+        });
+        expect(usage).toMatchObject({
+            promptTextTokens: 600,
+            promptImageTokens: 400,
+            completionTextTokens: 100,
+        });
+        const definition = TEXT_SERVICES["mistralai/mistral-large-3"];
+        expect(definition.inputModalities).toContain("image");
+        const billing = calculateUsageBilling({
+            model: "mistralai/mistral-large-3",
+            usage,
+            servedBy: definition,
+            quotedBy: definition,
+        });
+        // The image line must bill like the sibling Foundry vision deployments
+        // (grok, kimi, deepseek) — at the input-text rate, 0.5/M here.
+        expect(billing.cost.promptImageTokens).toBeCloseTo(
+            (400 * 0.5) / 1_000_000,
+            12,
+        );
+        // Customer charges apply the 0.75 Azure multiplier.
+        expect(billing.price.promptImageTokens).toBeCloseTo(
+            (400 * 0.5 * 0.75) / 1_000_000,
+            12,
+        );
+        expect(billing.cost.totalCost).toBeCloseTo(
+            billing.cost.promptTextTokens! +
+                billing.cost.promptImageTokens! +
+                billing.cost.completionTextTokens!,
+            12,
+        );
+    });
+
     it("routes Gemini through direct Vertex via Portkey", async () => {
         vi.spyOn(googleCloudAuth, "getAccessToken").mockResolvedValue(
             "test-google-token",
