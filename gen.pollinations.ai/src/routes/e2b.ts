@@ -922,6 +922,13 @@ export const e2bRoutes = new Hono<Env>()
             ),
         }),
     )
+    // The sandbox proxy sits outside sandboxApi's own limiter by registration
+    // order (sandboxApi is mounted at the route call below, so its
+    // `.use("*", edgeRateLimit)` never wraps /sandbox/*), and envd checks
+    // the per-sandbox token itself only after our proxied fetch — so this
+    // must be registered before the .all below to bound unauthenticated
+    // external-fetch fan-out.
+    .use("/sandbox/*", edgeRateLimit)
     .all("/sandbox/*", (c) => proxyEnvd(c, `${E2B_PATH}/sandbox`))
     .route("/", sandboxApi(false, edgeRateLimit, auth()));
 
