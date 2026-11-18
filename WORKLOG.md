@@ -665,3 +665,24 @@ Baseline unchanged: upstream `52fd0a6c8`, `fork/main` identical (0/0, no push ne
 - `fork/main` identical to upstream `52fd0a6c824` (0/0). Branch `solution64-music-ingestion-funds-gate` pushed (name checked unique on `ls-remote`; the concurrent session's `solution57-60-*` branches untouched, as are all prior solution/work branches). Upstream PR creation re-verified this round: `403 Resource not accessible by personal access token` — fork PR [#76](https://github.com/NamanSoni78/pollinationsai/pull/76) is the review surface.
 - `issues_mds`: appended additively on `5fee8c48f` (issues 1-63 + this round's issue 64). The concurrent session's PRs #68-#71 have no issue MDs at this push; if they file next, the next free index is 65 (their branch prefixes 57-60 are already stale against the filed 57-63 and do not collide with any filed issue number).
 - No live probes this round (all verification via isolated tests; the sonilo vendor cap via fal's published model pages). Probe spend: 0.
+
+## Round 17 (session 16): images b64_json video OOM (2026-11-18)
+
+Baseline: upstream `52fd0a6c8` (fork/main identical 0/0; no new upstream commits since the round-15/16 ledger base — fresh-surface audit, not a diff-audit). Two parallel subagents swept (a) enter auth/quests/promo/oauth/admin — clean, no gate-passing finding; (b) gen images/jobs/media/audio/mcp — one gate-passing candidate + one addendum.
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 57 | Images JSON routes buffer the entire provider output and multiply it ~5x (binary string + btoa + JSON.stringify) before returning `b64_json` (default format); both POST routes accept video models whose outputs reach tens of MB — one request peaks at 150-300 MB inside the shared 128 MB isolate (error 1102 kills all in-flight requests); no provider-output byte cap exists anywhere in the official model fleet (26 bare `arrayBuffer()` sites) | High (availability) | 4 worker-level tests red-on-analysis/green-with-fix (over-cap declared + streamed → 413 pre-conversion; under-cap passthrough byte-exact; url path unaffected); openai-image-cache regressions 24/24; tsc clean | `solution57-images-b64-video-cap` | fork [#77](https://github.com/NamanSoni78/pollinationsai/pull/77) |
+
+Addendum resolved as duplicate: audio multipart body-limit gap = issue 56 scope — `solution54` already mounts `multipartBodyLimit` on `.use("*", multipartBodyLimit)` for audio routes (routes/audio.ts:4487) and images/edits (proxy.ts:1299); not re-filed.
+
+### Surfaces verified clean this round (subagent A, full read)
+
+enter routes: quests/quest-grants/quest-leaderboard (admin-token gated, campaignId regex-blocked, idempotent `rewardKey` grants, all-SQL-bound leaderboard), referral (allowlisted `ref`, analytics-only), promo-codes (admin-gated creation, session-only redemption, one-per-identity idempotency), account.ts 2676 lines end-to-end (owner-scoped key routes, `unchangedSinceRead` budget guard, CSV formula-injection defense), session-token (domain-separated HS256 15-min TTL), unsubscribe (HMAC-SHA256 + timingSafeEqual), device.ts (RFC 8628, single-use exchange), oauth.ts (burn-before-validate, exact client/redirect match, S256), app-lookup/sites/integrations/admin; services: quest-checker/groups, client-metadata (SSRF-safe), d1-tinybird-sync (allowlisted datasources); shared auth/billing helpers. Near-misses recorded for the next pass (device/oauth apiKey-pair binding under first-party-frontend trust; app-lookup userId leak to pk_ holders — no privilege path).
+
+Subagent B additionally swept clean: jobs.ts (owner-gating re-verified, SHA-256 job IDs, no cancel/list endpoints), images.ts cache identity, generation-executor/handlers (reservation fail-closed lifecycle), stem-separation (fixed upstream, streamed output), audio.ts reference fetches (validated + 30s deadline + 20 MB), mcp.ts (registry-only serverId, header stripping, batch rejection), media.pollinations.ai (no signed URLs, nosniff+sandbox CSP last, R2 keys namespaced by sha256(userId), idempotent delete), full user-URL fetch call-site enumeration (every site passes validateUserMediaUrl or stricter community policy).
+
+### Sync
+
+- fork/main = upstream `52fd0a6c8` (0/0; no push needed). `issues_mds` pulls the concurrent-session tip before this append; no history rewrite, no branch deletions.
+- Upstream PR write still 403 with this fork-scoped PAT; fork PR #77 is the live review surface.
