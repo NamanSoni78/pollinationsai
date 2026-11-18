@@ -557,6 +557,71 @@ describe("Chat Completions over Responses", () => {
     }
 
     it.each([false, true])(
+        "carries video and output-image token details into Chat usage (stream=%s)",
+        async (stream) => {
+            // The pure Responses path bills promptVideoTokens and
+            // completionImageTokens (responsesUsageToUsage passes details
+            // wholesale); the Chat adapter must not drop them.
+            const richUsage = {
+                input_tokens: 1000,
+                input_tokens_details: {
+                    cached_tokens: 100,
+                    image_tokens: 300,
+                    video_tokens: 400,
+                },
+                output_tokens: 200,
+                output_tokens_details: {
+                    reasoning_tokens: 20,
+                    image_tokens: 60,
+                },
+                total_tokens: 1200,
+            };
+            const output = [
+                {
+                    type: "message",
+                    content: [{ type: "output_text", text: "ok" }],
+                },
+            ];
+            const response = { status: "completed", output, usage: richUsage };
+            if (stream) {
+                mockStream([
+                    `data: ${JSON.stringify({ type: "response.completed", response })}\n\n`,
+                ]);
+            } else {
+                vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+                    Response.json(response),
+                );
+            }
+            const completion = await callChatViaResponses(
+                [{ role: "user", content: "Run it" }],
+                { model: "provider-model", modelConfig, stream },
+            );
+            const events = stream ? await streamEvents(completion) : [];
+            const usageFrame = stream
+                ? events.findLast(
+                      (event: unknown): event is Record<string, unknown> =>
+                          !!event &&
+                          typeof event === "object" &&
+                          "usage" in (event as Record<string, unknown>),
+                  )
+                : completion.usage;
+            // The stream terminal frame carries the usage under .usage; the
+            // non-stream completion exposes it directly.
+            const usage = (
+                stream
+                    ? (usageFrame?.usage as Record<string, unknown> | undefined)
+                    : usageFrame
+            ) as {
+                prompt_tokens_details?: Record<string, number>;
+                completion_tokens_details?: Record<string, number>;
+            } | undefined;
+            expect(usage?.prompt_tokens_details?.video_tokens).toBe(400);
+            expect(usage?.prompt_tokens_details?.image_tokens).toBe(300);
+            expect(usage?.completion_tokens_details?.image_tokens).toBe(60);
+        },
+    );
+
+    it.each([false, true])(
         "renders executed function pairs once, without client tool calls (stream=%s)",
         async (stream) => {
             const output = [
