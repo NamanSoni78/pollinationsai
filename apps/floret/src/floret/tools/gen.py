@@ -23,6 +23,14 @@ from floret.config import resolve_api_key, settings
 
 logger = logging.getLogger(__name__)
 
+# Remote media is fetched into the single shared container before any API
+# call, so every fetch is capped at the limits the platform itself enforces
+# downstream (audio multipart files 50 MB; image-edit sources 20 MiB each).
+# An uncapped fetch of an oversized or endless body OOM-kills the container
+# without ever reaching a billed request.
+MAX_FETCH_BYTES = 50 * 1024 * 1024
+MAX_EDIT_SOURCE_BYTES = 20 * 1024 * 1024
+
 # One client per event loop: a module-level client binds to the loop that created
 # it and breaks when the loop is replaced (tests, some ASGI servers).
 _clients: dict[int, httpx.AsyncClient] = {}
@@ -123,7 +131,7 @@ async def generate_3d(
 
 
 async def _fetch_bytes(
-    url: str, attempts: int = 3, max_bytes: int | None = None
+    url: str, attempts: int = 3, max_bytes: int = MAX_FETCH_BYTES
 ) -> bytes:
     """Download source media, retrying transient upstream failures.
 
@@ -244,7 +252,7 @@ async def edit_image(
         if src.startswith("data:"):
             payload = base64.b64decode(src.partition(",")[2])
         else:
-            payload = await _fetch_bytes(src)
+            payload = await _fetch_bytes(src, max_bytes=MAX_EDIT_SOURCE_BYTES)
         files.append(("image[]", (f"src{i}.jpg", payload, "image/jpeg")))
 
     data = {"model": model, "prompt": prompt, **{k: str(v) for k, v in extra.items()}}
