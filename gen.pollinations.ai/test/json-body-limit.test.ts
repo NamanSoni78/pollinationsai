@@ -109,17 +109,19 @@ describe("jsonBodyLimit", () => {
         expect(await fine.text()).toBe("parsed");
     });
 
-    test("lets non-JSON content types through untouched", async () => {
+    test("gates multipart bodies at their own 52 MiB ceiling, counted by stream when undeclared", async () => {
         const gateApp = new Hono();
-        let parsed = false;
         gateApp.use(jsonBodyLimit);
         gateApp.post("/x", async (c) => {
-            parsed = true;
-            return c.text("parsed");
+            // A real formData() parse proves the counting wrap keeps workerd's
+            // multipart parser working for undeclared (fetch FormData) bodies.
+            const form = await c.req.formData();
+            return c.text(`parsed:${form.get("field")}`);
         });
 
-        // A huge multipart declaration is the multipart gate's business.
-        const multipart = await gateApp.request(
+        // A huge declared multipart upload is rejected at the 52 MiB ceiling
+        // (the same cap multipartBodyLimit enforces on the declared length).
+        const oversized = await gateApp.request(
             new Request("http://test/x", {
                 method: "POST",
                 headers: {
@@ -129,8 +131,117 @@ describe("jsonBodyLimit", () => {
                 body: "x",
             }),
         );
-        expect(multipart.status).toBe(200);
-        expect(parsed).toBe(true);
+        expect(oversized.status).toBe(413);
+        expect(await oversized.text()).toMatch(/52 MiB/i);
+
+        // An undeclared (streamed) multipart body — the shape fetch() with a
+        // FormData body produces — parses fine through the counting wrap.
+        const form = new FormData();
+        form.append("field", "value");
+        const undeclared = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                body: form,
+            }),
+        );
+        expect(undeclared.status).toBe(200);
+        expect(await undeclared.text()).toBe("parsed:value");
+
+        // ...and an undeclared multipart stream over the ceiling is counted
+        // and rejected instead of buffering unboundedly.
+        const undeclaredOversized = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                headers: { "content-type": "multipart/form-data; boundary=x" },
+                body: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(
+                            new TextEncoder().encode(
+                                "x".repeat(53 * 1024 * 1024),
+                            ),
+                        );
+                        controller.close();
+                    },
+                }),
+                duplex: "half",
+            } as RequestInit),
+        );
+        expect(undeclaredOversized.status).toBe(413);
+    });
+
+    test("gates an oversized body declared text/plain (parse sites ignore the content type)", async () => {
+        const gateApp = new Hono();
+        let parsed = false;
+        gateApp.use(jsonBodyLimit);
+        gateApp.post("/x", async (c) => {
+            parsed = true;
+            return c.text("parsed");
+        });
+
+        const textPlain = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                headers: {
+                    "content-type": "text/plain",
+                    "content-length": String(33 * 1024 * 1024),
+                },
+                body: "x",
+            }),
+        );
+        expect(textPlain.status).toBe(413);
+        expect(parsed).toBe(false);
+
+        // Same for a request with no content-type header at all.
+        const untyped = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                headers: { "content-length": String(33 * 1024 * 1024) },
+                body: "x",
+            }),
+        );
+        expect(untyped.status).toBe(413);
+    });
+
+    test("gates an oversized body with no content-length by counting streamed bytes", async () => {
+        const gateApp = new Hono();
+        gateApp.use(jsonBodyLimit);
+        gateApp.post("/x", async (c) => c.text(`parsed:${(await c.req.text()).length}`));
+
+        // Chunked/streamed body: no content-length to check, so the gate
+        // wraps the stream and counts. Small bodies still parse.
+        const small = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                body: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(new TextEncoder().encode("hello"));
+                        controller.close();
+                    },
+                }),
+                duplex: "half",
+            } as RequestInit),
+        );
+        expect(small.status).toBe(200);
+        expect(await small.text()).toBe("parsed:5");
+
+        const oversized = await gateApp.request(
+            new Request("http://test/x", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue(
+                            new TextEncoder().encode(
+                                "x".repeat(33 * 1024 * 1024),
+                            ),
+                        );
+                        controller.close();
+                    },
+                }),
+                duplex: "half",
+            } as RequestInit),
+        );
+        expect(oversized.status).toBe(413);
     });
 
     test("matches JSON content types with parameters and vendor suffixes", async () => {
@@ -240,6 +351,58 @@ describe("jsonBodyLimit on /register", () => {
 
         try {
             expect(response.status).toBe(401);
+        } finally {
+            await wait();
+        }
+    });
+
+    test("rejects an oversized text/plain body before the pre-auth parse", async () => {
+        // The parse is c.req.json(), which ignores the declared content type:
+        // a text/plain declaration must not smuggle the body past the gate.
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: {
+                "content-type": "text/plain",
+                "content-length": String(60 * 1024 * 1024),
+            },
+            body: "x",
+        });
+
+        try {
+            const body = await response.text();
+            expect(response.status).toBe(413);
+            expect(body).toMatch(/32 MiB/i);
+        } finally {
+            await wait();
+        }
+    });
+
+    test("aborts an oversized undeclared (streamed) body at the cap", async () => {
+        // No content-length header: the gate counts the streamed bytes and
+        // errors the stream at 32 MiB. The body is deliberately VALID JSON:
+        // without the gate it would parse fully and reach the token check
+        // (401); with the gate the aborted read surfaces as Invalid JSON
+        // (400) after a bounded read instead.
+        const oversizedUrl = `https://gpu.test/${"x".repeat(33 * 1024 * 1024)}`;
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: new ReadableStream({
+                start(controller) {
+                    controller.enqueue(
+                        new TextEncoder().encode(
+                            JSON.stringify({ url: oversizedUrl }),
+                        ),
+                    );
+                    controller.close();
+                },
+            }),
+            duplex: "half",
+        } as RequestInit);
+
+        try {
+            expect(response.status).toBe(400);
+            expect(await response.text()).toMatch(/invalid json/i);
         } finally {
             await wait();
         }

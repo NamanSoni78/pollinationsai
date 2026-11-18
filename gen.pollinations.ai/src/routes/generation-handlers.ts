@@ -40,36 +40,55 @@ export const textBodyLimit = bodyLimit({
 });
 
 const JSON_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
+/** Matches multipartBodyLimit: audio file inputs are documented up to 50 MB. */
+const MULTIPART_LIMIT_BYTES = 52 * 1024 * 1024;
+
+const jsonBodySizeLimit = bodyLimit({
+    maxSize: JSON_BODY_LIMIT_BYTES,
+    onError: () => {
+        throw new HTTPException(413, {
+            message: "Request body exceeds the 32 MiB limit",
+        });
+    },
+});
+
+const multipartSizeLimit = bodyLimit({
+    maxSize: MULTIPART_LIMIT_BYTES,
+    onError: () => {
+        throw new HTTPException(413, {
+            message: "Multipart request body exceeds the 52 MiB limit",
+        });
+    },
+});
 
 /**
- * Pre-parse ceiling for JSON request bodies on the media generation routes
- * (audio/image/3D/E2B), the JSON-side sibling of multipartBodyLimit: without
- * it a large `application/json` body is fully buffered several times over
- * (model extraction in resolveModel, the generation cache's
- * prepareGenerationRequest, validator("json"), coordinator persistence)
- * before any handler or schema cap runs, deterministically killing the
- * isolate. The text routes already enforce the same 32 MiB ceiling via
- * textBodyLimit; non-JSON content types pass through untouched so multipart
- * uploads keep their own limits.
+ * Pre-parse ceiling for request bodies on the media generation routes
+ * (audio/image/3D/E2B) and the pre-auth /register parse, the JSON-side
+ * sibling of multipartBodyLimit: without it a large body is fully buffered
+ * several times over (model extraction in resolveModel, the generation
+ * cache's prepareGenerationRequest, validator("json"), coordinator
+ * persistence, formData()) before any handler or schema cap runs,
+ * deterministically killing the isolate. The text routes already enforce
+ * the same 32 MiB ceiling via textBodyLimit.
+ *
+ * The parse sites read the body with json()/text()/formData(), which ignore
+ * the declared content type — so the gate must not key on it either: a body
+ * declared text/plain, or sent without a content-length declaration (fetch()
+ * with a FormData body, chunked HTTP/1.1), reaches the same buffers and
+ * previously passed the declared-JSON-only gate untouched. Every body is
+ * therefore enforced through hono's bodyLimit, which checks the declared
+ * length when present and counts the streamed bytes when it is not — the
+ * wrapping is applied at both ceilings and workerd's formData() reads the
+ * wrapped stream fine (pinned by the multipart tests below). Multipart
+ * bodies keep multipartBodyLimit's larger 52 MiB ceiling so documented 50 MB
+ * audio uploads still pass.
  */
 export const jsonBodyLimit = createMiddleware<Env>(async (c, next) => {
     const contentType = c.req.header("content-type") || "";
-    if (!/\bjson\b/i.test(contentType)) {
-        return next();
-    }
-    const contentLengthHeader = c.req.raw.headers.get("content-length");
-    if (contentLengthHeader) {
-        const contentLength = Number.parseInt(contentLengthHeader, 10);
-        if (
-            !Number.isNaN(contentLength) &&
-            contentLength > JSON_BODY_LIMIT_BYTES
-        ) {
-            throw new HTTPException(413, {
-                message: "JSON request body exceeds the 32 MiB limit",
-            });
-        }
-    }
-    return next();
+    const gate = /multipart/i.test(contentType)
+        ? multipartSizeLimit
+        : jsonBodySizeLimit;
+    return gate(c, next);
 });
 
 export const simpleAudioQuerySchema = z.object({
