@@ -29,6 +29,9 @@ export function normalizeCommunityAssetUrl(
     if (url.username || url.password || isBlockedHostname(url.hostname)) {
         throw new Error("Image URL cannot target a private host");
     }
+    if (isPlatformZoneHostname(url.hostname)) {
+        throw new Error("Image URL cannot target the platform's own zone");
+    }
     if (
         url.protocol === "http:" &&
         url.hostname !== new URL(endpointBaseUrl).hostname
@@ -102,6 +105,20 @@ function communityOpenAIEndpointUrl(baseUrl: string, suffix: string): string {
     const url = new URL(communityOpenAIBaseUrl(validated));
     url.pathname = `${url.pathname.replace(/\/+$/, "")}${suffix}`;
     return url.toString();
+}
+
+/**
+ * The platform's own zones. A community asset URL pointed here makes the
+ * gateway fetch the platform itself — an anonymous nested generation that
+ * re-enters the public edge and bills no one, and a self-referential URL
+ * that loops until the asset deadline — so publisher responses cannot
+ * direct the image/video asset fetcher back into pollinations/myceli
+ * zones. Same host set the OAuth client-id metadata fetch refuses.
+ */
+export function isPlatformZoneHostname(hostname: string): boolean {
+    return /(^|\.)(pollinations|myceli)\.ai\.?$/.test(
+        hostname.replace(/^\[|\]$/g, "").toLowerCase(),
+    );
 }
 
 export function isBlockedHostname(hostname: string): boolean {
