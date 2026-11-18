@@ -1240,7 +1240,7 @@ export const proxyRoutes = new Hono<Env>()
         validator(
             "param",
             z.object({
-                text: z.string().min(1).meta({
+                text: z.string().min(1).max(10000).meta({
                     description:
                         "Text or prompt to generate. Dialogue operation expects one `voice: text` turn per line.",
                     example: "Hello, welcome to Pollinations!",
