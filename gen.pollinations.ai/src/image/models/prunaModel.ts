@@ -135,10 +135,20 @@ async function generateDeepInfraImage(
         });
     }
     const image = result.images?.[0];
-    if (!image)
+    if (!image) {
+        const cost = result.inference_status?.cost;
+        // DeepInfra bills inference execution; the receipt in the same
+        // response is the verifiable evidence, so settle only when it is
+        // present (issue 82's AI3-style discriminator).
+        const billedUsage =
+            typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+                ? { completionImageTokens: 1 }
+                : undefined;
         throw UpstreamError.fromProvider(502, {
             message: `${displayName} returned no image`,
+            ...(billedUsage ? { billedUsage } : {}),
         });
+    }
 
     const buffer = base64ToBuffer(image);
     const providerCost = result.inference_status?.cost;
@@ -223,9 +233,15 @@ async function runPrunaPrediction<TInput>(
 async function downloadOutput(
     url: string,
     displayName: string,
+    billedUsage?: { completionVideoSeconds: number },
 ): Promise<Buffer> {
     const response = await fetchUpstream(url, {
         errorLabel: `Failed to download ${displayName} output`,
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed its output seconds;
+        // a failed download still settles them.
+        if (!billedUsage) throw error;
+        throw Object.assign(error as object, { billedUsage });
     });
     return Buffer.from(await response.arrayBuffer());
 }
@@ -348,7 +364,11 @@ async function generatePrunaVideo(
             displayName,
         );
 
-    const buffer = await downloadOutput(output, displayName);
+    const buffer = await downloadOutput(output, displayName, {
+        // The prediction succeeded, so Replicate billed its output seconds;
+        // a failed download still settles them.
+        completionVideoSeconds: videoOutputDurationSeconds ?? duration,
+    });
     logOps(
         `Video downloaded, size: ${(buffer.length / 1024 / 1024).toFixed(2)} MB`,
     );

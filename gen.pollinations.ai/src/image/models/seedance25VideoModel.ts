@@ -99,6 +99,9 @@ export async function callSeedance25API(
             throw UpstreamError.fromProvider(502, {
                 message:
                     "Replicate Seedance 2.5 response is missing output video duration",
+                // The prediction succeeded, so Replicate billed the output
+                // seconds; settle the model's default duration floor.
+                billedUsage: { completionVideoSeconds: DURATION },
             });
         }
         logOps("prediction succeeded", {
@@ -113,6 +116,14 @@ export async function callSeedance25API(
 
     const videoResponse = await fetchUpstream(videoUrl, {
         errorLabel: "Failed to download Seedance 2.5 output video",
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed its output seconds;
+        // a failed download still settles them.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds: actualDurationSeconds ?? DURATION,
+            },
+        });
     });
     const buffer = Buffer.from(await videoResponse.arrayBuffer());
     const billedDuration = actualDurationSeconds ?? DURATION;

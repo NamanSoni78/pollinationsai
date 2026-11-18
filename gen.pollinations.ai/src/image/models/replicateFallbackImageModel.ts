@@ -38,37 +38,73 @@ const COMMON_RATIOS = [
     "5:4",
 ] as const;
 
+type PaidUsageFallback = {
+    /** Local per-megapixel estimate used only when Replicate's metrics are
+     *  absent — the identical math the success path falls back to. */
+    promptImageTokens?: number;
+    completionImageTokens?: number;
+};
+
 async function runReplicateImage(
     model: string,
     input: Record<string, unknown>,
     label: string,
+    paidUsageFallback?: PaidUsageFallback,
 ): Promise<{
     buffer: Buffer;
     imageInputMegapixels?: number;
     imageOutputMegapixels?: number;
 }> {
+    let output: string | string[] | undefined;
+    let imageInputMegapixels: number | undefined;
+    let imageOutputMegapixels: number | undefined;
     try {
-        const { output, imageInputMegapixels, imageOutputMegapixels } =
-            await runReplicatePrediction<
-                Record<string, unknown>,
-                string | string[]
-            >({ model, input });
-        const url = Array.isArray(output) ? output[0] : output;
-        if (!url)
-            throw UpstreamError.fromProvider(502, {
-                message: `${label} returned no image`,
-            });
+        const result = await runReplicatePrediction<
+            Record<string, unknown>,
+            string | string[]
+        >({ model, input });
+        output = result.output;
+        imageInputMegapixels = result.imageInputMegapixels;
+        imageOutputMegapixels = result.imageOutputMegapixels;
+    } catch (error) {
+        // Prediction-phase failures carry no settlement: a failed/canceled
+        // prediction is not charged by Replicate (docs/billing), so only the
+        // mapping to UpstreamError applies.
+        throw toReplicateUpstreamError(error, `${label} generation failed`);
+    }
+    const url = Array.isArray(output) ? output[0] : output;
+    if (!url)
+        throw UpstreamError.fromProvider(502, {
+            message: `${label} returned no image`,
+        });
+    // The prediction succeeded, so Replicate billed it: per-megapixel for
+    // the FLUX.2 routes (provider metrics first, local fallback math —
+    // the identical values the success path reports), else flat per image.
+    const promptTokens =
+        imageInputMegapixels ?? paidUsageFallback?.promptImageTokens;
+    const billedUsage = {
+        ...(promptTokens !== undefined && promptTokens > 0
+            ? { promptImageTokens: promptTokens }
+            : {}),
+        completionImageTokens:
+            imageOutputMegapixels ??
+                paidUsageFallback?.completionImageTokens ??
+                1,
+    };
+    let buffer: Buffer;
+    try {
         const response = await fetchUpstream(url, {
             errorLabel: `Failed to download ${label} output`,
         });
-        return {
-            buffer: Buffer.from(await response.arrayBuffer()),
-            imageInputMegapixels,
-            imageOutputMegapixels,
-        };
+        buffer = Buffer.from(await response.arrayBuffer());
     } catch (error) {
-        throw toReplicateUpstreamError(error, `${label} generation failed`);
+        throw Object.assign(error as object, { billedUsage });
     }
+    return {
+        buffer,
+        imageInputMegapixels,
+        imageOutputMegapixels,
+    };
 }
 
 async function prepareFluxImages(
@@ -117,6 +153,13 @@ export async function callReplicateFallbackImage(
                     seed: params.seed,
                 },
                 "FLUX.2 Pro",
+                // Same local estimate the success path falls back to when
+                // Replicate's megapixel metrics are missing.
+                {
+                    promptImageTokens: images.megapixels,
+                    completionImageTokens:
+                        (params.width * params.height) / 1_000_000,
+                },
             );
             buffer = result.buffer;
             // Replicate bills whole megapixels per image, at least one.
@@ -141,6 +184,13 @@ export async function callReplicateFallbackImage(
                     seed: params.seed,
                 },
                 "FLUX.2 Max",
+                // Same local estimate the success path falls back to when
+                // Replicate's megapixel metrics are missing.
+                {
+                    promptImageTokens: images.megapixels,
+                    completionImageTokens:
+                        (params.width * params.height) / 1_000_000,
+                },
             );
             buffer = result.buffer;
             // Replicate bills whole megapixels per image, at least one.

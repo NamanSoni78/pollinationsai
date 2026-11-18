@@ -135,6 +135,12 @@ export async function callWanImageAPI(
 
     const imageResponse = await fetchUpstream(outputUrls[0], {
         errorLabel: `Failed to download ${modelLabel} output image`,
+    }).catch((error: unknown) => {
+        // The prediction succeeded, so Replicate billed the flat per-image
+        // charge; a failed download still settles it.
+        throw Object.assign(error as object, {
+            billedUsage: { completionImageTokens: 1 },
+        });
     });
     let imageBuffer: Buffer;
     try {
@@ -146,6 +152,9 @@ export async function callWanImageAPI(
         throw UpstreamError.fromProvider(502, {
             message: `Failed to download ${modelLabel} output image: ${message}`,
             requestUrl: new URL(outputUrls[0]),
+            // The image is generated and billed; a failed body read still
+            // settles it.
+            billedUsage: { completionImageTokens: 1 },
         });
     }
     logOps(
