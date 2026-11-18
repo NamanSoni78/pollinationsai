@@ -5,15 +5,18 @@ import {
 import {
     COMMUNITY_ENDPOINT_TIMEOUT_MS,
     type CommunityEndpointRuntime,
+    communityEndpointErrorDetail,
     communityTranscriptionSeconds,
     normalizeCommunityEndpointBearerToken,
 } from "@shared/community-endpoints.ts";
+import { MAX_COMMUNITY_MEDIA_RESPONSE_BYTES } from "@shared/community-media.ts";
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
 import {
     buildUsageHeaders,
     createAudioSecondsUsage,
     createAudioTokenUsage,
 } from "@shared/registry/usage-headers.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import {
@@ -187,9 +190,33 @@ export async function callCommunityTranscriptionEndpoint(
             requestUrl: new URL(upstreamUrl),
         });
     }
-    response = await ensureUpstreamOk(response, upstreamUrl);
+    // Bound the publisher's response the way the image/video community
+    // paths do (fetchCommunityMediaJson): the endpoint is untrusted, so
+    // never buffer more than MAX_COMMUNITY_MEDIA_RESPONSE_BYTES — error
+    // bodies included — instead of response.text(), which buffers whatever
+    // the endpoint streams. The cap is enforced against the declared
+    // content-length before reading and against the running byte count
+    // while streaming.
+    const bodyText = await readResponseText(
+        response,
+        MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
+        () =>
+            UpstreamError.fromProvider(502, {
+                message: "Community endpoint response is too large",
+            }),
+    );
+    if (!response.ok) {
+        const detail = communityEndpointErrorDetail(bodyText);
+        throw UpstreamError.fromProvider(response.status, {
+            message: detail
+                ? `Community transcription endpoint responded ${response.status}: ${detail}`
+                : `Community transcription endpoint responded ${response.status}`,
+            responseBody: bodyText,
+            requestUrl: new URL(upstreamUrl),
+        });
+    }
 
-    const transcript = parseCommunityTranscription(await response.text());
+    const transcript = parseCommunityTranscription(bodyText);
     return buildTranscriptionResponse({
         normalized: {
             text: transcript.text,

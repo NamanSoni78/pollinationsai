@@ -168,6 +168,54 @@ describe("generateCommunityEmbeddings", () => {
         ).rejects.toMatchObject({ status: 400 });
     });
 
+    it("rejects an oversized upstream response before buffering it", async () => {
+        const endpoint = buildRuntime();
+        // The endpoint declares a 200 MB body; the JSON actually sent is
+        // small and valid, so on unpatched main the request SUCCEEDS after
+        // buffering whatever the endpoint streams (response.json() has no
+        // cap). The declared size alone must refuse the read before a byte
+        // is buffered.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValue(
+                new Response(
+                    JSON.stringify({
+                        object: "list",
+                        data: [
+                            {
+                                object: "embedding",
+                                embedding: [0.1, 0.2, 0.3],
+                                index: 0,
+                            },
+                        ],
+                        model: "upstream-model",
+                        usage: { prompt_tokens: 5, total_tokens: 5 },
+                    }),
+                    {
+                        status: 200,
+                        headers: {
+                            "content-type": "application/json",
+                            "content-length": String(200 * 1024 * 1024),
+                        },
+                    },
+                ),
+            ),
+        );
+
+        await expect(
+            generateCommunityEmbeddings(
+                endpoint,
+                {
+                    model: "upstream-model",
+                    encoding_format: "float",
+                    input: "hello",
+                },
+                "owner/bge",
+                SECRET,
+            ),
+        ).rejects.toMatchObject({ status: 502, message: /too large/i });
+    });
+
     it("returns an empty list without calling upstream for empty input", async () => {
         const endpoint = buildRuntime();
         const fetchMock = vi.fn();
