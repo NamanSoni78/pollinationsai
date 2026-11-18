@@ -922,3 +922,25 @@ Baseline: upstream `282ac54aeb` (no new commits since round 20's mid-delivery ad
 - Upstream PR creation re-verified: `403 Resource not accessible by personal access token` — fork PR #97 is the live review surface.
 - `issues_mds`: append-only on the round-23 head `77910a3a43` (issues 1–84 and all prior rounds untouched); this round adds issue 85; no history rewrite, no branch deletions.
 - Live probes: none — all three new tests reproduce deterministically offline; the bounty key's balance was untouched.
+
+## Round 25 — session 23: fal queue FAILED-status terminal handling + 3D mesh download caps (2026-11-18)
+
+Baseline: upstream `282ac54aeb`; `fork/main` verified identical (0/0). Issues 1–85 and fork PRs #1–#97 preserved untouched; all prior solution branches intact (`ls-remote` checked; this round's branches `solution87-*`/`solution88-*` verified unique before push). Method: three parallel read-only subagent audits (3D model fleet; issue-72's two named residuals; least-audited gen routes) + main-agent line-by-line verification — every accepted finding reproduced red on unpatched main before its fix was written. Live probes: **$0** (both findings deterministic offline; balance untouched).
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 86 | Shared fal queue client (`model3d/models/falClient.ts`) polls forever on `FAILED` (absent from the status union) and any unknown status; no deadline, no per-fetch AbortSignal — a failed job pins the request/coordinator DO until an external timeout kills it. Shared by the 3D fleet, the image fal fallbacks, and the audio fleet (lyria/sonilo/elevenlabs-sfx). Every image-fleet queue client already models FAILED + deadline — this was the repo outlier | High | 3 new tests in `test/model3d/falClientFailedStatus.test.ts` — all red on unpatched main (promise never settled; tests timed out), green with the fix; falClient suite 11/11 (incl. the pinned 11-minute slow-job semantics), tsc clean | `solution87-falqueue-failed-terminal-status` | fork [#98](https://github.com/NamanSoni78/pollinationsai/pull/98) |
+| 87 | `model3d/modelUtils.downloadMesh` fetched the provider's mesh URL with no AbortSignal, no byte cap, no content-length check, then buffered the whole body — a slow/misconfigured output host pins the request to the platform limit or OOMs the isolate after the provider already billed | Medium | 4 new tests in `test/model3d/downloadMeshCaps.test.ts` — streaming over-cap and signal-presence red on unpatched main; declared-cap rejection, small-artifact passthrough pin the fix; 6 model3d suites (every caller) 34/34, tsc clean | `solution88-3d-mesh-download-caps` | fork [#99](https://github.com/NamanSoni78/pollinationsai/pull/99) |
+
+### Dedup discipline (concurrent-session collisions)
+
+- The settlement residuals this session originally verified red (falFallback non-grok `billedUsage` drop; 3D InferencePort in-hand-charge drop — 5 + 2 red tests) are **owned by concurrent rounds 22's issue 81 / PR #89** (`solution75-postpaid-settlement-model3d-fal-residuals`): that branch was diff-verified to cover the same sites with the same red→green evidence. No duplicate branch or PR was left for them; the red tests written here were used only as pre-confirmation and discarded.
+- This session first wrote its reports as issues 77–80 and branches `solution74-*`; concurrent rounds 21–24 claimed those numbers (77–85) mid-session — renumbered to issues 86–87 with branches `solution87-*`/`solution88-*` (numbers verified unique via `ls-remote`). `solution74-falqueue-failed-terminal-status` was pushed once then renamed before any PR referenced it; no branch deletions of others' work.
+- Agent-C's unthrottled-route instances (`/models/status` Tinybird scan, e2b `/pricing`) are new instances of the filed issue-68 class whose pending fix branch (`solution57-edge-rate-limit-coverage`) covers only `/openapi.json`/messages/handoff — recorded below gate as residual instances of a filed root cause, not re-filed.
+
+### Sync
+
+- `fork/main` identical to upstream `282ac54aeb` (0/0, verified; no push needed — no new upstream commits).
+- Branches `solution87-*` / `solution88-*` pushed (names verified unique via `ls-remote`). Upstream PR creation not retried this round: the token's standing `403 Resource not accessible by personal access token` (re-verified rounds 18–24) — fork PRs #98/#99 are the live review surface.
+- `issues_mds`: append-only on the round-24 head `864ced4568` (issues 1–85 and all prior rounds untouched); this round adds issues 86–87; no history rewrite, no branch deletions.
+- Live probes: none; balance untouched.
