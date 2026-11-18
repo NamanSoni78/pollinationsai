@@ -1878,3 +1878,233 @@ test("Tinybird event total equals actual wallet debit with BYOP markup and ledge
     expect(telemetry.markupRate).toBeGreaterThan(0);
     expect(telemetry.totalPrice).toBe(roundPollenLedgerAmount(actualDebit));
 });
+
+async function withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    label: string,
+): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), ms);
+    });
+    try {
+        return await Promise.race([promise, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function nextEventOfType(
+    socket: WebSocket,
+    type: string,
+): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+        const onMessage = (event: MessageEvent) => {
+            try {
+                const parsed =
+                    typeof event.data === "string" ? JSON.parse(event.data) : null;
+                if (
+                    parsed &&
+                    typeof parsed === "object" &&
+                    (parsed as Record<string, unknown>).type === type
+                ) {
+                    socket.removeEventListener("message", onMessage);
+                    resolve(parsed as Record<string, unknown>);
+                }
+            } catch {
+                // Ignore non-JSON frames while scanning for the event.
+            }
+        };
+        socket.addEventListener("message", onMessage);
+    });
+}
+
+async function openScribeSessionWithHeldConnect(name: string) {
+    const { key } = await createTestApiKey({
+        name,
+        pollenBudget: 1,
+        user: { tierBalance: 0, packBalance: 1 },
+    });
+    const tinybirdRequests: Request[] = [];
+    let releaseConnect:
+        | ((response: Response) => void)
+        | undefined;
+    const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async (input, init) => {
+            const request = new Request(input, init);
+            if (request.url.includes("/v0/events?name=generation_event_v2")) {
+                tinybirdRequests.push(request);
+                return new Response("", { status: 202 });
+            }
+            if (request.url.includes("public_model_stats.json")) {
+                return Response.json({ data: [] });
+            }
+            return new Promise<Response>((resolve) => {
+                releaseConnect = (response: Response) => resolve(response);
+            });
+        });
+
+    const ctx = createExecutionContext();
+    const response = (await worker.fetch(
+        new Request("https://gen.pollinations.ai/v1/realtime?model=scribe-realtime", {
+            headers: {
+                Authorization: `Bearer ${key}`,
+                Upgrade: "websocket",
+            },
+        }),
+        scribeTestEnv,
+        ctx,
+    )) as WebSocketResponse;
+
+    expect(response.status).toBe(101);
+    const client = response.webSocket;
+    if (!client) throw new Error("Expected downstream WebSocket");
+    const initialClientMessage = nextJsonMessage(client);
+    client.accept();
+
+    return {
+        client,
+        ctx,
+        fetchMock,
+        initialClientMessage,
+        tinybirdRequests,
+        completeConnect: async () => {
+            for (
+                let attempt = 0;
+                attempt < 200 && !releaseConnect;
+                attempt++
+            ) {
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            if (!releaseConnect) {
+                throw new Error("Expected a held Scribe upstream connect");
+            }
+            const pair = new WebSocketPair();
+            const [upstreamClient, upstreamServer] = Object.values(pair) as [
+                WebSocket,
+                WebSocket,
+            ];
+            releaseConnect(
+                new Response(null, {
+                    status: 101,
+                    webSocket: upstreamClient,
+                }) as unknown as Response,
+            );
+            return upstreamServer;
+        },
+    };
+}
+
+test("closes the session when queued audio exceeds the pre-connect budget", async () => {
+    const session = await openScribeSessionWithHeldConnect(
+        "scribe-realtime-queue-overflow-key",
+    );
+    await session.initialClientMessage;
+    const errorEvent = nextEventOfType(session.client, "error");
+    const clientClose = nextClose(session.client);
+    for (let i = 0; i < 13; i++) {
+        session.client.send(
+            JSON.stringify({
+                type: "input_audio_buffer.append",
+                audio: zeroAudioBase64(480_000),
+            }),
+        );
+    }
+
+    await expect(
+        withTimeout(
+            errorEvent,
+            2000,
+            "expected an error event after queueing 130s of audio while the upstream never connects",
+        ),
+    ).resolves.toMatchObject({
+        type: "error",
+        error: { type: "invalid_request_error", code: "invalid_value" },
+    });
+    await expect(
+        withTimeout(
+            clientClose,
+            2000,
+            "expected the downstream socket to close after the queued-audio overflow",
+        ),
+    ).resolves.toMatchObject({ code: 1009 });
+    // Held connect never resolves; no execution-context wait to observe.
+});
+
+test("closes the session when the pre-connect queue exceeds the item budget", async () => {
+    const session = await openScribeSessionWithHeldConnect(
+        "scribe-realtime-queue-commit-overflow-key",
+    );
+    await session.initialClientMessage;
+    const errorEvent = nextEventOfType(session.client, "error");
+    const clientClose = nextClose(session.client);
+    for (let i = 0; i < 513; i++) {
+        session.client.send(
+            JSON.stringify({ type: "input_audio_buffer.commit" }),
+        );
+    }
+
+    await expect(
+        withTimeout(
+            errorEvent,
+            2000,
+            "expected an error event after queueing 513 items while the upstream never connects",
+        ),
+    ).resolves.toMatchObject({
+        type: "error",
+        error: { type: "invalid_request_error", code: "invalid_value" },
+    });
+    await expect(
+        withTimeout(
+            clientClose,
+            2000,
+            "expected the downstream socket to close after the queue item overflow",
+        ),
+    ).resolves.toMatchObject({ code: 1009 });
+    // Held connect never resolves; no execution-context wait to observe.
+});
+
+test("forwards audio queued before the upstream connects", async () => {
+    const session = await openScribeSessionWithHeldConnect(
+        "scribe-realtime-queue-happy-path-key",
+    );
+    await session.initialClientMessage;
+    session.client.send(
+        JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: zeroAudioBase64(48_000),
+        }),
+    );
+    session.client.send(
+        JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: zeroAudioBase64(48_000),
+        }),
+    );
+
+    const server = await session.completeConnect();
+    server.accept();
+    const messages = await withTimeout(
+        nextJsonMessages(server, 2),
+        2000,
+        "expected the queued chunks to reach the upstream after it connects",
+    );
+    expect(messages[0]).toMatchObject({
+        message_type: "input_audio_chunk",
+        audio_base_64: zeroAudioBase64(48_000),
+    });
+    expect(messages[1]).toMatchObject({
+        message_type: "input_audio_chunk",
+        audio_base_64: zeroAudioBase64(48_000),
+    });
+
+    session.client.close();
+    await waitOnExecutionContext(session.ctx);
+    await waitForTinybirdRequests({ tinybirdRequests: session.tinybirdRequests } as ReturnType<typeof mockRealtimeProvider>);
+    const telemetry = JSON.parse(
+        await session.tinybirdRequests[0].text(),
+    ) as Record<string, unknown>;
+    expect(telemetry.tokenCountPromptAudioSeconds).toBe(2);
+});

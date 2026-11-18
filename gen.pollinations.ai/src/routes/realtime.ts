@@ -216,6 +216,14 @@ const SCRIBE_BYTES_PER_SECOND: Record<ScribeAudioFormat, number> = {
     ulaw_8000: 8000,
 };
 
+// Bound the audio retained while the upstream connect is pending. Every
+// queued chunk keeps a JSON-stringified copy of the client's base64 payload
+// (up to ~1 MiB per WebSocket message) alive in the isolate until the
+// upstream socket attaches, so an unbounded queue turns a slow or stalled
+// connect into an isolate-memory sink on shared Workers.
+const SCRIBE_QUEUE_MAX_ITEMS = 512;
+const SCRIBE_QUEUE_MAX_AUDIO_SECONDS = 120;
+
 function buildScribeRealtimeUrl(
     config: ScribeRealtimeConfig,
     model: string,
@@ -1243,6 +1251,7 @@ function proxyScribeOpenAIRealtime(
     let emittedTranscript = "";
     const pendingItemIds: string[] = [];
     const queue: QueuedScribeInput[] = [];
+    let queuedAudioSeconds = 0;
     const log = c.get("log").getChild("realtime");
 
     const sendQueuedInput = (input: QueuedScribeInput) => {
@@ -1371,6 +1380,7 @@ function proxyScribeOpenAIRealtime(
             return;
         }
         for (const input of queue.splice(0)) sendQueuedInput(input);
+        queuedAudioSeconds = 0;
     };
 
     const ensureUpstream = () => {
@@ -1421,8 +1431,34 @@ function proxyScribeOpenAIRealtime(
             payload: JSON.stringify(providerEvent),
             audioSeconds: inspected.audioSeconds,
         };
-        if (upstream && isOpen(upstream)) sendQueuedInput(input);
-        else queue.push(input);
+        if (upstream && isOpen(upstream)) {
+            sendQueuedInput(input);
+        } else if (
+            queue.length >= SCRIBE_QUEUE_MAX_ITEMS ||
+            queuedAudioSeconds + input.audioSeconds >
+                SCRIBE_QUEUE_MAX_AUDIO_SECONDS
+        ) {
+            log.warn(
+                "Scribe realtime queue budget exceeded: items={items} seconds={seconds}",
+                {
+                    items: queue.length + 1,
+                    seconds: queuedAudioSeconds + input.audioSeconds,
+                },
+            );
+            sendRealtimeError(
+                downstream,
+                "Too much audio is waiting for the transcription provider to connect. Start a new session.",
+                "audio",
+            );
+            closeSocket(downstream, 1009, "Queued audio limit exceeded");
+            if (upstream) {
+                closeSocket(upstream, 1009, "Queued audio limit exceeded");
+            }
+            scheduleRealtimeSettlement(c, tracking);
+        } else {
+            queue.push(input);
+            queuedAudioSeconds += input.audioSeconds;
+        }
         ensureUpstream();
     };
 
