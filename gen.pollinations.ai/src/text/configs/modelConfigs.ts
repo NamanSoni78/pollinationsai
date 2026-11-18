@@ -171,6 +171,15 @@ export const portkeyConfig: PortkeyConfigMap = {
                 providerOptions: { gateway: { only: ["liquid"] } },
             },
         }),
+    "liquid/d1.2": () =>
+        createVercelAIGatewayModelConfig({
+            directEndpoint:
+                "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
+            model: "liquid/d1.2",
+            defaultOptions: {
+                providerOptions: { gateway: { only: ["liquid"] } },
+            },
+        }),
     "liquid/d1:openrouter": () => ({
         provider: "openrouter",
         directEndpoint: "https://openrouter.ai/api/alpha/decisions",
@@ -473,20 +482,24 @@ export const portkeyConfig: PortkeyConfigMap = {
         ),
 
     // -- Azure (Myceli Prod — eastus, xAI Grok) -------------------------------
+    // The Grok deployments cannot fetch remote image URLs, so Gen inlines them.
     "grok-4-20-non-reasoning": () =>
         createAzureResponsesModelConfig(
             textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
             "https://myceli-prod-eastus.cognitiveservices.azure.com/openai/deployments/grok-4-20-non-reasoning/chat/completions?api-version=2024-12-01-preview",
+            { requiresBase64ImageUrls: true },
         ),
     "grok-4-20-reasoning": () =>
         createAzureResponsesModelConfig(
             textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
             "https://myceli-prod-eastus.cognitiveservices.azure.com/openai/deployments/grok-4-20-reasoning/chat/completions?api-version=2024-12-01-preview",
+            { requiresBase64ImageUrls: true },
         ),
     "grok-4.3": () =>
         createAzureResponsesModelConfig(
             textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
             "https://myceli-prod-eastus.cognitiveservices.azure.com/openai/deployments/grok-4.3/chat/completions?api-version=2024-12-01-preview",
+            { requiresBase64ImageUrls: true },
         ),
     "grok-4.6": () => ({
         provider: "openai",
@@ -495,6 +508,7 @@ export const portkeyConfig: PortkeyConfigMap = {
         directAuthHeader: "api-key",
         authKey: textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
         model: "grok-4.6",
+        requiresBase64ImageUrls: true,
         responsesEndpoint:
             "https://myceli-prod-eastus.openai.azure.com/openai/v1/responses",
         responsesAuthHeader: "api-key",
@@ -673,6 +687,15 @@ export const portkeyConfig: PortkeyConfigMap = {
                 },
             },
         }),
+    "qwen4-max-alibaba": () =>
+        createAlibabaModelConfig({
+            model: "qwen4-max",
+            defaultOptions: { max_tokens: 64000 },
+        }),
+    "qwen4-max-vercel": () =>
+        createVercelAIGatewayModelConfig({
+            model: "alibaba/qwen4-max",
+        }),
     "qwen3.8-max-alibaba": () =>
         createAlibabaModelConfig({
             model: "qwen3.8-max",
@@ -750,6 +773,14 @@ export const portkeyConfig: PortkeyConfigMap = {
     // under a normal budget. Matches this route's own max_completion_tokens
     // cap. Callers who pass an explicit max_tokens still hit the same gap —
     // resolveModelConfig drops this default the moment one is supplied.
+    "tencent/hy4-flash": () =>
+        createVercelAIGatewayModelConfig({
+            model: "tencent/hy4-flash",
+        }),
+    "tencent/hy4-flash:openrouter": () =>
+        createOpenRouterModelConfig({
+            model: "tencent/hy4-flash",
+        }),
     "tencent/hy4-preview": () =>
         createOpenRouterModelConfig({
             model: "tencent/hy4-preview",
@@ -839,12 +870,17 @@ export const portkeyConfig: PortkeyConfigMap = {
             // Reasons only when asked; keep the model's reasoning default.
             defaultOptions: { reasoning_effort: "high" },
         }),
-    "deepseek-ai/DeepSeek-V4.1-Flash-1017": () =>
-        createDeepInfraModelConfig({
-            model: "deepseek-ai/DeepSeek-V4.1-Flash-1017",
-            // Reasons only when asked; keep the model's reasoning default.
-            defaultOptions: { reasoning_effort: "high" },
-        }),
+    // Maintainer-created Foundry deployment on the Sweden resource, which
+    // rejects remote image URLs like the V4.1 Flash deployment.
+    "DeepSeek-V4.1-Flash-1017": () =>
+        createAzureModelConfig(
+            textEnvironmentValue("AZURE_MYCELI_PROD_SWEDEN_API_KEY"),
+            "https://myceli-prod-swedencentral.cognitiveservices.azure.com/openai/deployments/DeepSeek-V4.1-Flash-1017/chat/completions?api-version=2024-12-01-preview",
+            {
+                defaultOptions: { reasoning_effort: "high" },
+                requiresBase64ImageUrls: true,
+            },
+        ),
     "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp": () =>
         createDeepInfraModelConfig({
             model: "deepseek-ai/DeepSeek-V4-Flash-Vision-Exp",
@@ -888,8 +924,14 @@ export const portkeyConfig: PortkeyConfigMap = {
         createDeepInfraModelConfig({ model: "google/gemma-4-26B-A4B-it" }),
     "google/gemma-4-31B-it": () =>
         createDeepInfraModelConfig({ model: "google/gemma-4-31B-it" }),
-    "mistral-large-direct": () =>
-        createMistralModelConfig({ model: "mistral-large-2512" }),
+    "mistral-large-3-bedrock": () =>
+        createBedrockNativeConfig({
+            model: "mistral.mistral-large-3-675b-instruct",
+            "aws-region": "us-east-1",
+            directEndpoint:
+                "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions",
+            serviceTier: "default",
+        }),
     "claude-opus-4.7-openrouter-vertex": createPinnedOpenRouterConfig(
         "anthropic/claude-opus-4.7",
         "google-vertex/global",
@@ -1164,7 +1206,8 @@ export const portkeyConfig: PortkeyConfigMap = {
             textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
             "https://myceli-prod-eastus.cognitiveservices.azure.com/openai/deployments/Mistral-Large-3/chat/completions?api-version=2024-12-01-preview",
             // Mistral's server rejects unknown message fields on Azure too.
-            { supportsReasoningHistory: false },
+            // It also cannot fetch remote image URLs, so Gen inlines them.
+            { supportsReasoningHistory: false, requiresBase64ImageUrls: true },
         ),
 
     // -- Claude via Anthropic and AWS Bedrock ---------------------------------
@@ -1409,6 +1452,8 @@ export const portkeyConfig: PortkeyConfigMap = {
         createAzureModelConfig(
             textEnvironmentValue("AZURE_MYCELI_PROD_API_KEY"),
             "https://myceli-prod-eastus.cognitiveservices.azure.com/openai/deployments/Kimi-K3.1-Pro/chat/completions?api-version=2024-12-01-preview",
+            // Azure Kimi rejects remote image URLs.
+            { requiresBase64ImageUrls: true },
         ),
     "moonshotai/kimi-k3.1-pro:vercel": () =>
         createVercelAIGatewayModelConfig({
