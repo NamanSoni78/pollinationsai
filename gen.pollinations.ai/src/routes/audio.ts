@@ -43,6 +43,7 @@ import { prepareGenerationRequest } from "@/middleware/generation-cache.ts";
 import { deduplicateGeneration } from "@/middleware/generation-deduplication.ts";
 import { audioCache } from "@/middleware/media-cache.ts";
 import { resolveModel } from "@/middleware/model.ts";
+import { multipartBodyLimit } from "./generation-handlers.ts";
 import { edgeRateLimit } from "@/middleware/rate-limit-edge.ts";
 import { applySafetyToInput, withSafetyHeaders } from "@/middleware/safety.ts";
 import { textCache } from "@/middleware/text-cache.ts";
@@ -4483,6 +4484,7 @@ export async function handleTranscription(c: AudioContext): Promise<Response> {
 
 export const audioRoutes = new Hono<Env>()
     .use("*", edgeRateLimit)
+    .use("*", multipartBodyLimit)
     .use("*", auth(), balance)
     .post(
         "/voice-changer",

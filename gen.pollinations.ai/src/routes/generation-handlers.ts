@@ -6,6 +6,7 @@ import {
 } from "@shared/schemas/openai.ts";
 import { SafeSchema, type SafeValue } from "@shared/schemas/safety.ts";
 import type { Context } from "hono";
+import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -36,6 +37,44 @@ export const textBodyLimit = bodyLimit({
             message: "Request body exceeds the 32 MiB limit",
         });
     },
+});
+
+/**
+ * Multipart uploads are fully buffered by `c.req.formData()` (resolveModel)
+ * before any handler-level size validation runs, so the raw body needs a
+ * pre-parse ceiling: without it a ~50 MB multipart body is parsed, copied,
+ * and base64-re-encoded (4x-class amplification) before the first cap fires —
+ * the same parse-before-check class the media service fixed for JSON uploads.
+ *
+ * The gate is declared-size only (content-length): it must never wrap or
+ * replace the request body, because a re-wrapped stream makes workerd's
+ * `formData()` fail outright (chunked multipart uploads from streaming
+ * clients would break). Chunked bodies therefore rely on the platform's
+ * request-body ceiling plus the post-parse handler caps (file count, per-file
+ * 20 MiB, aggregate budget) that bound every downstream copy. Audio file
+ * inputs are documented up to 50 MB and image-edit sources are capped at
+ * 20 MiB each, so 52 MiB covers every legitimate request.
+ */
+export const MULTIPART_BODY_LIMIT_BYTES = 52 * 1024 * 1024;
+
+export const multipartBodyLimit = createMiddleware(async (c, next) => {
+    const contentType = c.req.header("content-type") || "";
+    if (!contentType.includes("multipart/form-data")) {
+        return next();
+    }
+    const contentLengthHeader = c.req.raw.headers.get("content-length");
+    if (contentLengthHeader) {
+        const contentLength = Number.parseInt(contentLengthHeader, 10);
+        if (
+            !Number.isNaN(contentLength) &&
+            contentLength > MULTIPART_BODY_LIMIT_BYTES
+        ) {
+            throw new HTTPException(413, {
+                message: "Multipart request body exceeds the 52 MiB limit",
+            });
+        }
+    }
+    return next();
 });
 
 export const simpleAudioQuerySchema = z.object({
