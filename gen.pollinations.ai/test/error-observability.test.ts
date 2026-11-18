@@ -6,6 +6,7 @@ import {
 import {
     firstCommunityImageBytes,
     firstCommunityVideoBytes,
+    MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
 } from "@shared/community-media.ts";
 import {
     createErrorResponseSchema,
@@ -213,6 +214,73 @@ describe("error observability", () => {
                 responseBody: undefined,
             });
             expect(isRetryableFallbackError(error)).toBe(true);
+        },
+    );
+
+    it.each([
+        ["image", firstCommunityImageBytes],
+        ["video", firstCommunityVideoBytes],
+    ] as const)(
+        "caps the community %s asset-URL error body instead of buffering it whole",
+        async (_kind, readMedia) => {
+            const chunk = new Uint8Array(64 * 1024);
+            let produced = 0;
+            vi.spyOn(globalThis, "fetch").mockResolvedValue(
+                new Response(
+                    new ReadableStream({
+                        // Produces on demand: 640 x 64 KiB = 40 MiB total,
+                        // well past the ~27.9 MiB response cap, so a capped
+                        // reader must stop early — an uncapped one drains all.
+                        pull(controller) {
+                            if (produced >= 640 * chunk.byteLength) {
+                                controller.close();
+                                return;
+                            }
+                            produced += chunk.byteLength;
+                            controller.enqueue(chunk);
+                        },
+                    }),
+                    { status: 404 },
+                ),
+            );
+            const error = await readMedia(
+                { data: [{ url: "https://assets.test/output" }] },
+                "https://provider.test",
+            ).catch((error) => error);
+            expect(error).toBeInstanceOf(UpstreamError);
+            expect(error).toMatchObject({
+                status: 502,
+                upstreamStatus: 404,
+                // An oversized publisher error body is dropped, not buffered.
+                responseBody: undefined,
+            });
+            // RED on unpatched main: response.text() drains the full 40 MiB.
+            expect(produced).toBeLessThanOrEqual(
+                MAX_COMMUNITY_MEDIA_RESPONSE_BYTES + 2 * chunk.byteLength,
+            );
+        },
+    );
+
+    it.each([
+        ["image", firstCommunityImageBytes],
+        ["video", firstCommunityVideoBytes],
+    ] as const)(
+        "still captures a small community %s asset-URL error body",
+        async (kind, readMedia) => {
+            vi.spyOn(globalThis, "fetch").mockResolvedValue(
+                new Response("no such clip", { status: 404 }),
+            );
+            const error = await readMedia(
+                { data: [{ url: "https://assets.test/output" }] },
+                "https://provider.test",
+            ).catch((error) => error);
+            expect(error).toBeInstanceOf(UpstreamError);
+            expect(error).toMatchObject({
+                status: 502,
+                upstreamStatus: 404,
+                message: `Endpoint ${kind} URL responded 404`,
+                responseBody: "no such clip",
+            });
         },
     );
 
