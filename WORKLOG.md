@@ -402,3 +402,40 @@ Baseline: upstream `a38014db9d` (this session's branches sit 1–2 commits behin
 - `issues_mds`: appended additively on session 10's head (`f7a08db2`); issues 46–48; branch names `solution39-vision-input-token-billing`, `solution40-fallback-cost-sheet-completeness`, `solution41-community-text-error-redaction` checked unique on `ls-remote` before push; no existing branch touched or force-pushed.
 - Upstream PR creation re-verified this round (attempted first, per the job spec): `403 Resource not accessible by personal access token` on all three; fork PRs #54–#56 are the live review surface until an upstream-scoped token is supplied.
 - Live verification spend this round: ~0.0055 pollen (three probes: `kimi-k3` text+image, `gpt-5.6-luna` image — Azure dropped the remote-URL image on that route, `mistral-large-3` image); balance 1.96206631 at session end.
+
+## Round 15 — session 13 (cron job 535998): new-commit diff-audit, independent convergence with rounds 14, companion delivery + cross-validation (2026-11-18)
+
+Baseline: upstream `a38014db9d` at session start (fork/main 0/0; concurrent sessions later advanced it to `52fd0a6c8` — two regen/metrics-only commits, `git diff` verified no overlap with any fix site). Method: state rehydrated from `issues_mds`/`fork` after a full sandbox recycle (previous disk state lost; all context rebuilt from the fork's 57 branches and the worklog), then five parallel read-only subagent audits over the `b4d7ebcb..a38014db` range — (A) the cdde268c15 remote-image inlining surface, (B) new/moved text-model pricing, (C) media/audio registry changes, (D) MCP error passthrough + CLI + apps/frontend, (E) enter quests/leaderboard/wording — then main-agent verification of the two gate-passing candidates (red tests on the real registry modules + live probes with the bounty key), **before** the concurrent sessions' round-14 pushes (issues 45-48, PRs #50-#56) were discovered at push time.
+
+### Convergence with the concurrent round-14 sessions
+
+Both of this session's independently-verified findings were concurrently registered by sessions 10/11/12 while this session's fixes were being built (identical root causes, identical rate conventions where overlapping):
+
+- vision-input zero-billing (this session: 4 Vercel models + 1 fallback line) → issues 45/46 (sessions 10/11/12; 17-model fleet, PRs #50/#51/#54)
+- fallback price-sheet integrity (this session: `mistral-large-3:aws` multiplier + `qwen4-max:vercel` image line) → issues 45/47 (PRs #50/#55)
+
+Per the no-duplicate rule, this session's standalone `solution39/40` branches stay **local** (never pushed); they were instead used as independent cross-validation: the full `gen.pollinations.ai` suite ran **3661/3661 green** on the standalone implementation, validating the class and every overlapping rate value.
+
+| # | Finding | Severity | Verification | Fix branch | PR |
+|---|---|---|---|---|---|
+| 49 | Companion coverage: the three Vercel-gateway vision models issue 46's follow-up list deferred (`kimi-k3.1-pro-highspeed` $4/M, `muse-spark-1.2/1.3` $1.25/M — same gateway precedent that justified hy4-flash) + the seventh fallback image line issue 47's six-route sweep missed (`hy4-flash:openrouter` at list × 1.055) | Medium | red→green on the real registry (fleet `it.each` + served-cost case; 150/150 with #54's suite); live split-control probe `kimi-k3.1-pro` (463 = 102 text + 361 image via `x-usage-prompt-image-tokens`, billed at 2.3/M); independent full-suite 3661/3661 on the standalone implementation | `solution42-vercel-vision-fleet-companion` (stacked on #54's branch) | fork [#57](https://github.com/NamanSoni78/pollinationsai/pull/57) |
+
+### Cross-validation corrections posted to the concurrent PRs (review-surface value-add)
+
+- **PR #54**: (1) independent rate agreement + 3661/3661 suite validation of the class; (2) live split-machinery proof (`kimi-k3.1-pro`); (3) **correction**: `mistral-large-3` *primary* folds image tokens into `prompt_tokens` on Azure (two probes, 512px and 64px, no `prompt_tokens_details.image_tokens` either size) — the issue-46 live-verification paragraph's "Image contribution: $0.00000000" misreads the fold; the primary's new rate is defensive-only (the `:aws` route legitimately splits and is correctly fixed); (4) merge-order note: #54's `gpt-6-astra` line re-fixes unmerged PR #39 (issue 34) — a third overlap pair beyond the two in round 14's concurrency log; (5) pointer to companion #57.
+- **PR #55**: the seventh image-line route (`hy4-flash:openrouter`), fixed in #57; multiplier agreement on the overlapping route (`mistral-large-3:aws` → 1, same as the issue-37 class on #42).
+
+### Audited clean this round (no gate-passing finding beyond issue 49)
+
+- **cdde268c15 remote-image inlining** — strictest fetch funnel in the repo (`validateUserMediaUrl`, `redirect:"manual"` + explicit 3xx refusal, 20 MiB shared byte budget, per-model count caps, `image/*` enforced, scheme allowlist; publishers cannot enable the transform); the no-deadline aspect is issue 20's pending fix site; `mediaToBedrock` video-part fetch-count uncapped = below gate (byte-budgeted, subrequest-capped).
+- **Media registry (fdecb4b9fd Seedance 2.0 w/h, 6afe32f910 MAI 2.7, 438e0e447e ZONOS3-Mini, 24187a4ae flux-2-flex paidOnly:false)** — billing-neutral or actual-usage-metered; per-second/dimension/estimate gaps map to the excluded issues 32/35/39 class; ZONOS double-gated + endpoint-restricted + VPC-loopback. Matches sessions 10/11's conclusions.
+- **MCP error passthrough (d2294d1978)** — surfaces a strict subset of the HTTP API's error body (only `error.message`; `details.upstreamHost/upstreamBody` never read) — subsumed by issue 8/48's root disclosure work; CLI catalog estimate clean (unauthenticated fetch, key only in headers, no exec); games/apps/frontend changes are catalog/markup only.
+- **enter quests/leaderboard/wording** — claim path atomic and idempotent (per-instance idempotency keys + `changes()=1` balance guard); leaderboard public-by-design (GitHub logins + earned totals only); pollen→dollars sweep touched zero server arithmetic; `shared/schemas/openai.ts` + `pollen-packs.ts` + `api-key-creation.ts` changes are description strings. Matches session 11's conclusions.
+- **mistral-large-3 / gpt-6-luna vision billing** — live fold-verified (image tokens billed inside `prompt_tokens` as text on both; no zero-billing) — recorded as fold-controls in issue 49 and the PR #54 comment rather than filed.
+
+### Sync
+
+- `fork/main`: already at `52fd0a6c8` (concurrent session synced; 0/0 vs upstream verified; the two new upstream commits are regen/metrics-only, no action).
+- `issues_mds`: this round appended additively on session 11's head (`862089d`); issue 49; branch `solution42-vercel-vision-fleet-companion` checked unique on `ls-remote` before push (solution42 prefix unused by the concurrent sessions' 39/40/41/45); no existing branch touched or force-pushed; this session's local-only `solution39/40` duplicates never pushed.
+- Upstream PR creation not re-attempted this round (re-verified 403 by sessions 10/11 hours earlier); fork PR #57 is the live review surface.
+- Live-probe spend this round: ~0.001 pollen (mistral-large-3 ×2 incl. small-image fold control, kimi-k3.1-pro split control, gpt-6-luna fold control).
