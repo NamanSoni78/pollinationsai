@@ -689,6 +689,11 @@ const AUDIO_BASE_SERVICES = {
             // seconds at its live endpoint price.
             completionAudioSeconds: 0.009,
         },
+        // The billable scalar is the reference video's own seconds (fal
+        // reports them as billable units). Declare the audio-family
+        // convention cap so the bound is published in /audio/models and
+        // available to estimators; the route enforces it (413 + billedUsage).
+        maxDuration: 380,
         title: "Sonilo 1.1 SFX",
         description:
             "Sound effects timed to a video, as a separate audio track",
