@@ -11,6 +11,7 @@ import {
     type CreateResponseRequest,
     CreateResponseResponseSchema,
     type ResponseUsage,
+    ResponseUsageSchema,
 } from "@shared/schemas/openai.ts";
 import type { Context } from "hono";
 import type { Env } from "@/env.ts";
@@ -258,10 +259,25 @@ async function handleDirectResponse(
                 }
                 const parsed = CreateResponseResponseSchema.safeParse(data);
                 if (!parsed.success) {
+                    // The provider answered (and metered) the request. Recover
+                    // any usage it reported so the failure settles what the
+                    // provider charged — and keep the raw body for
+                    // diagnostics, like the chat path does.
+                    const usageCheck = ResponseUsageSchema.safeParse(
+                        (data as { usage?: unknown } | null)?.usage,
+                    );
                     throw new UpstreamError(502, {
                         message:
                             "Responses provider returned an invalid response or omitted usage",
                         requestUrl: result.requestUrl,
+                        responseBody: JSON.stringify(data),
+                        ...(usageCheck.success
+                            ? {
+                                  billedUsage: responsesUsageToUsage(
+                                      usageCheck.data,
+                                  ),
+                              }
+                            : {}),
                     });
                 }
                 if (

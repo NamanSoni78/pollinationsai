@@ -157,9 +157,14 @@ export async function handleStemSeparation(c: Context<Env>): Promise<Response> {
                     ?.startsWith("application/zip")
             ) {
                 await response.body?.cancel();
+                // ElevenLabs answered 200 after decoding the upload, so the
+                // generation ran: settle the decoded input duration — the
+                // same floor the success path treats as the minimum billable
+                // seconds (output length is unknowable on this leg).
                 throw new UpstreamError(502, {
                     message:
                         "Stem separation returned an invalid archive response.",
+                    billedUsage: createAudioSecondsUsage(inputSeconds),
                 });
             }
             // No usage headers are returned; bill the decoded input duration, which
