@@ -75,6 +75,7 @@ import {
     downloadUserImage,
     readImageDimensions,
 } from "./utils/imageDownload.ts";
+import { MAX_IMAGE_SIZE } from "../userImage.ts";
 import {
     resizeForGptImage,
     convertToJpeg as transformToJpeg,
@@ -726,6 +727,12 @@ const callGPTImageWithEndpoint = async (
             }
 
             // Process each image in the array
+            //
+            // One shared byte budget across every source image (the same
+            // mechanism the text path and the pending multipart fix use):
+            // the per-model count cap alone still allows count x 20 MiB of
+            // simultaneously retained Blobs on a 128 MiB isolate.
+            let remainingBytes = MAX_IMAGE_SIZE;
             for (let i = 0; i < imageUrls.length; i++) {
                 const imageUrl = imageUrls[i];
                 try {
@@ -734,7 +741,8 @@ const callGPTImageWithEndpoint = async (
                     );
 
                     const { buffer: originalBuffer, mimeType } =
-                        await downloadUserImage(imageUrl);
+                        await downloadUserImage(imageUrl, undefined, remainingBytes);
+                    remainingBytes -= originalBuffer.length;
 
                     // Resize large input images to reduce token costs
                     // GPT Image 1.5 calculates input tokens as: (width × height) / 750

@@ -751,3 +751,88 @@ describe("GPT Image 2.5", () => {
         });
     }
 });
+
+describe("GPT Image edit input byte budget", () => {
+    /** A source whose bytes start with the PNG magic; resize falls back to it. */
+    function largeSource(bytes: number): Uint8Array {
+        const body = new Uint8Array(bytes);
+        body.set([137, 80, 78, 71, 13, 10, 26, 10], 0);
+        return body;
+    }
+
+    it("rejects edit sources whose sum exceeds one shared budget", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(async (input) => {
+                const url = String(input);
+                if (url.startsWith("https://input.example.com/")) {
+                    return new Response(
+                        largeSource(12 * 1024 * 1024) as unknown as BodyInit,
+                    );
+                }
+                return successResponse();
+            });
+
+        // Three 12 MB sources: each fits the 20 MB per-image cap, but their
+        // sum does not fit one shared budget, so the request must fail before
+        // the provider is called instead of retaining ~36 MB of Blobs.
+        await expect(
+            callGPTImage(
+                "make it blue",
+                {
+                    ...params,
+                    image: [
+                        "https://input.example.com/1.png",
+                        "https://input.example.com/2.png",
+                        "https://input.example.com/3.png",
+                    ],
+                },
+                userInfo,
+                "openai/gpt-image-2",
+            ),
+        ).rejects.toMatchObject({
+            status: 400,
+            errorCode: "image_too_large",
+        });
+        const inputFetches = fetchMock.mock.calls.filter(([input]) =>
+            String(input).startsWith("https://input.example.com/"),
+        );
+        expect(inputFetches).toHaveLength(2);
+        // The provider edit endpoint is never reached: the request fails on
+        // the download budget before the FormData is sent. (The per-image
+        // content-safety probe may still fire for the accepted sources.)
+        expect(
+            fetchMock.mock.calls.some(
+                ([input]) => String(input).includes("/images/"),
+            ),
+        ).toBe(false);
+    });
+
+    it("accepts edit sources that fit the shared budget together", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.startsWith("https://input.example.com/")) {
+                return new Response(
+                        largeSource(6 * 1024 * 1024) as unknown as BodyInit,
+                    );
+            }
+            return successResponse();
+        });
+
+        const result = await callGPTImage(
+            "make it blue",
+            {
+                ...params,
+                image: [
+                    "https://input.example.com/1.png",
+                    "https://input.example.com/2.png",
+                    "https://input.example.com/3.png",
+                ],
+            },
+            userInfo,
+            "openai/gpt-image-2",
+        );
+
+        expect(result.buffer.length).toBeGreaterThan(0);
+    });
+});

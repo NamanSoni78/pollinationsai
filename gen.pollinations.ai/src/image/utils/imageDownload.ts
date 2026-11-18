@@ -111,12 +111,19 @@ export function readImageDimensions(
  * Redirects are followed here, unlike the text path: an image URL pasted into
  * the `image` parameter is routinely a shortener or a CDN that redirects, and
  * refusing those would reject URLs that work today.
+ *
+ * `maxBytes` is the budget still available for this request (callers that
+ * download several images share one cap); it defaults to the per-image cap.
  */
 export async function downloadUserImage(
     imageUrl: string,
     signal?: AbortSignal,
+    maxBytes?: number,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-    const { bytes, mimeType } = await fetchUserImage(imageUrl, { signal });
+    const { bytes, mimeType } = await fetchUserImage(imageUrl, {
+        signal,
+        ...(maxBytes !== undefined && { maxBytes }),
+    });
     return { buffer: Buffer.from(bytes), mimeType };
 }
 
