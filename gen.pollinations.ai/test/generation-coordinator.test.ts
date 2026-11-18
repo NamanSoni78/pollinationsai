@@ -7,8 +7,11 @@ import {
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { getUserBalance } from "@shared/billing/balance.ts";
+import { atomicReserveApiKeyBalance } from "@shared/billing/deduction.ts";
+import { apikey as apiKeyTable } from "@shared/db/better-auth.ts";
 import { createTestApiKey } from "@shared/test/fixtures/index.ts";
 import { createMockTinybird } from "@shared/test/mocks/tinybird.ts";
+import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
@@ -45,6 +48,16 @@ async function waitForAlarm(state: DurableObjectState): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 0));
     }
     throw new Error("Generation alarm was not scheduled");
+}
+
+const db = drizzle(env.DB);
+
+async function getApiKeyBalance(apiKeyId: string) {
+    const [row] = await db
+        .select({ pollenBalance: apiKeyTable.pollenBalance })
+        .from(apiKeyTable)
+        .where(eq(apiKeyTable.id, apiKeyId));
+    return row.pollenBalance;
 }
 
 /** Runs one job through a fresh coordinator's alarm and leaves no state. */
@@ -952,6 +965,76 @@ describe("GenerationCoordinator", () => {
             "Detached generation was interrupted",
         );
         expect(await env.TEXT_BUCKET.head(key)).toBeNull();
+    });
+
+    it("releases the key budget an interrupted alarm reserved but never settled", async () => {
+        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+        const { id: apiKeyId } = await createTestApiKey({ pollenBudget: 5 });
+        const stub = env.GENERATION_COORDINATOR.getByName(
+            `test-${crypto.randomUUID()}`,
+        );
+        const key = `interrupted-budget-${crypto.randomUUID()}`;
+
+        // The state an isolate death mid-generation leaves behind: the
+        // reserve has committed (a real D1 deduction), the ledger record is
+        // written, and the job is marked started without a result.
+        const { ok } = await atomicReserveApiKeyBalance(db, apiKeyId, 1.25);
+        expect(ok).toBe(true);
+
+        const result = await runInDurableObject(
+            stub,
+            async (coordinator, state) => {
+                const pending = coordinator.startAndWait(testJob(key));
+                await waitForAlarm(state);
+                const job =
+                    await state.storage.get<Record<string, unknown>>("job");
+                await state.storage.put("job", { ...job, started: true });
+                await state.storage.put("reservation", {
+                    apiKeyId,
+                    amount: 1.25,
+                });
+                await coordinator.alarm();
+                await state.storage.deleteAlarm();
+                return pending;
+            },
+        );
+
+        expect(result.status).toBe("failed");
+        if (result.status !== "failed") return;
+        expect(new TextDecoder().decode(result.error.body)).toBe(
+            "Detached generation was interrupted",
+        );
+        // The stranded reservation is released back to the key budget
+        // (unpatched: it stays deducted forever).
+        expect(await getApiKeyBalance(apiKeyId)).toBe(5);
+    });
+
+    it("does not release anything when the interrupted alarm never reserved", async () => {
+        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+        const { id: apiKeyId } = await createTestApiKey({ pollenBudget: 5 });
+        const stub = env.GENERATION_COORDINATOR.getByName(
+            `test-${crypto.randomUUID()}`,
+        );
+        const key = `interrupted-no-budget-${crypto.randomUUID()}`;
+
+        const result = await runInDurableObject(
+            stub,
+            async (coordinator, state) => {
+                const pending = coordinator.startAndWait(testJob(key));
+                await waitForAlarm(state);
+                const job =
+                    await state.storage.get<Record<string, unknown>>("job");
+                await state.storage.put("job", { ...job, started: true });
+                await coordinator.alarm();
+                await state.storage.deleteAlarm();
+                return pending;
+            },
+        );
+
+        expect(result.status).toBe("failed");
+        // No ledger record means no provable outstanding reservation: the
+        // fail-closed branch must not credit anything.
+        expect(await getApiKeyBalance(apiKeyId)).toBe(5);
     });
 
     it.each(["text", "media"] as const)(

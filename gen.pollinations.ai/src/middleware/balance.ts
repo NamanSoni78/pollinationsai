@@ -16,12 +16,25 @@ export type ApiKeyBudgetReservation = {
     amount: number;
 };
 
+/**
+ * Tracks the key-budget reservation of a detached (coordinator-owned)
+ * generation so an interrupted execution cannot strand it: `record` runs
+ * right after the D1 reserve commits, and every consumer (executor error
+ * release, settlement reconcile) clears it. The coordinator's fail-closed
+ * alarm branch releases whatever record is still outstanding.
+ */
+export type GenerationReservationLedger = {
+    record: (apiKeyId: string, amount: number) => Promise<void>;
+    clear: () => Promise<void>;
+};
+
 export type BalanceVariables = {
     balance: {
         getBalance: (userId: string) => Promise<UserBalance>;
         balanceCheckResult?: BalanceCheckResult;
         apiKeyBudgetEstimate?: number;
         apiKeyReservation?: ApiKeyBudgetReservation;
+        reservationLedger?: GenerationReservationLedger;
     };
 };
 

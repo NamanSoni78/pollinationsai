@@ -109,6 +109,13 @@ export async function reserveApiKeyBudget(
         apiKeyId,
         amount: reserved + reservation.reserved,
     };
+    // The detached-execution ledger: recording right after the reserve
+    // commits lets the coordinator release the amount if the isolate dies
+    // before settlement consumes it.
+    await vars.balance.reservationLedger?.record(
+        apiKeyId,
+        vars.balance.apiKeyReservation.amount,
+    );
 }
 
 /** Catalog routes keep the existing quote; a caller choice must afford its own. */
@@ -144,6 +151,7 @@ export async function releaseApiKeyBudgetReservation(
             `API key budget release affected 0 rows for ${reservation.apiKeyId}`,
         );
     }
+    await vars.balance.reservationLedger?.clear();
     vars.balance.apiKeyReservation = undefined;
 }
 

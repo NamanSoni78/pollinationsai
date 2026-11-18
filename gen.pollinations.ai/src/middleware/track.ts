@@ -454,6 +454,9 @@ export const track = (eventType: EventType) =>
                         ),
                     });
                     c.var.balance.apiKeyReservation = undefined;
+                    // The ledger record is only meaningful while the
+                    // reservation is outstanding: settlement consumed it.
+                    await c.var.balance.reservationLedger?.clear();
                     markup = deduction.markup;
                     communityModelReward = deduction.communityModelReward;
                     payerBucket = deduction.payerBucket;

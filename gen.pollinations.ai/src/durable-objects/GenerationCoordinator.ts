@@ -1,3 +1,5 @@
+import { atomicAdjustApiKeyBalance } from "@shared/billing/deduction.ts";
+import { drizzle } from "drizzle-orm/d1";
 import { DurableObject } from "cloudflare:workers";
 import type {
     AsyncJobRecord,
@@ -14,6 +16,7 @@ import {
 } from "@/utils/execute-generation.ts";
 
 const JOB_KEY = "job";
+const RESERVATION_KEY = "reservation";
 const ASYNC_KEY = "async";
 const ASYNC_TTL_MS = 24 * 60 * 60 * 1_000;
 const BODY_KEY_PREFIX = "body:";
@@ -201,6 +204,37 @@ export class GenerationCoordinator extends DurableObject<CloudflareBindings> {
         return job;
     }
 
+    /**
+     * Releases key budget reserved by an execution that was interrupted
+     * before its settlement consumed it. Deletes the record first: a repeat
+     * interruption during the release must never credit the amount twice;
+     * the residual window (reserve committed, record not yet written) is
+     * milliseconds instead of the whole generation.
+     */
+    private async releaseInterruptedReservation(): Promise<void> {
+        const stored = await this.ctx.storage.get<{
+            apiKeyId: string;
+            amount: number;
+        }>(RESERVATION_KEY);
+        if (!stored || !(stored.amount > 0)) return;
+        await this.ctx.storage.delete(RESERVATION_KEY);
+        try {
+            const { ok } = await atomicAdjustApiKeyBalance(
+                drizzle(this.env.DB),
+                stored.apiKeyId,
+                -stored.amount,
+            );
+            if (!ok) {
+                console.error(
+                    "Interrupted reservation release affected 0 rows",
+                    stored,
+                );
+            }
+        } catch (error) {
+            console.error("Interrupted reservation release failed", error);
+        }
+    }
+
     async alarm(): Promise<void> {
         let stored: PersistedJob | undefined;
 
@@ -230,6 +264,11 @@ export class GenerationCoordinator extends DurableObject<CloudflareBindings> {
             // An interrupted execution may have saved its result before dying.
             // Without that result, fail closed instead of generating it again.
             if (stored.started) {
+                // An interrupted execution can strand the key budget it
+                // reserved (the reserve is a real D1 deduction with no row
+                // or TTL): the ledger record proves a reservation is still
+                // outstanding, so release it before failing closed.
+                await this.releaseInterruptedReservation();
                 await this.finish(
                     unavailable("Detached generation was interrupted"),
                     stored.bodyChunks,
@@ -246,7 +285,28 @@ export class GenerationCoordinator extends DurableObject<CloudflareBindings> {
                 );
                 return;
             }
-            const execution = await executeGeneration(job, this.env);
+            const execution = await executeGeneration(job, this.env, {
+                record: async (apiKeyId, amount) => {
+                    try {
+                        await this.ctx.storage.put(RESERVATION_KEY, {
+                            apiKeyId,
+                            amount,
+                        });
+                    } catch (error) {
+                        console.error(
+                            "Failed to record key reservation",
+                            error,
+                        );
+                    }
+                },
+                clear: async () => {
+                    try {
+                        await this.ctx.storage.delete(RESERVATION_KEY);
+                    } catch {
+                        // Best-effort bookkeeping only.
+                    }
+                },
+            });
             settlement = execution.settlement;
             await this.finish(execution.result, stored.bodyChunks);
         } catch (error) {

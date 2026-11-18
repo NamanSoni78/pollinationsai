@@ -1,4 +1,5 @@
 import { handleError } from "@shared/error.ts";
+import type { GenerationReservationLedger } from "@/middleware/balance.ts";
 import { Hono } from "hono";
 import type { Env } from "@/env.ts";
 import { authFromSnapshot } from "@/middleware/auth.ts";
@@ -54,6 +55,7 @@ export type DetachedGeneration = {
 function generationExecutor(
     job: GenerationJob,
     registerCacheWrite: (promise: Promise<void>) => void,
+    ledger?: GenerationReservationLedger,
 ): Hono<Env> {
     const executor = new Hono<Env>()
         .use("*", async (c, next) => {
@@ -77,6 +79,13 @@ function generationExecutor(
         .use("*", async (c, next) => {
             c.var.balance.balanceCheckResult = job.balanceCheckResult;
             c.var.balance.apiKeyBudgetEstimate = job.apiKeyBudgetEstimate;
+            await next();
+        })
+        .use("*", async (c, next) => {
+            // The coordinator's reservation ledger: when set, the reserve and
+            // its consumers write through to DO storage so an interrupted
+            // execution cannot strand the committed key budget.
+            if (ledger) c.var.balance.reservationLedger = ledger;
             await next();
         })
         .route("/", generationExecutorRoutes);
@@ -109,6 +118,7 @@ export function detachedContext() {
 export async function executeGeneration(
     job: GenerationJob,
     env: CloudflareBindings,
+    reservationLedger?: GenerationReservationLedger,
 ): Promise<DetachedGeneration> {
     let cacheWrite: Promise<void> | undefined;
     const { ctx: executionCtx, settled } = detachedContext();
@@ -124,9 +134,13 @@ export async function executeGeneration(
         // The method only: the job URL can carry the prompt.
         () => ({ route_path: "generation", method: request.method }),
         () =>
-            generationExecutor(job, (promise) => {
-                cacheWrite = promise;
-            }).fetch(request, env, executionCtx),
+            generationExecutor(
+                job,
+                (promise) => {
+                    cacheWrite = promise;
+                },
+                reservationLedger,
+            ).fetch(request, env, executionCtx),
     );
     const settlement = settled();
 
