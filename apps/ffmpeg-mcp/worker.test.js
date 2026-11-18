@@ -277,6 +277,20 @@ test("rejects JSON-RPC batches before running tools", async () => {
     assert.equal(calls.run.length, 0);
 });
 
+test("rejects request bodies over the 8 MiB cap before parsing them", async () => {
+    const { calls, env, worker } = createHarness();
+    const response = await worker.fetch(
+        new Request("https://ffmpeg.internal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "a".repeat(9 * 1024 * 1024),
+        }),
+        env,
+    );
+    assert.equal(response.status, 413);
+    assert.equal(calls.run.length, 0);
+});
+
 test("runs multi-input FFmpeg, uploads the output, and reports trusted usage", async () => {
     const { calls, env, worker } = createHarness({
         expectedSources: [SOURCE, SECOND_SOURCE],

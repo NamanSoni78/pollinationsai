@@ -1,3 +1,8 @@
+import {
+    MCP_REQUEST_LIMIT_BYTES,
+    McpRequestTooLargeError,
+    readMcpRequestJson,
+} from "../../shared/mcp-request.ts";
 import { withMcpUsageHeaders } from "../../shared/mcp-usage.ts";
 import {
     COMPOSIO_TOOL_CALL_PRICE,
@@ -382,10 +387,7 @@ export function createWorker({ fetchImpl }) {
                         fetchImpl,
                     );
                 }
-                payload = await request
-                    .clone()
-                    .json()
-                    .catch(() => null);
+                payload = await readMcpRequestJson(request);
                 response = await proxyRouter(
                     request,
                     userId,
@@ -394,7 +396,18 @@ export function createWorker({ fetchImpl }) {
                     fetchImpl,
                 );
             } catch (error) {
-                response = jsonError(error);
+                response =
+                    error instanceof McpRequestTooLargeError
+                        ? Response.json(
+                              {
+                                  error: "invalid_request",
+                                  message: `Request body exceeds the ${
+                                      MCP_REQUEST_LIMIT_BYTES / (1024 * 1024)
+                                  } MiB limit.`,
+                              },
+                              { status: 413 },
+                          )
+                        : jsonError(error);
                 console.info({
                     event: "composio.request_failed",
                     userId,
