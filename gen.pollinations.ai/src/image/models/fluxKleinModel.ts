@@ -4,7 +4,7 @@ import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { base64ToBuffer, downloadUserImage } from "../utils/imageDownload.ts";
+import { base64ToBuffer, downloadUserImages } from "../utils/imageDownload.ts";
 
 const logOps = debug("pollinations:flux-klein:ops");
 const logError = debug("pollinations:flux-klein:error");
@@ -37,10 +37,9 @@ export const callFluxKleinAPI = async (
     safeParams: ImageParams,
 ): Promise<ImageGenerationResult> => {
     try {
-        // Download and encode reference images if provided
-        const downloads = await Promise.all(
-            safeParams.image.map((url) => downloadUserImage(url)),
-        );
+        // Download and encode reference images if provided, under one
+        // shared byte budget (all references are retained simultaneously).
+        const downloads = await downloadUserImages(safeParams.image);
         const imagesB64 = downloads.map(({ buffer }) =>
             buffer.toString("base64"),
         );

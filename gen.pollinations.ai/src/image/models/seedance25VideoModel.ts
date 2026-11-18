@@ -4,7 +4,7 @@ import type { VideoGenerationResult } from "../createAndReturnVideos.ts";
 import type { ImageParams } from "../params.ts";
 import { closestRatioLogSpace } from "../utils/aspectRatio.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
     toReplicateUpstreamError,
@@ -71,8 +71,11 @@ export async function callSeedance25API(
     if (safeParams.seed !== undefined && safeParams.seed !== -1) {
         input.seed = safeParams.seed;
     }
-    if (images[0]) input.image = await toDataUri(images[0]);
-    if (images[1]) input.last_frame_image = await toDataUri(images[1]);
+    if (images[0]) {
+        const [first, last] = await toDataUris(images.slice(0, 2));
+        input.image = first;
+        if (images[1]) input.last_frame_image = last;
+    }
     if (safeParams.reference_images?.length) {
         input.reference_images = safeParams.reference_images;
     }

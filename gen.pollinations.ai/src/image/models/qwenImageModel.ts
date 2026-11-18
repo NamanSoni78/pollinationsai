@@ -16,7 +16,7 @@ import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import type { ImageParams } from "../params.ts";
 import { closestRatioLogSpace } from "../utils/aspectRatio.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
     toReplicateUpstreamError,
@@ -78,7 +78,7 @@ export async function callQwenImageAPI(
     let input: Record<string, unknown>;
 
     if (hasImage) {
-        const imageInput = await Promise.all(images.map(toDataUri));
+        const imageInput = await toDataUris(images);
         model = QWEN_EDIT_MODEL;
         input = {
             prompt,

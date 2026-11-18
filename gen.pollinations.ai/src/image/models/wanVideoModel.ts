@@ -21,7 +21,7 @@ import type { VideoGenerationResult } from "../createAndReturnVideos.ts";
 import type { ImageParams } from "../params.ts";
 import { closestRatioLogSpace } from "../utils/aspectRatio.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
     toReplicateUpstreamError,
@@ -234,9 +234,7 @@ async function generateWanVideo(
         const frameMode: "t2v" | "i2v" = hasFrames ? "i2v" : "t2v";
         model = frameMode === "i2v" ? config.i2vModel : config.t2vModel;
         mode = frameMode;
-        const frames = hasFrames
-            ? await Promise.all(images.map(toDataUri))
-            : [];
+        const frames = hasFrames ? await toDataUris(images) : [];
         input = config.buildInput(frameMode, prompt, safeParams, frames);
     }
 

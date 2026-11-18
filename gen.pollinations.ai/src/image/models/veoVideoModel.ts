@@ -5,7 +5,7 @@ import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import { sleep } from "../util.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { downloadUserImage, toDataUri } from "../utils/imageDownload.ts";
+import { downloadUserImage, toDataUris } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
     toReplicateUpstreamError,
@@ -250,6 +250,8 @@ export async function callVeoReplicateAPI(
     params: ImageParams,
 ): Promise<VideoGenerationResult> {
     const generateAudio = params.audio === true;
+    // First/last frames share one download budget (both are retained).
+    const frames = await toDataUris(params.image.slice(0, 2));
     try {
         const { output, videoOutputDurationSeconds } =
             await runReplicatePrediction<Record<string, unknown>, string>({
@@ -260,12 +262,8 @@ export async function callVeoReplicateAPI(
                     resolution: params.resolution ?? "720p",
                     aspect_ratio: veoAspectRatio(params),
                     generate_audio: generateAudio,
-                    ...(params.image[0]
-                        ? { image: await toDataUri(params.image[0]) }
-                        : {}),
-                    ...(params.image[1]
-                        ? { last_frame: await toDataUri(params.image[1]) }
-                        : {}),
+                    ...(frames[0] ? { image: frames[0] } : {}),
+                    ...(frames[1] ? { last_frame: frames[1] } : {}),
                 },
             });
         const response = await fetchUpstream(output, {

@@ -6,7 +6,7 @@ import {
     requireAlibabaUsage,
 } from "../utils/alibabaClient.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 import { resolveQwenImage3Size } from "./falQwenImageModel.ts";
 import { resolveWanImageSize } from "./wanImageModel.ts";
 
@@ -88,7 +88,7 @@ export async function callAlibabaImage(
         ...(route.common ? { n: 1, seed: params.seed, watermark: false } : {}),
         ...route.extra,
     };
-    const imageUrls = await Promise.all(images.map(toDataUri));
+    const imageUrls = await toDataUris(images);
     const result = await callAlibabaMedia(
         route.path,
         {

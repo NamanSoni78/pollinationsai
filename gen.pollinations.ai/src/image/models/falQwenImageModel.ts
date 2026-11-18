@@ -5,7 +5,7 @@ import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import { falBillableUnits } from "../utils/falBillableUnits.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 
 const logOps = debug("pollinations:fal-qwen-image:ops");
 
@@ -90,7 +90,7 @@ export async function callFalQwenImageAPI(
 
     const images = safeParams.image ?? [];
     const size = config.resolveSize(safeParams);
-    const references = await Promise.all(images.map(toDataUri));
+    const references = await toDataUris(images);
     const isEdit = references.length > 0;
     const upstreamUrl = `https://fal.run/${config.endpoint}/${isEdit ? config.editPath : "text-to-image"}`;
     const requestBody = {

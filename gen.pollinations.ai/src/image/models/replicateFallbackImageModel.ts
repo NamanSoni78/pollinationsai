@@ -4,9 +4,9 @@ import type { ImageParams } from "../params.ts";
 import { closestRatioLogSpace } from "../utils/aspectRatio.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
 import {
-    downloadUserImage,
+    downloadUserImages,
     readImageDimensions,
-    toDataUri,
+    toDataUris,
 } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
@@ -75,17 +75,14 @@ async function prepareFluxImages(
     urls: string[],
 ): Promise<{ dataUris: string[]; megapixels: number }> {
     let megapixels = 0;
-    const dataUris = await Promise.all(
-        urls.map(async (url) => {
-            const { buffer, mimeType } = await downloadUserImage(url);
-            const dimensions = readImageDimensions(buffer, mimeType);
-            if (dimensions) {
-                megapixels +=
-                    (dimensions.width * dimensions.height) / 1_000_000;
-            }
-            return `data:${mimeType};base64,${buffer.toString("base64")}`;
-        }),
-    );
+    const images = await downloadUserImages(urls);
+    const dataUris = images.map(({ buffer, mimeType }) => {
+        const dimensions = readImageDimensions(buffer, mimeType);
+        if (dimensions) {
+            megapixels += (dimensions.width * dimensions.height) / 1_000_000;
+        }
+        return `data:${mimeType};base64,${buffer.toString("base64")}`;
+    });
     return { dataUris, megapixels };
 }
 
@@ -206,7 +203,7 @@ export async function callReplicateFallbackImage(
                 "prunaai/p-image-edit",
                 {
                     prompt,
-                    images: await Promise.all(params.image.map(toDataUri)),
+                    images: await toDataUris(params.image),
                     aspect_ratio: "match_input_image",
                     seed: params.seed,
                 },

@@ -16,9 +16,9 @@ import { fetchUpstream } from "../utils/fetchUpstream.ts";
 import {
     base64ToBuffer,
     detectMimeType,
-    downloadUserImage,
+    downloadUserImages,
     readImageDimensions,
-    toDataUri,
+    toDataUris,
 } from "../utils/imageDownload.ts";
 import { writeExifMetadata } from "../writeExifMetadata.ts";
 import { checkMaiInputs } from "./azureMaiImageModel.ts";
@@ -376,9 +376,7 @@ export async function callOpenRouterSeedreamProAPI(
 ): Promise<ImageGenerationResult> {
     const apiKey = requireOpenRouterImageApiKey();
 
-    const downloadedImages = await Promise.all(
-        safeParams.image.map((image) => downloadUserImage(image)),
-    );
+    const downloadedImages = await downloadUserImages(safeParams.image);
     const firstImage = downloadedImages[0];
     // OpenRouter's "auto" currently defaults to square instead of matching a
     // reference image, so derive the first reference's ratio as the old route did.
@@ -448,9 +446,7 @@ export async function callOpenRouterSeedreamFlashAPI(
     safeParams: ImageParams,
 ): Promise<ImageGenerationResult> {
     const apiKey = requireOpenRouterImageApiKey();
-    const downloadedImages = await Promise.all(
-        safeParams.image.map((image) => downloadUserImage(image)),
-    );
+    const downloadedImages = await downloadUserImages(safeParams.image);
     const inputReferences = downloadedImages.map((downloaded) => ({
         type: "image_url",
         image_url: {
@@ -548,7 +544,7 @@ async function callOpenRouterAlibabaQwenImage(
     route: OpenRouterAlibabaQwenRoute,
 ): Promise<ImageGenerationResult> {
     const apiKey = requireOpenRouterImageApiKey();
-    const references = await Promise.all(safeParams.image.map(toDataUri));
+    const references = await toDataUris(safeParams.image);
     const requestBody: Record<string, unknown> = {
         model: route.model,
         prompt,
@@ -742,9 +738,7 @@ export async function callOpenRouterFlux2MaxAPI(
     // BFL does not follow redirects, so a raw reference URL 400s whenever the
     // host serves one (e.g. picsum.photos). Download and inline as a data
     // URI instead, matching callOpenRouterSeedreamProAPI.
-    const downloadedImages = await Promise.all(
-        safeParams.image.map((image) => downloadUserImage(image)),
-    );
+    const downloadedImages = await downloadUserImages(safeParams.image);
     const inputReferences = downloadedImages.map((downloaded) => ({
         type: "image_url",
         image_url: {
@@ -829,9 +823,7 @@ export async function callOpenRouterFlux3API(
 ): Promise<ImageGenerationResult> {
     const apiKey = requireOpenRouterImageApiKey();
     // BFL does not follow redirects, so inline references as data URIs.
-    const downloadedImages = await Promise.all(
-        safeParams.image.map((image) => downloadUserImage(image)),
-    );
+    const downloadedImages = await downloadUserImages(safeParams.image);
     const inputReferences = downloadedImages.map((downloaded) => ({
         type: "image_url",
         image_url: {
@@ -934,13 +926,11 @@ export async function callOpenRouterGeminiImageAPI(
     if (reasoningEffort) requestBody.reasoning_effort = reasoningEffort;
 
     if (safeParams.image.length > 0) {
-        const inputReferences = [];
-        for (const image of safeParams.image) {
-            inputReferences.push({
-                type: "image_url",
-                image_url: { url: await toDataUri(image) },
-            });
-        }
+        const references = await toDataUris(safeParams.image);
+        const inputReferences = references.map((url) => ({
+            type: "image_url",
+            image_url: { url },
+        }));
         requestBody.input_references = inputReferences;
     }
 

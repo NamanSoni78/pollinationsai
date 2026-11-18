@@ -111,13 +111,92 @@ export function readImageDimensions(
  * Redirects are followed here, unlike the text path: an image URL pasted into
  * the `image` parameter is routinely a shortener or a CDN that redirects, and
  * refusing those would reject URLs that work today.
+ *
+ * `maxBytes` narrows the per-image cap to what a request's shared reference
+ * budget has left (see downloadUserImages).
  */
 export async function downloadUserImage(
     imageUrl: string,
     signal?: AbortSignal,
+    maxBytes?: number,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-    const { bytes, mimeType } = await fetchUserImage(imageUrl, { signal });
+    const { bytes, mimeType } = await fetchUserImage(imageUrl, {
+        signal,
+        ...(maxBytes !== undefined ? { maxBytes } : {}),
+    });
     return { buffer: Buffer.from(bytes), mimeType };
+}
+
+/** Shared byte budget for one request's downloaded reference images — the
+ * image-path twin of the text path's per-request total
+ * (imageUrlToBase64Transform's ImageConversionContext). Downloaded
+ * references are all retained at once (raw bytes, Buffer copy, base64 and
+ * the provider request body), so it is their sum, not each image alone,
+ * that must fit the isolate: references that individually pass the 20 MB
+ * per-image cap can still exceed it many times over (models accept up to
+ * 10-14 of them) and kill the worker with error 1102. */
+export const MAX_REFERENCE_IMAGES_BYTES = MAX_IMAGE_SIZE;
+
+/** Downloads every reference image under one shared byte budget. */
+export async function downloadUserImages(
+    imageUrls: string[],
+    signal?: AbortSignal,
+): Promise<{ buffer: Buffer; mimeType: string }[]> {
+    const images: { buffer: Buffer; mimeType: string }[] = [];
+    let totalBytes = 0;
+    // Sequential on purpose: the budget bounds what is held at once, so each
+    // image is fetched against what the previous ones already used instead
+    // of downloading everything before the first check.
+    for (const imageUrl of imageUrls) {
+        const remainingBytes = MAX_REFERENCE_IMAGES_BYTES - totalBytes;
+        if (remainingBytes <= 0) {
+            throw new UserImageError(
+                `Reference images exceed the shared ${MAX_REFERENCE_IMAGES_BYTES} byte budget. Please use smaller images.`,
+                "image_too_large",
+            );
+        }
+        const { buffer, mimeType } = await downloadUserImage(
+            imageUrl,
+            signal,
+            remainingBytes,
+        );
+        totalBytes += buffer.byteLength;
+        images.push({ buffer, mimeType });
+    }
+    return images;
+}
+
+/** Inlines every reference image as a base64 data URI under the same shared
+ * byte budget as downloadUserImages. Inline `data:` URIs arrive inside the
+ * request body, whose own size limit already bounds their total, so they
+ * keep toDataUri's cheaper no-refetch validation. */
+export async function toDataUris(
+    imageUrls: string[],
+    signal?: AbortSignal,
+): Promise<string[]> {
+    const dataUris: string[] = [];
+    let totalBytes = 0;
+    for (const imageUrl of imageUrls) {
+        if (imageUrl.startsWith("data:")) {
+            dataUris.push(await toDataUri(imageUrl));
+            continue;
+        }
+        const remainingBytes = MAX_REFERENCE_IMAGES_BYTES - totalBytes;
+        if (remainingBytes <= 0) {
+            throw new UserImageError(
+                `Reference images exceed the shared ${MAX_REFERENCE_IMAGES_BYTES} byte budget. Please use smaller images.`,
+                "image_too_large",
+            );
+        }
+        const { buffer, mimeType } = await downloadUserImage(
+            imageUrl,
+            signal,
+            remainingBytes,
+        );
+        totalBytes += buffer.byteLength;
+        dataUris.push(`data:${mimeType};base64,${buffer.toString("base64")}`);
+    }
+    return dataUris;
 }
 
 export async function downloadImageAsBase64(

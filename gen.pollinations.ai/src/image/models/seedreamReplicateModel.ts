@@ -20,7 +20,7 @@ import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import type { ImageParams } from "../params.ts";
 import { closestRatioLogSpace } from "../utils/aspectRatio.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { toDataUri } from "../utils/imageDownload.ts";
+import { toDataUris } from "../utils/imageDownload.ts";
 import {
     runReplicatePrediction,
     toReplicateUpstreamError,
@@ -207,8 +207,7 @@ async function callSeedreamReplicateAPI(
     const variant = SEEDREAM_VARIANTS[variantKey];
 
     const images = safeParams.image ?? [];
-    const imageInput =
-        images.length > 0 ? await Promise.all(images.map(toDataUri)) : [];
+    const imageInput = images.length > 0 ? await toDataUris(images) : [];
 
     // Replicate's bytedance/seedream-4 schema does not accept a `seed` field.
     //

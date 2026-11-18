@@ -4,7 +4,7 @@ import googleCloudAuth from "@/text/auth/googleCloudAuth.ts";
 import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { downloadUserImage } from "../utils/imageDownload.ts";
+import { downloadUserImages } from "../utils/imageDownload.ts";
 import type { VideoGenerationResult } from "./veoVideoModel.ts";
 
 const logOps = debug("pollinations:gemini-omni:ops");
@@ -52,13 +52,13 @@ function tokensFor(
     return total && total > 0 ? total : undefined;
 }
 
-async function imageInput(url: string) {
-    const { buffer, mimeType } = await downloadUserImage(url);
-    return {
+async function imageInputs(urls: string[]) {
+    const images = await downloadUserImages(urls);
+    return images.map(({ buffer, mimeType }) => ({
         type: "image" as const,
         data: buffer.toString("base64"),
         mime_type: mimeType,
-    };
+    }));
 }
 
 export async function callGeminiOmniAPI(
@@ -99,7 +99,7 @@ export async function callGeminiOmniAPI(
 
     const input = [
         { type: "text" as const, text: prompt },
-        ...(await Promise.all(safeParams.image.map(imageInput))),
+        ...(await imageInputs(safeParams.image)),
     ];
     const endpoint = `https://aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/global/interactions`;
     const response = await fetchUpstream(endpoint, {

@@ -2,10 +2,12 @@ import { UpstreamError } from "@shared/error.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
     downloadUserImage,
+    downloadUserImages,
     readImageDimensions,
     toDataUri,
+    toDataUris,
 } from "../../src/image/utils/imageDownload.ts";
-import { MAX_IMAGE_SIZE } from "../../src/userImage.ts";
+import { MAX_IMAGE_SIZE, UserImageError } from "../../src/userImage.ts";
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -326,5 +328,83 @@ describe("readImageDimensions", () => {
             width: 1280,
             height: 720,
         });
+    });
+});
+
+describe("reference image aggregate budget", () => {
+    const MB = 1024 * 1024;
+
+    function imageResponse(sizeInBytes: number) {
+        return new Response(new Uint8Array(sizeInBytes), {
+            status: 200,
+            headers: { "content-type": "image/png" },
+        });
+    }
+
+    it("downloads every reference when the shared budget fits", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(async () => imageResponse(8 * MB));
+
+        const images = await downloadUserImages([
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ]);
+
+        expect(images).toHaveLength(2);
+        // Sequential on purpose: the second download runs against what is
+        // left after the first, not in a parallel fan-out.
+        expect(fetchMock.mock.calls.map((call) => String(call[0]))).toEqual([
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ]);
+        expect(images[0].buffer.byteLength).toBe(8 * MB);
+    });
+
+    it("rejects references whose sum exceeds the budget even though each fits the per-image cap", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+            imageResponse(12 * MB),
+        );
+
+        const error = await downloadUserImages([
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ]).catch((cause) => cause);
+
+        // 12 MB + 12 MB = 24 MB > the 20 MB shared budget: the second image
+        // must be refused against the 8 MB remaining, not fetched on top.
+        expect(error).toBeInstanceOf(UserImageError);
+        expect(error).toMatchObject({
+            status: 400,
+            errorCode: "image_too_large",
+        });
+        expect(error.message).toContain("bytes remaining");
+    });
+
+    it("inlines references as data URIs under the same budget", async () => {
+        vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+            imageResponse(11 * MB),
+        );
+
+        const error = await toDataUris([
+            "https://example.com/a.png",
+            "https://example.com/b.png",
+        ]).catch((cause) => cause);
+
+        expect(error).toBeInstanceOf(UserImageError);
+        expect(error.errorCode).toBe("image_too_large");
+    });
+
+    it("does not spend the download budget on inline data URIs", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(async () => imageResponse(16 * MB));
+
+        const dataUri = `data:image/png;base64,${"A".repeat(64)}`;
+        const uris = await toDataUris([dataUri, "https://example.com/b.png"]);
+
+        expect(uris[0]).toBe(dataUri);
+        expect(uris[1]).toMatch(/^data:image\/png;base64,/);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });
