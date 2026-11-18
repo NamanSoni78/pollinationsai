@@ -48,11 +48,14 @@ export async function callChatViaResponses(
     if (request.stream) {
         const contentType = response.headers.get("content-type") ?? "";
         if (!contentType.includes("text/event-stream")) {
-            throw clientError(
+            const error = clientError(
                 `Responses provider returned non-stream content-type: ${contentType}`,
                 502,
                 requestUrl,
             );
+            // The message echoes the upstream's content-type header.
+            error.upstreamMessage = true;
+            throw error;
         }
         return streamingChatCompletion(
             response.body as ReadableStream<Uint8Array<ArrayBuffer>>,

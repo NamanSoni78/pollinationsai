@@ -6,6 +6,7 @@ export function assertStreamContentType(
     c: Context<Env>,
     response: Response,
     upstreamRequestUrl: URL | undefined,
+    { redactUpstream = false }: { redactUpstream?: boolean } = {},
 ): void {
     if (!c.var.track.streamRequested) return;
 
@@ -15,6 +16,7 @@ export function assertStreamContentType(
             message: `Stream requested for model ${c.var.model.resolved} but upstream returned content-type: ${contentType}`,
             requestUrl: upstreamRequestUrl,
             responseBody: contentType,
+            redactUpstream,
         });
     }
 }

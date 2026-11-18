@@ -94,10 +94,50 @@ export async function fetchWithAuth(url, options = {}, context) {
     return fetch(url, { ...options, headers });
 }
 
+/** Error bodies are diagnostics, not payloads: never buffer more than this. */
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+
+/**
+ * Read at most MAX_ERROR_BODY_BYTES of an error response body, so a hostile
+ * or misbehaving upstream cannot turn a failed request into a memory
+ * amplification against this isolate (and every MCP client rendering the
+ * error).
+ *
+ * @param {Response} response - The failed response
+ * @returns {Promise<string>} - The (possibly truncated) body text
+ */
+async function readBoundedErrorBody(response) {
+    if (!response.body?.getReader) {
+        return response.text().catch(() => "Unknown error");
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    try {
+        while (bytes < MAX_ERROR_BODY_BYTES) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            // A single chunk can exceed the whole budget; take only what fits.
+            const remaining = MAX_ERROR_BODY_BYTES - bytes;
+            const chunk =
+                value.byteLength > remaining ? value.slice(0, remaining) : value;
+            bytes += chunk.byteLength;
+            text += decoder.decode(chunk, { stream: true });
+        }
+    } catch {
+        return text || "Unknown error";
+    }
+    if (bytes >= MAX_ERROR_BODY_BYTES) {
+        void reader.cancel().catch(() => {});
+    }
+    return text;
+}
+
 export async function fetchResponseWithAuth(url, options = {}, context) {
     const response = await fetchWithAuth(url, options, context);
     if (!response.ok) {
-        const errorText = await response.text().catch(() => "Unknown error");
+        const errorText = await readBoundedErrorBody(response);
         throw new Error(parseApiError(response.status, errorText));
     }
     return response;

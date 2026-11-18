@@ -11,7 +11,22 @@ import {
 } from "@shared/community-endpoints.ts";
 import type { ModelDefinition } from "@shared/registry/registry.ts";
 import { decryptSecret } from "@shared/secret-encryption.ts";
-import type { RequestData, TransformOptions } from "./types.js";
+import type { RequestData, ServiceError, TransformOptions } from "./types.js";
+
+/**
+ * Mark every error escaping a community-endpoint attempt so the client
+ * response redacts the publisher's hostname, raw body, and upstream-authored
+ * message (see `UpstreamErrorOptions.redactUpstream`). Server-side logging
+ * keeps the full diagnostics.
+ */
+export function tagCommunityUpstreamError<T>(attempt: Promise<T>): Promise<T> {
+    return attempt.catch((error: unknown) => {
+        if (error instanceof Error) {
+            (error as ServiceError).redactUpstream = true;
+        }
+        throw error;
+    });
+}
 
 /** Bound the wait for headers on each external community text attempt. */
 export const communityEndpointFetch: typeof fetch = async (input, init) => {

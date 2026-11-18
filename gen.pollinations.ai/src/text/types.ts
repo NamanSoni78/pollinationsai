@@ -124,6 +124,18 @@ export interface ServiceError extends Error {
     provider?: string;
     response?: { data?: unknown };
     upstreamHeaders?: UpstreamHeaders;
+    /**
+     * The requestUrl points at a third-party community endpoint: the client
+     * response must redact the publisher's host, body, and upstream message
+     * (mirrors `UpstreamErrorOptions.redactUpstream`).
+     */
+    redactUpstream?: boolean;
+    /**
+     * The message is derived from the upstream's response body, headers, or
+     * network error — not authored by this gateway. Under `redactUpstream`
+     * the client response replaces it with the gateway default.
+     */
+    upstreamMessage?: boolean;
 }
 
 export type TextVariables = {

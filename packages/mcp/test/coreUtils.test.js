@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseApiError } from "../src/utils/coreUtils.js";
+import { fetchResponseWithAuth, parseApiError } from "../src/utils/coreUtils.js";
 
 test("parseApiError displays gateway 403 error message with editor link unchanged", () => {
     const errorJson = JSON.stringify({
@@ -128,4 +128,45 @@ test("parseApiError keeps the generic fallback for an HTML 502 page", () => {
         parseApiError(502, "<html><body>Cloudflare Bad Gateway</body></html>"),
         "Service temporarily unavailable. Please try again in a few moments.",
     );
+});
+
+test("fetchResponseWithAuth bounds the error body it reads", async () => {
+    const originalFetch = globalThis.fetch;
+    const hugeMessage = "x".repeat(200 * 1024);
+    globalThis.fetch = async () =>
+        new Response(JSON.stringify({ error: { message: hugeMessage } }), {
+            status: 502,
+        });
+    try {
+        await fetchResponseWithAuth(
+            "https://gen.test/v1/chat/completions",
+            {},
+            {},
+        );
+        assert.fail("expected an error");
+    } catch (error) {
+        assert.ok(
+            error.message.length < 100_000,
+            `error message should be bounded, got ${error.message.length} chars`,
+        );
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("fetchResponseWithAuth still surfaces small gateway error messages", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+        new Response(
+            JSON.stringify({ error: { message: "Service degraded" } }),
+            { status: 503 },
+        );
+    try {
+        await fetchResponseWithAuth("https://gen.test/v1/models", {}, {});
+        assert.fail("expected an error");
+    } catch (error) {
+        assert.equal(error.message, "Service degraded");
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
 });
