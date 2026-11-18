@@ -111,12 +111,39 @@ export async function callInferencePortImage(
         responseKeys: Object.keys(data).sort(),
         dataCount: Array.isArray(data.data) ? data.data.length : undefined,
     });
+    // InferencePort charges the completed inference (payg credits per
+    // image); the usage receipt rides the same response as the image.
+    const reportedCount = data.usage?.image_count;
+    const validCount =
+        typeof reportedCount === "number" &&
+        Number.isInteger(reportedCount) &&
+        reportedCount > 0
+            ? reportedCount
+            : undefined;
 
     let buffer: Buffer;
     if (encodedImage) {
-        buffer = base64ToBuffer(encodedImage);
+        try {
+            buffer = base64ToBuffer(encodedImage);
+        } catch (error) {
+            // The image is in hand: the inference ran and the provider
+            // billed it; a decode failure still settles the image (n: 1).
+            throw Object.assign(error as object, {
+                billedUsage: { completionImageTokens: 1 },
+            });
+        }
     } else if (imageUrl) {
-        buffer = (await downloadUserImage(imageUrl)).buffer;
+        buffer = (
+            await downloadUserImage(imageUrl).catch((error: unknown) => {
+                // The image URL in hand means the charge already settled
+                // provider-side; a failed download still bills the image.
+                throw Object.assign(error as object, {
+                    billedUsage: {
+                        completionImageTokens: validCount ?? 1,
+                    },
+                });
+            })
+        ).buffer;
     } else {
         throw new UpstreamError(502, {
             message: `InferencePort ${INFERENCEPORT_TITLE} returned no image`,
@@ -124,15 +151,22 @@ export async function callInferencePortImage(
             upstreamStatus: response.status,
             responseBody: responseSummary,
             upstreamHeaders: collectUpstreamHeaders(response.headers),
+            // A 200 with no image is paid only when the usage receipt
+            // proves the charge; otherwise it stays unbilled.
+            ...(validCount
+                ? { billedUsage: { completionImageTokens: validCount } }
+                : {}),
         });
     }
 
-    const imageCount = data.usage?.image_count;
-    if (!Number.isInteger(imageCount) || !imageCount || imageCount < 0) {
+    if (!validCount) {
+        // The image was delivered: the inference ran and the provider
+        // billed it; an unreadable receipt still settles the image (n: 1).
         throw new UpstreamError(502, {
             message: "InferencePort returned no valid image usage",
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
+            billedUsage: { completionImageTokens: 1 },
         });
     }
     // payg_credits_charged is the total for these images, not an extra fee.
@@ -141,8 +175,8 @@ export async function callInferencePortImage(
         trackingData: {
             actualModel: safeParams.model,
             usage: {
-                completionImageTokens: imageCount,
-                totalTokenCount: imageCount,
+                completionImageTokens: validCount,
+                totalTokenCount: validCount,
             },
         },
     };
