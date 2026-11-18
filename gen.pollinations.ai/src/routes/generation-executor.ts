@@ -211,7 +211,7 @@ generationExecutorRoutes.get(
 
 generationExecutorRoutes.get(
     "/audio/:text",
-    validator("param", z.object({ text: z.string().min(1) })),
+    validator("param", z.object({ text: z.string().min(1).max(10000) })),
     validator("query", simpleAudioQuerySchema),
     resolveModel("generate.audio", {
         supportedEndpoint: "/audio/{text}",
