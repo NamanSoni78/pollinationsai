@@ -29,3 +29,13 @@
 | W31-C | shared/packages billing+auth core (atomic ops, x402, Stripe, JWTs, grants) | clean; 1 investigated-and-excluded hardening note (x402 questPollenOnly) |
 | W31-D | media worker + community serve path + 3D/download legs | 1 gated finding → issue 106 (MediaUpload.put unbounded generation-write buffering, community speech feed) |
 | W31-E | apps fleet + operations + all 43 workflows | clean; 3 new below-gate observations recorded (composio callbackUrl, floret anonymous routes, mcp coreUtils timeouts) |
+
+## Wave 36 (5 agents, launched 2026-11-19, session 34 / cron 536170 / task AutoSecAudit_Pollinations)
+
+| Agent | Scope | Status |
+|---|---|---|
+| W36-A | numeric/count/array parameter amplification matrix (image/video/audio/3d/text/embeddings/realtime) | clean (0 gated findings; exhaustive parameter table + 12 below-gate residuals recorded) |
+| W36-B | rate-sheet + billing-parity fresh sweep (416-entry registry dump, every modality) | 1 gated finding → issue 113 (OpenRouter image receipt-discard: seedream-4.5 unpriced 4K tier + grok-imagine routes); 9 below-gate recorded |
+| W36-C | server-side regex/ReDoS inventory + fresh-commit corners + gen utility files | 1 gated finding → issue 114 (adaptedChat quadratic tool_calls, measured ×4-per-doubling); regex inventory all anchored/linear; 6 below-gate recorded |
+| W36-D | enter money/account deep corners (bounty/referral/topup/x400/session/auth-order) | clean (0 gated findings; all money paths transactional-idempotent offline-verified; 12 below-gate recorded) |
+| W36-E | apps fleet escalation review + never-audited remainder + workflow deltas | clean (0 gated findings; all below-gate holds stayed below with evidence; 8 below-gate recorded) |
