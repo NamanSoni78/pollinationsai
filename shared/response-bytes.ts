@@ -1,11 +1,20 @@
 /**
+ * Any body-bearing request or response whose bytes can be read bounded.
+ * A Workers `Request` qualifies: pre-handler checks read a teed clone.
+ */
+export type BoundedBodySource = Pick<
+    Response,
+    "headers" | "body" | "arrayBuffer"
+>;
+
+/**
  * Read a response body without ever buffering more than `maxBytes`.
  *
  * Content-Length is checked before streaming, then the running byte count is
  * checked while reading because the header can be absent or incorrect.
  */
 export async function readResponseBytes(
-    response: Response,
+    response: BoundedBodySource,
     maxBytes: number,
     tooLarge: (total: number) => Error,
 ): Promise<Uint8Array<ArrayBuffer>> {
@@ -51,7 +60,7 @@ export async function readResponseBytes(
 
 /** Read a bounded response as UTF-8 text without buffering an untrusted body. */
 export async function readResponseText(
-    response: Response,
+    response: BoundedBodySource,
     maxBytes: number,
     tooLarge: (total: number) => Error,
 ): Promise<string> {

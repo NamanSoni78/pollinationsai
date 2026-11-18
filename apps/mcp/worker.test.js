@@ -518,3 +518,52 @@ test("proxies discovery and reuses audio, video, and 3D links without uploads", 
     );
     await client.close();
 });
+
+test("rejects request bodies over the 8 MiB cap before parsing them", async () => {
+    const response = await worker.fetch(
+        new Request("https://mcp.pollinations.ai", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            // A fixed-length body carries Content-Length, so the worker can
+            // refuse the request without reading a byte of it.
+            body: "a".repeat(9 * 1024 * 1024),
+        }),
+    );
+    assert.equal(response.status, 413);
+});
+
+test("bounds streamed bodies instead of buffering them whole", async () => {
+    const encoder = new TextEncoder();
+    let pushed = 0;
+    const body = new ReadableStream({
+        pull(controller) {
+            pushed += 64 * 1024;
+            if (pushed > 32 * 1024 * 1024) {
+                // An unbounded read drains the whole stream before failing;
+                // a capped read must stop near the 8 MiB limit.
+                controller.error(new Error("body kept being read"));
+                return;
+            }
+            controller.enqueue(encoder.encode("a".repeat(64 * 1024)));
+        },
+    });
+    const response = await worker.fetch(
+        new Request("https://mcp.pollinations.ai", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body,
+            duplex: "half",
+        }),
+    );
+    assert.equal(response.status, 413);
+    assert.ok(
+        pushed <= 12 * 1024 * 1024,
+        `worker pulled ${pushed} bytes of a body capped at 8 MiB`,
+    );
+});

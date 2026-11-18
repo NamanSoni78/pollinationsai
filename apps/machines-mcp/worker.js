@@ -1,6 +1,11 @@
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { CommandExitError, Sandbox } from "e2b";
 import { z } from "zod";
+import {
+    MCP_REQUEST_LIMIT_BYTES,
+    McpRequestTooLargeError,
+    readMcpRequestJson,
+} from "../../shared/mcp-request.ts";
 
 const DEFAULT_BASE_URL = "https://gen.pollinations.ai";
 const DEFAULT_TEMPLATE = "pollinations";
@@ -395,22 +400,33 @@ export default {
         const token = readBearerToken(request);
         if (!token) return unauthorizedResponse();
 
-        if (
-            request.method === "POST" &&
-            Array.isArray(
-                await request
-                    .clone()
-                    .json()
-                    .catch(() => null),
-            )
-        ) {
-            return Response.json(
-                {
-                    error: "invalid_request",
-                    message: "Batch requests are not supported.",
-                },
-                { status: 400 },
-            );
+        if (request.method === "POST") {
+            let message;
+            try {
+                message = await readMcpRequestJson(request);
+            } catch (error) {
+                if (error instanceof McpRequestTooLargeError) {
+                    return Response.json(
+                        {
+                            error: "invalid_request",
+                            message: `Request body exceeds the ${
+                                MCP_REQUEST_LIMIT_BYTES / (1024 * 1024)
+                            } MiB limit.`,
+                        },
+                        { status: 413 },
+                    );
+                }
+                throw error;
+            }
+            if (Array.isArray(message)) {
+                return Response.json(
+                    {
+                        error: "invalid_request",
+                        message: "Batch requests are not supported.",
+                    },
+                    { status: 400 },
+                );
+            }
         }
 
         const handler = createMcpHandler(() => buildServer(token, env), {
