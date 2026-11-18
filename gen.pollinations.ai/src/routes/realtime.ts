@@ -1605,7 +1605,22 @@ export async function handleRealtimeWebSocket(
     );
     if (upstream instanceof Response) return upstream;
 
-    await reserveApiKeyBudget(c.var, c.env);
+    try {
+        await reserveApiKeyBudget(c.var, c.env);
+    } catch (error) {
+        // The upgrade already completed, so the provider session must be
+        // closed instead of being abandoned for the runtime to reap — a
+        // budget-exhausted caller must not pin Azure concurrent-session
+        // capacity. The socket is not accepted until
+        // proxyRealtimeWebSockets runs, so accept it here for the close.
+        try {
+            upstream.accept();
+        } catch {
+            // Already accepted; close below regardless.
+        }
+        closeSocket(upstream, 1011, "Unable to start realtime session");
+        throw error;
+    }
     tracking.apiKeyReservedAmount = c.var.balance.apiKeyReservation?.amount;
     try {
         return proxyRealtimeWebSockets(c, upstream, tracking);

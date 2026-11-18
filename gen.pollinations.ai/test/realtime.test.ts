@@ -1878,3 +1878,107 @@ test("Tinybird event total equals actual wallet debit with BYOP markup and ledge
     expect(telemetry.markupRate).toBeGreaterThan(0);
     expect(telemetry.totalPrice).toBe(roundPollenLedgerAmount(actualDebit));
 });
+
+test("closes the upstream Azure session when the API key budget reservation fails after the upgrade", async () => {
+    // Deterministic post-upgrade budget exhaustion: request A reserves the
+    // key's budget after its own upgrade; request B — whose auth snapshot
+    // still saw the full budget — completes its upgrade too, then fails to
+    // reserve. B's provider socket must be closed, not abandoned.
+    const {
+        key,
+        id: apiKeyId,
+    } = await createTestApiKey({
+        name: "contended-budget-realtime-key",
+        pollenBudget: 0.6,
+        user: { tierBalance: 0, packBalance: 1 },
+    });
+
+    const upstreamSockets: WebSocket[] = [];
+    let statsFetches = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+        async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+            const request = new Request(input, init);
+            if (request.url.includes("/v0/events")) {
+                return new Response("", { status: 202 });
+            }
+            if (request.url.includes("public_model_stats.json")) {
+                statsFetches += 1;
+                return Response.json({
+                    data: [
+                        { model: "openai/gpt-realtime-2.1", avg_cost_usd: 0.5 },
+                    ],
+                });
+            }
+            // The Azure realtime upgrade.
+            const pair = new WebSocketPair();
+            const [client, server] = Object.values(pair) as [
+                WebSocket,
+                WebSocket,
+            ];
+            const index = upstreamSockets.length;
+            upstreamSockets.push(client);
+            if (index === 0) {
+                // A parks its upgrade until B's auth snapshot is loaded
+                // (B's balance check fetches the model stats), so B's
+                // preflight still sees the full budget.
+                for (let attempt = 0; attempt < 400; attempt++) {
+                    if (statsFetches >= 2) break;
+                    await new Promise((resolve) => setTimeout(resolve, 25));
+                }
+            } else {
+                // B parks its upgrade until A's reservation has landed in
+                // D1, so B's atomic reserve fails with budget exhausted.
+                for (let attempt = 0; attempt < 400; attempt++) {
+                    const balance = await getApiKeyBalance(apiKeyId);
+                    if (balance != null && balance <= 0.2) break;
+                    await new Promise((resolve) => setTimeout(resolve, 25));
+                }
+                server.accept();
+            }
+            return new Response(null, {
+                status: 101,
+                webSocket: client,
+            } as WebSocketResponseInit);
+        },
+    );
+
+    const ctxA = createExecutionContext();
+    const responseAPromise = worker.fetch(
+        new Request("https://gen.pollinations.ai/v1/realtime?model=gpt-realtime-2.1", {
+            headers: { Authorization: `Bearer ${key}`, Upgrade: "websocket" },
+        }),
+        env,
+        ctxA,
+    );
+    const ctxB = createExecutionContext();
+    const responseBPromise = worker.fetch(
+        new Request("https://gen.pollinations.ai/v1/realtime?model=gpt-realtime-2.1", {
+            headers: { Authorization: `Bearer ${key}`, Upgrade: "websocket" },
+        }),
+        env,
+        ctxB,
+    );
+
+    const responseA = (await responseAPromise) as WebSocketResponse;
+    expect(responseA.status).toBe(101);
+    responseA.webSocket?.accept();
+
+    const responseB = (await responseBPromise) as WebSocketResponse;
+    const bodyB = await responseB.text();
+    expect(responseB.status).toBe(402);
+    // The reserve-time failure, not the preflight one.
+    expect(bodyB).toContain("exhausted by another request");
+
+    // B's provider session from the completed upgrade must be closed, not
+    // abandoned for the runtime to reap.
+    const bUpstream = upstreamSockets[1];
+    expect(bUpstream).toBeDefined();
+    expect([WebSocket.CLOSING, WebSocket.CLOSED]).toContain(
+        bUpstream.readyState,
+    );
+
+    responseA.webSocket?.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitOnExecutionContext(ctxA);
+    await waitOnExecutionContext(ctxB);
+});
