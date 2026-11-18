@@ -320,3 +320,46 @@ test("includes toolkit descriptions with connected accounts", async () => {
         toolkits: ["github"],
     });
 });
+
+for (const name of [
+    "COMPOSIO_REMOTE_BASH_TOOL",
+    "COMPOSIO_REMOTE_WORKBENCH",
+    "GITHUB_CREATE_AN_ISSUE",
+    "composio_multi_execute_tool",
+]) {
+    test(`refuses to proxy ${name} before reaching Composio`, async () => {
+        const { worker, env, calls } = createHarness();
+        const response = await worker.fetch(
+            new Request("https://composio.internal", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    [MCP_USER_ID_HEADER]: "user-1",
+                    "mcp-session-id": btoa(
+                        JSON.stringify(["trs_user_1", "upstream-session"]),
+                    ),
+                },
+                body: JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 5,
+                    method: "tools/call",
+                    params: { name, arguments: {} },
+                }),
+            }),
+            env,
+        );
+        assert.equal(response.status, 400);
+        const body = await response.json();
+        assert.equal(body.error, "connected_apps_error");
+        assert.equal(body.message, "Unknown Composio tool");
+        assert.equal(response.headers.get(MCP_USAGE_HEADERS.tool), name);
+        assert.equal(response.headers.get(MCP_USAGE_HEADERS.status), "400");
+        assert.equal(response.headers.get(MCP_USAGE_HEADERS.cost), "0");
+        assert.equal(
+            response.headers.get(MCP_USAGE_HEADERS.adjustmentUnits),
+            "0",
+        );
+        // Refused before proxying: no session load, no hosted-router call.
+        assert.equal(calls.length, 0);
+    });
+}
