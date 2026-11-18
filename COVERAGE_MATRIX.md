@@ -15,3 +15,6 @@
 | pollinations.ai frontend (play) | R9-B | covered (round 9) | two newest play commits reviewed end-to-end |
 
 Wave 2 of SECURITY_AUDIT.md is now fully swept (sessions 3–5 combined). Next fresh areas: new upstream commits as they land (diff-audit), deeper product-level decisions on deferred candidates.
+
+| operations/infrastructure/gpu (zonos speech) | R15 | covered (round 15) | issues 50-51 (backend token, both-hop deadlines) + the mistral vision line (issue 49, companion to session-11's fleet-wide issue 46); flux/dreamshaper/klein previously swept clean; sessions 10-11 clean-lists superseded on the auth point |
+| new-commit diff-audit b4d7ebcb..a38014db/8dd9e0ed | R14/R15 | covered (rounds 14-15, both sessions) | wording sweep, quests rework, games, packages/CI, community deadline, model registry — see both round-14/15 WORKLOG sections |

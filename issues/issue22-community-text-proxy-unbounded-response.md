@@ -36,3 +36,7 @@ A publisher registers a community text proxy (public listing), then calls **thei
 
 - Community speech (`audio/communityEndpoint.ts:88-102`) streams the upstream body to the client egress-only (`new Response(response.body)` — no worker buffering), so it is not a memory issue; recorded here for completeness.
 - This branch subsumes the still-unmerged `solution4-community-text-proxy-timeouts` wiring for the text path (timeout + fetcher threading), so the two reconcile trivially whichever merges first.
+
+## Update (2026-11-18, round 15 — upstream's own deadline fix landed headers-only)
+
+Upstream `2ed51176a` ("fix(text): bind community-endpoint fetches to the 300s deadline", #19956) binds the deadline to **response headers only**: `communityEndpoint.ts:31-36` clears the timer in the `finally` as soon as `fetch` resolves (the commit's own second subject says "limit community text deadline to response headers", and its test codifies "clears the deadline after headers and keeps caller cancellation"). Neither production caller threads a caller signal (`genericOpenAIClient.ts:516-521` and `responses/client.ts:232-237` pass no `signal`, so `AbortSignal.any`'s caller half is dead code in production), body reads stay time-unbounded (`response.text()`, whole-SSE buffering, `clone().json()`), and response **size** caps remain absent upstream. The root cause stays this issue (and issue 4's); the fork fix (PR #26) covers both halves and remains the pending review surface.
