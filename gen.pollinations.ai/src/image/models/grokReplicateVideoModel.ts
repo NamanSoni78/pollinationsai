@@ -36,10 +36,25 @@ export async function callGrokReplicateVideoAPI(
             throw UpstreamError.fromProvider(502, {
                 message:
                     "Replicate Grok response is missing output video duration",
+                // The prediction succeeded, so Replicate billed it; bill
+                // the requested duration the success path falls back to.
+                billedUsage: {
+                    ...(params.image[0] ? { promptImageTokens: 1 } : {}),
+                    completionVideoSeconds: params.duration ?? 5,
+                },
             });
         }
         const response = await fetchUpstream(result.output, {
             errorLabel: "Failed to download Grok video",
+        }).catch((error: unknown) => {
+            // The video is generated and billed; a failed download must
+            // still settle it.
+            throw Object.assign(error as object, {
+                billedUsage: {
+                    ...(params.image[0] ? { promptImageTokens: 1 } : {}),
+                    completionVideoSeconds: seconds,
+                },
+            });
         });
         return {
             buffer: Buffer.from(await response.arrayBuffer()),

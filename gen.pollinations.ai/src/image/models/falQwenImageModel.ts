@@ -133,6 +133,10 @@ export async function callFalQwenImageAPI(
 
     const imageResponse = await fetchUpstream(imageUrl, {
         errorLabel: `Failed to download ${config.label} result`,
+    }).catch((error: unknown) => {
+        // fal billed the completed generation (the usage above is its
+        // receipt); a failed download must still settle it.
+        throw Object.assign(error as object, { billedUsage: usage });
     });
 
     return {

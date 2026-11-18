@@ -63,12 +63,20 @@ async function readJson<T>(
     }
 }
 
-function remainingTime(deadline: number): number {
+function remainingTime(
+    deadline: number,
+    // Once the fal job is accepted it runs and bills even if we stop
+    // polling, so a timeout from that point on still carries billed usage.
+    paidUsage?: { completionImageTokens: number },
+): number {
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-        throw UpstreamError.fromProvider(504, {
-            message: "Krea generation timed out",
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(504, {
+                message: "Krea generation timed out",
+            }),
+            paidUsage ? { billedUsage: paidUsage } : {},
+        );
     }
     return remaining;
 }
@@ -119,6 +127,7 @@ export async function callKreaImageAPI(
             creativity: "medium",
             seed: safeParams.seed,
         }),
+        // The job is not accepted yet: a submission timeout bills nothing.
         signal: AbortSignal.timeout(remainingTime(deadline)),
         errorLabel: "Krea submission failed",
     });
@@ -132,10 +141,15 @@ export async function callKreaImageAPI(
         });
     }
 
+    // The job is accepted: fal bills one unit per output image even if we
+    // stop polling or fail to deliver the result, so every failure from here
+    // on settles it.
+    const paidUsage = { completionImageTokens: 1 };
+
     while (true) {
         const statusResponse = await fetchUpstream(submission.status_url, {
             headers: { Authorization: `Key ${apiKey}` },
-            signal: AbortSignal.timeout(remainingTime(deadline)),
+            signal: AbortSignal.timeout(remainingTime(deadline, paidUsage)),
             errorLabel: "Krea status check failed",
         });
         const status = await readJson<KreaQueueStatus>(
@@ -153,12 +167,17 @@ export async function callKreaImageAPI(
                 message: "Krea returned an invalid status",
             });
         }
-        await sleep(Math.min(KREA_POLL_INTERVAL_MS, remainingTime(deadline)));
+        await sleep(
+            Math.min(
+                KREA_POLL_INTERVAL_MS,
+                remainingTime(deadline, paidUsage),
+            ),
+        );
     }
 
     const resultResponse = await fetchUpstream(submission.response_url, {
         headers: { Authorization: `Key ${apiKey}` },
-        signal: AbortSignal.timeout(remainingTime(deadline)),
+        signal: AbortSignal.timeout(remainingTime(deadline, paidUsage)),
         errorLabel: "Krea result fetch failed",
     });
     const result = await readJson<KreaResponse>(
@@ -170,12 +189,19 @@ export async function callKreaImageAPI(
     if (!image?.url) {
         throw UpstreamError.fromProvider(502, {
             message: "Krea returned no image",
+            // The queue reported COMPLETED, so fal finished and billed the
+            // image even though the result payload has no URL.
+            billedUsage: paidUsage,
         });
     }
 
     const imageResponse = await fetchUpstream(image.url, {
-        signal: AbortSignal.timeout(remainingTime(deadline)),
+        signal: AbortSignal.timeout(remainingTime(deadline, paidUsage)),
         errorLabel: "Failed to download Krea output",
+    }).catch((error: unknown) => {
+        // The image is generated and billed; a failed download must still
+        // settle it.
+        throw Object.assign(error as object, { billedUsage: paidUsage });
     });
 
     return {

@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import type { VideoGenerationResult } from "../createAndReturnVideos.ts";
 import { getImageEnv } from "../env.ts";
@@ -26,6 +27,7 @@ interface XaiVideoStatus {
 async function pollXaiVideo(
     requestId: string,
     apiKey: string,
+    paidUsage: Usage,
 ): Promise<XaiVideoStatus> {
     const url = `${XAI_VIDEO_URL}/${requestId}`;
     const deadline = Date.now() + POLL_TIMEOUT_MS;
@@ -60,9 +62,12 @@ async function pollXaiVideo(
         await sleep(Math.min(POLL_INTERVAL_MS, deadline - Date.now()));
     }
 
+    // The request was accepted and finishes server-side after we stop
+    // polling, so the timeout still carries the usage xAI bills.
     throw UpstreamError.fromProvider(504, {
         message: "xAI video generation timed out",
         requestUrl: new URL(url),
+        billedUsage: paidUsage,
     });
 }
 
@@ -84,6 +89,12 @@ export async function callXaiVideoAPI(
 
     const duration = safeParams.duration ?? 5;
     const startFrame = safeParams.image?.[0];
+    // Once the request id exists, xAI renders and bills the video even if we
+    // fail to deliver it, so every failure from here on settles the usage.
+    const paidUsage: Usage = {
+        ...(startFrame ? { promptImageTokens: 1 } : {}),
+        completionVideoSeconds: duration,
+    };
     const requestBody: Record<string, unknown> = {
         model: upstreamModel,
         prompt,
@@ -118,9 +129,16 @@ export async function callXaiVideoAPI(
         });
     }
 
-    const completed = await pollXaiVideo(submitted.request_id, apiKey);
+    const completed = await pollXaiVideo(
+        submitted.request_id,
+        apiKey,
+        paidUsage,
+    );
     const video = completed.video;
     if (video?.respect_moderation === false) {
+        // Post-render moderation billing is issue 2's fix (branch
+        // solution2-xai-video-post-render-billing, unmerged); leave that
+        // throw to it so the branches compose without duplicating.
         throw UpstreamError.fromProvider(400, {
             message: "xAI filtered the generated video by moderation",
             errorCode: "content_policy_violation",
@@ -133,18 +151,40 @@ export async function callXaiVideoAPI(
             message: "xAI video completed without a download URL",
             responseBody: JSON.stringify(completed),
             requestUrl: new URL(submitUrl),
+            // The status is done, so xAI finished and billed the render.
+            billedUsage: {
+                ...paidUsage,
+                completionVideoSeconds:
+                    Number.isFinite(video?.duration) &&
+                    (video?.duration as number) > 0
+                        ? (video?.duration as number)
+                        : duration,
+            },
         });
     }
 
-    const downloadResponse = await fetchUpstream(video.url, {
-        errorLabel: "Failed to download xAI video",
-    });
-    const buffer = Buffer.from(await downloadResponse.arrayBuffer());
     // Bill the duration xAI reports for the finished video.
     const billedSeconds =
         Number.isFinite(video.duration) && (video.duration as number) > 0
             ? (video.duration as number)
             : duration;
+
+    let downloadResponse: Response;
+    try {
+        downloadResponse = await fetchUpstream(video.url, {
+            errorLabel: "Failed to download xAI video",
+        });
+    } catch (error) {
+        // The render is complete and billed; a failed download must still
+        // settle it.
+        throw Object.assign(error, {
+            billedUsage: {
+                ...paidUsage,
+                completionVideoSeconds: billedSeconds,
+            } satisfies Usage,
+        });
+    }
+    const buffer = Buffer.from(await downloadResponse.arrayBuffer());
 
     logOps("xAI video generation complete", {
         duration: billedSeconds,

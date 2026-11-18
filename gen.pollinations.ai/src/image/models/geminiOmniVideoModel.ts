@@ -152,9 +152,40 @@ export async function callGeminiOmniAPI(
     const completionVideoTokens = tokensFor(outputUsage, "video");
     const completionReasoningTokens = data.usage?.total_thought_tokens;
     if (!completionVideoTokens) {
+        // The completed video is in hand, so Google generated and billed it;
+        // the missing usage row must not make the render free. Bill the
+        // usage legs the response does report plus the video tokens the
+        // registry documents per second for omni-1.2 (1931/5792/8688/17376
+        // tok/s at 360p/720p/1080p/4k — the same rates the settlement trusts
+        // when the row is present). Omni-1.1 has no in-repo per-second rate
+        // evidence, so it settles the reported legs only; the residual is
+        // recorded in the issue report.
+        const TOKENS_PER_SECOND = {
+            "360p": 1931,
+            "720p": 5792,
+            "1080p": 8688,
+            "4k": 17376,
+        } as const;
+        const videoTokensEstimate =
+            publicModel === "google/gemini-omni-1.2-flash"
+                ? Math.round(
+                      (TOKENS_PER_SECOND[resolution] ?? 0) * duration,
+                  )
+                : 0;
         throw UpstreamError.fromProvider(502, {
             message: "Gemini Omni API returned no billable video usage",
             requestUrl: new URL(endpoint),
+            billedUsage: {
+                ...(promptTextTokens ? { promptTextTokens } : {}),
+                ...(promptImageTokens ? { promptImageTokens } : {}),
+                ...(completionTextTokens ? { completionTextTokens } : {}),
+                ...(completionReasoningTokens
+                    ? { completionReasoningTokens }
+                    : {}),
+                ...(videoTokensEstimate > 0
+                    ? { completionVideoTokens: videoTokensEstimate }
+                    : {}),
+            },
         });
     }
     const usage = {

@@ -170,7 +170,16 @@ export async function callFluxMaxVideoAPI(
         headers: authorization,
         errorLabel: "FLUX 3 Max result fetch failed",
     });
-    const units = falBillableUnits(resultResponse);
+    // The fal job completed, so fal bills it; every failure below settles
+    // the requested duration.
+    const paidUsage = { completionVideoSeconds: duration };
+    let units: number;
+    try {
+        units = falBillableUnits(resultResponse);
+    } catch (error) {
+        // The receipt header is missing, not the billing: the job ran.
+        throw Object.assign(error as object, { billedUsage: paidUsage });
+    }
     const result = await readJson<FluxMaxResult>(
         resultResponse,
         "FLUX 3 Max returned an invalid result",
@@ -178,11 +187,16 @@ export async function callFluxMaxVideoAPI(
     if (!result.video?.url) {
         throw UpstreamError.fromProvider(502, {
             message: "FLUX 3 Max returned no video",
+            billedUsage: paidUsage,
         });
     }
 
     const videoResponse = await fetchFluxMaxRead(result.video.url, {
         errorLabel: "Failed to download FLUX 3 Max output",
+    }).catch((error: unknown) => {
+        // The video is generated and billed; a failed download must still
+        // settle it.
+        throw Object.assign(error as object, { billedUsage: paidUsage });
     });
 
     return {

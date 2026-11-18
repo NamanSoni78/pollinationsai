@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import type { VideoGenerationResult } from "../createAndReturnVideos.ts";
 import { getImageEnv } from "../env.ts";
@@ -105,6 +106,9 @@ export async function callHappyHorseAPI(
     const { buffer, providerCost } = await generateOpenRouterVideo(
         requestBody,
         HAPPYHORSE_POLL_TIMEOUT_MS,
+        // The job is accepted: failures from here on settle the requested
+        // duration, mirroring the success path's usage.
+        { completionVideoSeconds: duration },
     );
     if (
         providerCost != null &&
@@ -112,6 +116,9 @@ export async function callHappyHorseAPI(
     ) {
         throw UpstreamError.fromProvider(502, {
             message: "OpenRouter returned invalid HappyHorse billing cost",
+            // The video was delivered and billed by the provider; a
+            // malformed receipt must not make the render free.
+            billedUsage: { completionVideoSeconds: duration },
         });
     }
 
@@ -163,6 +170,7 @@ export async function callHeyGenVideoAPI(
     const { buffer, providerCost } = await generateOpenRouterVideo(
         requestBody,
         HEYGEN_POLL_TIMEOUT_MS,
+        { completionVideoSeconds: duration },
     );
     if (
         providerCost != null &&
@@ -170,6 +178,7 @@ export async function callHeyGenVideoAPI(
     ) {
         throw UpstreamError.fromProvider(502, {
             message: "OpenRouter returned invalid HeyGen billing cost",
+            billedUsage: { completionVideoSeconds: duration },
         });
     }
 
@@ -235,6 +244,10 @@ export async function callOpenRouterGrokVideoAPI(
     const { buffer, providerCost } = await generateOpenRouterVideo(
         requestBody,
         GROK_15_POLL_TIMEOUT_MS,
+        {
+            ...(safeParams.image?.[0] ? { promptImageTokens: 1 } : {}),
+            completionVideoSeconds: duration,
+        },
     );
 
     logOps("Grok Video Pro generation complete", {
@@ -260,6 +273,7 @@ export async function callOpenRouterGrokVideoAPI(
 async function generateOpenRouterVideo(
     requestBody: Record<string, unknown>,
     pollTimeoutMs: number,
+    paidUsage: Usage,
 ): Promise<{ buffer: Buffer; providerCost?: number | null }> {
     const apiKey = getImageEnv("OPENROUTER_API_KEY");
     if (!apiKey) {
@@ -290,6 +304,7 @@ async function generateOpenRouterVideo(
         submitted.polling_url,
         apiKey,
         pollTimeoutMs,
+        paidUsage,
     );
     const videoUrl = completed.unsigned_urls?.[0];
     if (!videoUrl) {
@@ -297,6 +312,9 @@ async function generateOpenRouterVideo(
             message: "OpenRouter video completed without a download URL",
             responseBody: JSON.stringify(completed),
             requestUrl: new URL(OPENROUTER_VIDEO_URL),
+            // The status is completed, so the provider finished and billed
+            // the render even though it published no download URL.
+            billedUsage: paidUsage,
         });
     }
 
@@ -304,10 +322,17 @@ async function generateOpenRouterVideo(
         new URL(videoUrl).origin === new URL(OPENROUTER_VIDEO_URL).origin
             ? { Authorization: `Bearer ${apiKey}` }
             : undefined;
-    const downloadResponse = await fetchUpstream(videoUrl, {
-        headers: downloadHeaders,
-        errorLabel: "Failed to download OpenRouter video",
-    });
+    let downloadResponse: Response;
+    try {
+        downloadResponse = await fetchUpstream(videoUrl, {
+            headers: downloadHeaders,
+            errorLabel: "Failed to download OpenRouter video",
+        });
+    } catch (error) {
+        // The render is complete and billed; a failed download must still
+        // settle it.
+        throw Object.assign(error, { billedUsage: paidUsage });
+    }
     const buffer = Buffer.from(await downloadResponse.arrayBuffer());
 
     return {
@@ -320,6 +345,7 @@ async function pollVideo(
     pollingUrl: string,
     apiKey: string,
     timeoutMs: number,
+    paidUsage: Usage,
 ): Promise<OpenRouterVideoResponse> {
     const url = new URL(pollingUrl, OPENROUTER_VIDEO_URL).toString();
     const deadline = Date.now() + timeoutMs;
@@ -362,9 +388,12 @@ async function pollVideo(
         await sleep(Math.min(delay, remaining));
     }
 
+    // The job was accepted and completes server-side after we stop polling,
+    // so the timeout still carries the usage the provider bills.
     throw UpstreamError.fromProvider(504, {
         message: "OpenRouter video generation timed out",
         requestUrl: new URL(url),
+        billedUsage: paidUsage,
     });
 }
 
