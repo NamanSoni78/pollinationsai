@@ -1,11 +1,20 @@
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
 import { AUDIO_SERVICES } from "@shared/registry/audio.ts";
 import { buildUsageHeaders } from "@shared/registry/usage-headers.ts";
+import { readResponseBytes } from "@shared/response-bytes.ts";
 import { falBillableUnits } from "../image/utils/falBillableUnits.ts";
+import { fetchUpstream } from "../image/utils/fetchUpstream.ts";
 import { runFalJobResponse } from "../model3d/models/falClient.ts";
 import { toUpstreamError } from "../model3d/modelUtils.ts";
 
 type LyriaModel = "google/lyria-3.5" | "google/lyria-3.5:fal";
+
+// Lyria songs are a few MB of MP3; 64 MiB mirrors sonilo's cap and keeps a
+// runaway fal-storage response from buffering the whole isolate.
+const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+// Audio-fleet artifact downloads use a bounded wait; 60 s matches the 3D
+// fleet's mesh download deadline (solution88's convention).
+const LYRIA_DOWNLOAD_TIMEOUT_MS = 60 * 1_000;
 
 export async function generateLyria35(opts: {
     model: LyriaModel;
@@ -33,7 +42,7 @@ export async function generateLyria35(opts: {
         });
     }
 
-    let bytes: ArrayBuffer;
+    let bytes: Uint8Array<ArrayBuffer> | ArrayBuffer;
     let units: number;
     if (AUDIO_SERVICES[opts.model].provider === "fal") {
         if (!opts.falKey) {
@@ -54,11 +63,15 @@ export async function generateLyria35(opts: {
                 message: "Lyria returned no audio output",
             });
         }
-        const audio = await ensureUpstreamOk(
-            await fetch(data.audio.url),
-            data.audio.url,
+        const audio = await fetchUpstream(data.audio.url, {
+            errorLabel: "Failed to download Lyria output",
+            signal: AbortSignal.timeout(LYRIA_DOWNLOAD_TIMEOUT_MS),
+        });
+        bytes = await readResponseBytes(audio, MAX_OUTPUT_BYTES, (total) =>
+            UpstreamError.fromProvider(502, {
+                message: `Lyria output is too large: ${total} bytes (max ${MAX_OUTPUT_BYTES})`,
+            }),
         );
-        bytes = await audio.arrayBuffer();
     } else {
         if (!opts.geminiApiKey) {
             throw new UpstreamError(500, {
