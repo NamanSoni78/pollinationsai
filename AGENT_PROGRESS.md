@@ -39,3 +39,13 @@
 | W36-C | server-side regex/ReDoS inventory + fresh-commit corners + gen utility files | 1 gated finding → issue 114 (adaptedChat quadratic tool_calls, measured ×4-per-doubling); regex inventory all anchored/linear; 6 below-gate recorded |
 | W36-D | enter money/account deep corners (bounty/referral/topup/x400/session/auth-order) | clean (0 gated findings; all money paths transactional-idempotent offline-verified; 12 below-gate recorded) |
 | W36-E | apps fleet escalation review + never-audited remainder + workflow deltas | clean (0 gated findings; all below-gate holds stayed below with evidence; 8 below-gate recorded) |
+
+## Wave 37 — round 37 (session 35, cron 536002)
+
+| Agent | Scope | Status |
+|---|---|---|
+| W37-A | audio surfaces + round-32 handoff verification (every outbound fetch enumerated, pending-branch coverage diffed) | 1 gated finding → issue 115 (SFX-fal/Qwen/SA3-M/L artifact caps+deadlines); ElevenLabs input-driven buffers recorded below gate |
+| W37-B | model-fleet billing parity (134 text + 76 image + 40 audio primaries, 196 fallback routes vs cost sheets) | 4 below-gate cache-read sheet residuals recorded (need provider price confirmation); vision/audio/video axes otherwise clean; fresh-range Azure DeepSeek move clean |
+| W37-C | enter authz + churn (39 commits classified hunk-by-hunk; money-path second pass; key management) | 1 gated finding → issue 116 (PR payout re-arm); everything else re-verified clean with evidence |
+| W37-D | apps/MCP/ops second pass (polli tools, ffmpeg exec surface, exa caps, umbrella, workflows, news, infra-watch) | 0 gated findings (rg `--` below gate); informational: 6 filed fixes verified still unmerged upstream (issues 6/7/11/21/85+94/102) |
+| W37-E | gen route body-parse matrix + community residuals + settlement-funnel coverage map | 1 gated finding → issue 117 (declared-header gate bypass); transcription settle companions + community schema verified covered by pending branches |
