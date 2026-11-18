@@ -1,6 +1,9 @@
 import { DEFAULT_EMBEDDING_MODEL } from "@shared/registry/embeddings.ts";
 import { z } from "zod";
-import { MAX_EMBEDDING_BATCH_SIZE } from "@/embeddings/limits.ts";
+import {
+    MAX_EMBEDDING_BATCH_SIZE,
+    MAX_EMBEDDING_PARTS,
+} from "@/embeddings/limits.ts";
 
 // --- Request schemas ---
 
@@ -66,10 +69,10 @@ export const CreateEmbeddingRequestSchema = z
                 z.string(),
                 z.array(z.string()).max(MAX_EMBEDDING_BATCH_SIZE),
                 ContentPartSchema,
-                z.array(ContentPartSchema),
+                z.array(ContentPartSchema).max(MAX_EMBEDDING_PARTS),
             ])
             .meta({
-                description: `Input text or content parts to embed. Supports strings, arrays of strings (max ${MAX_EMBEDDING_BATCH_SIZE} inputs), or multimodal content parts (text, image_url, input_audio, video_url). Gemini supports every listed modality; Cohere Embed v4 supports text and one image per input.`,
+                description: `Input text or content parts to embed. Supports strings, arrays of strings (max ${MAX_EMBEDDING_BATCH_SIZE} inputs), or multimodal content parts (text, image_url, input_audio, video_url; max ${MAX_EMBEDDING_PARTS} parts). Gemini supports every listed modality; Cohere Embed v4 supports text and one image per input.`,
                 example: "Hello world",
             }),
         dimensions: z.number().int().min(128).max(4096).optional().meta({

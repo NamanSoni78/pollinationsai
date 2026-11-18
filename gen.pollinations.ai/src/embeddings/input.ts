@@ -1,8 +1,15 @@
 import { UpstreamError } from "@shared/error.ts";
 import { HTTPException } from "hono/http-exception";
 import { downloadImageAsBase64 } from "@/image/utils/imageDownload.ts";
-import { fetchUserImage, UserImageError } from "@/userImage.ts";
-import { MAX_EMBEDDING_BATCH_SIZE } from "./limits.ts";
+import {
+    fetchUserImage,
+    MAX_IMAGE_SIZE,
+    UserImageError,
+} from "@/userImage.ts";
+import {
+    MAX_EMBEDDING_BATCH_SIZE,
+    MAX_EMBEDDING_PARTS,
+} from "./limits.ts";
 import type {
     ContentPart,
     EmbeddingRequest,
@@ -55,12 +62,35 @@ function parseDataUrl(dataUrl: string): { mimeType: string; data: string } {
     return { mimeType, data };
 }
 
+/**
+ * One aggregate media budget per request, mirroring the chat path's
+ * ImageConversionContext: every fetched or inlined media part of a single
+ * request draws from the same 20 MiB pool (MAX_IMAGE_SIZE), so a parts array
+ * cannot multiply the per-fetch cap into an isolate-killing total.
+ */
+type MediaBudget = { totalBytes: number };
+
+function mediaBudgetError(): UserImageError {
+    return new UserImageError(
+        `Too many media bytes in request (max ${MAX_IMAGE_SIZE} bytes).`,
+        "image_too_large",
+    );
+}
+
 async function urlToInlineData(
     url: string,
     mimeOverride?: string,
+    budget?: MediaBudget,
 ): Promise<GeminiPart> {
     if (url.startsWith("data:")) {
         const { mimeType, data } = parseDataUrl(url);
+        if (budget) {
+            const byteLength = Math.floor((data.length * 3) / 4);
+            if (budget.totalBytes + byteLength > MAX_IMAGE_SIZE) {
+                throw mediaBudgetError();
+            }
+            budget.totalBytes += byteLength;
+        }
         return { inlineData: { mimeType: mimeOverride || mimeType, data } };
     }
     // Every user-supplied media fetch goes through the shared guard: the URL
@@ -68,7 +98,13 @@ async function urlToInlineData(
     // refused) and the 20 MiB streaming cap. Buffering a raw response here
     // instead would let one URL exhaust the worker's memory.
     try {
-        const { bytes, mimeType } = await fetchUserImage(url);
+        const remainingBytes = budget
+            ? MAX_IMAGE_SIZE - budget.totalBytes
+            : MAX_IMAGE_SIZE;
+        const { bytes, mimeType } = await fetchUserImage(url, {
+            maxBytes: remainingBytes,
+        });
+        if (budget) budget.totalBytes += bytes.byteLength;
         return {
             inlineData: {
                 mimeType: mimeOverride || mimeType,
@@ -80,10 +116,23 @@ async function urlToInlineData(
     }
 }
 
-async function imageUrlToInlineData(url: string): Promise<GeminiPart> {
-    if (url.startsWith("data:")) return urlToInlineData(url);
+async function imageUrlToInlineData(
+    url: string,
+    budget?: MediaBudget,
+): Promise<GeminiPart> {
+    if (url.startsWith("data:"))
+        return urlToInlineData(url, undefined, budget);
     try {
-        const { base64, mimeType } = await downloadImageAsBase64(url);
+        const remainingBytes = budget
+            ? MAX_IMAGE_SIZE - budget.totalBytes
+            : undefined;
+        const { base64, mimeType } = await downloadImageAsBase64(
+            url,
+            undefined,
+            remainingBytes,
+        );
+        if (budget)
+            budget.totalBytes += Math.floor((base64.length * 3) / 4);
         return { inlineData: { mimeType, data: base64 } };
     } catch (error) {
         // Carries the code through, the way the image and text funnels do —
@@ -99,14 +148,22 @@ export async function inputToGeminiParts(
 ): Promise<GeminiPart[]> {
     if (typeof input === "string") return [{ text: input }];
     const items = Array.isArray(input) ? input : [input];
+    if (items.length > MAX_EMBEDDING_PARTS) {
+        badRequest(
+            `Too many media parts in request (max ${MAX_EMBEDDING_PARTS}).`,
+        );
+    }
     const parts: GeminiPart[] = [];
+    const budget: MediaBudget = { totalBytes: 0 };
     for (const part of items) {
         if (typeof part === "string") {
             parts.push({ text: part });
         } else if (part.type === "text") {
             parts.push({ text: part.text });
         } else if (part.type === "image_url") {
-            parts.push(await imageUrlToInlineData(part.image_url.url));
+            parts.push(
+                await imageUrlToInlineData(part.image_url.url, budget),
+            );
         } else if (part.type === "input_audio") {
             parts.push({
                 inlineData: {
@@ -119,6 +176,7 @@ export async function inputToGeminiParts(
                 await urlToInlineData(
                     part.video_url.url,
                     part.video_url.mime_type,
+                    budget,
                 ),
             );
         }
