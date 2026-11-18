@@ -32,6 +32,16 @@ describe("createClaudeThinkingTransform — budget mode (Haiku 4.5)", () => {
         });
     });
 
+    it("maps reasoning_effort=max to the top budget, not the medium default", async () => {
+        // "max" was missing from EFFORT_TO_BUDGET and fell through to the
+        // medium default (2048) — below even "high" (4096).
+        const { options } = await budget([], { reasoning_effort: "max" });
+        expect(options.thinking).toEqual({
+            type: "enabled",
+            budget_tokens: 8192,
+        });
+    });
+
     it("passes the budget through unchanged regardless of max_tokens", async () => {
         // Thin proxy: don't shrink the budget to fit max_tokens — if it
         // exceeds max_tokens, Bedrock returns its own clear 400.
@@ -87,6 +97,14 @@ describe("createClaudeThinkingTransform — adaptive mode (Sonnet 4.6 and Opus 4
         const { options } = await adaptive([], { reasoning_effort: "minimal" });
         expect(options.thinking).toEqual({ type: "adaptive" });
         expect(options.output_config).toEqual({ effort: "low" });
+    });
+
+    it("maps reasoning_effort=max to the highest adaptive effort, not medium", async () => {
+        // "max" was missing from EFFORT_TO_OUTPUT_EFFORT and fell through to
+        // the medium default — below even the xhigh mapping ("high").
+        const { options } = await adaptive([], { reasoning_effort: "max" });
+        expect(options.thinking).toEqual({ type: "adaptive" });
+        expect(options.output_config).toEqual({ effort: "high" });
     });
 
     it("never emits budget_tokens (rejected by Opus 4.7/4.8)", async () => {

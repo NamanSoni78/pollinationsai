@@ -52,6 +52,11 @@ export function createReasoningEffortTransform(
                 updated.reasoning_effort = "low";
             } else if (effort === "xhigh") {
                 updated.reasoning_effort = "high";
+            } else if (effort === "max") {
+                // The public enum accepts "max" (f82845b4c4) but
+                // mandatory-reasoning models top out at "high"
+                // (minimax-m2.7: accepts low/medium/high).
+                updated.reasoning_effort = "high";
             }
             return { messages, options: updated };
         }

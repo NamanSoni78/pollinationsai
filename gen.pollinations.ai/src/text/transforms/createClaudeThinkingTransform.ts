@@ -26,6 +26,10 @@ const EFFORT_TO_BUDGET: Record<string, number> = {
     medium: 2048,
     high: 4096,
     xhigh: 8192,
+    // The public enum accepts "max" (f82845b4c4); without this key it fell
+    // through to the medium default (2048) — a silent downgrade below even
+    // "high". Map it to the top budget, same as xhigh.
+    max: 8192,
 };
 
 // reasoning_effort -> output_config.effort for adaptive-mode models.
@@ -37,6 +41,9 @@ const EFFORT_TO_OUTPUT_EFFORT: Record<string, string> = {
     medium: "medium",
     high: "high",
     xhigh: "high",
+    // "max" is not a Claude output_config level; the highest common level is
+    // "high" (same target as xhigh) rather than the medium default.
+    max: "high",
 };
 
 function normalizeEffort(value: unknown): string | undefined {
