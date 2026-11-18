@@ -162,7 +162,16 @@ export async function callWan3FalAPI(
         headers: authorization,
         errorLabel: "Wan 3.0 result fetch failed",
     });
-    const units = falBillableUnits(resultResponse);
+    // The fal job completed at this point, so fal bills it; every failure
+    // below settles the requested duration.
+    const paidUsage = { completionVideoSeconds: duration };
+    let units: number;
+    try {
+        units = falBillableUnits(resultResponse);
+    } catch (error) {
+        // The receipt header is missing, not the billing: the job ran.
+        throw Object.assign(error as object, { billedUsage: paidUsage });
+    }
     const result = await readJson<FalWan3Result>(
         resultResponse,
         "Wan 3.0 returned an invalid result",
@@ -170,6 +179,14 @@ export async function callWan3FalAPI(
     if (!result.video?.url) {
         throw UpstreamError.fromProvider(502, {
             message: "Wan 3.0 returned no video",
+            billedUsage: {
+                ...paidUsage,
+                ...(typeof result.duration === "number" &&
+                Number.isFinite(result.duration) &&
+                result.duration > 0
+                    ? { completionVideoSeconds: result.duration }
+                    : {}),
+            },
         });
     }
     // Bill the generated length fal reports, not the requested one.
@@ -181,6 +198,8 @@ export async function callWan3FalAPI(
     ) {
         throw UpstreamError.fromProvider(502, {
             message: "Wan 3.0 returned no video duration",
+            // The video URL is in hand and fal billed the job.
+            billedUsage: paidUsage,
         });
     }
     // fal also bills the reference video seconds at the per-second rate, but
@@ -198,6 +217,15 @@ export async function callWan3FalAPI(
 
     const videoResponse = await fetchUpstream(result.video.url, {
         errorLabel: "Failed to download Wan 3.0 output",
+    }).catch((error: unknown) => {
+        // Everything is known here: settle the full usage the success path
+        // would report.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds: outputSeconds,
+                ...(inputSeconds > 0 ? { promptVideoSeconds: inputSeconds } : {}),
+            },
+        });
     });
     return {
         buffer: Buffer.from(await videoResponse.arrayBuffer()),

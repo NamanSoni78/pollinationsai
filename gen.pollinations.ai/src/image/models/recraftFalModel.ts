@@ -74,6 +74,12 @@ export async function callRecraftFlashFalAPI(
     const imageResponse = await fetchUpstream(image.url, {
         signal: AbortSignal.timeout(RECRAFT_FLASH_FAL_TIMEOUT_MS),
         errorLabel: "Failed to download Recraft Fal output",
+    }).catch((error: unknown) => {
+        // fal billed the completed generation; a failed download must still
+        // settle it.
+        throw Object.assign(error as object, {
+            billedUsage: { completionImageTokens },
+        });
     });
 
     return {

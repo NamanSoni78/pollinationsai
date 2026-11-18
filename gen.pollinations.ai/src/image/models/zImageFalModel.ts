@@ -69,6 +69,14 @@ export async function callZImageFalAPI(
     const imageResponse = await fetchUpstream(image.url, {
         signal: AbortSignal.timeout(ZIMAGE_FAL_TIMEOUT_MS),
         errorLabel: "Failed to download Z-Image Fal output",
+    }).catch((error: unknown) => {
+        // fal billed the completed generation; a failed download must still
+        // settle the flat image unit (the per-MP adjustment is a success-path
+        // receipt, so the residual megapixel delta is recorded in the issue
+        // report).
+        throw Object.assign(error as object, {
+            billedUsage: { completionImageTokens: 1 },
+        });
     });
 
     return {

@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import googleCloudAuth from "@/text/auth/googleCloudAuth.ts";
 import { getImageEnv } from "../env.ts";
@@ -213,9 +214,18 @@ const generateVeoVideo = async (
         });
     }
 
-    // Step 2: Poll for completion using fetchPredictOperation
-
-    const videoBuffer = await pollVeoOperation(generateData.name, accessToken);
+    // Step 2: Poll for completion using fetchPredictOperation. Once the
+    // operation is accepted, Vertex renders and bills it even if we fail to
+    // deliver the result, so every failure from here on settles the usage.
+    const paidUsage: Usage = {
+        completionVideoSeconds: durationSeconds,
+        ...(generateAudio ? { completionAudioSeconds: durationSeconds } : {}),
+    };
+    const videoBuffer = await pollVeoOperation(
+        generateData.name,
+        accessToken,
+        paidUsage,
+    );
 
     return {
         buffer: videoBuffer,
@@ -296,11 +306,15 @@ export async function callVeoReplicateAPI(
  * Poll Veo operation until completion using fetchPredictOperation
  * @param {string} operationName - The operation name from generate response
  * @param {string} accessToken - Google Cloud access token
+ * @param {Usage} paidUsage - Usage Vertex bills once the operation is accepted;
+ *   attached to every post-acceptance failure so the caller still pays what
+ *   the provider already rendered or will finish server-side.
  * @returns {Promise<Buffer>} - The video buffer
  */
 async function pollVeoOperation(
     operationName: string,
     accessToken: string,
+    paidUsage: Usage,
 ): Promise<Buffer> {
     const PROJECT_ID = getImageEnv("GOOGLE_PROJECT_ID");
 
@@ -382,17 +396,22 @@ async function pollVeoOperation(
                 if (video.gcsUri) {
                     // If we get a GCS URI instead of base64, throw error
                     // (This shouldn't happen with the current API but just in case)
+                    // The video was generated, so Vertex bills it.
                     throw UpstreamError.fromProvider(500, {
                         message:
                             "Video returned as GCS URI which is not supported",
                         requestUrl: new URL(pollUrl),
+                        billedUsage: paidUsage,
                     });
                 }
             }
 
+            // The operation completed without an error, so Vertex considers
+            // it done and bills it even though we found no video payload.
             throw UpstreamError.fromProvider(500, {
                 message: "No video data in response",
                 requestUrl: new URL(pollUrl),
+                billedUsage: paidUsage,
             });
         }
 
@@ -401,8 +420,11 @@ async function pollVeoOperation(
         delayMs = Math.min(delayMs * 1.2, 30000); // Exponential backoff, cap at 30s
     }
 
+    // The operation was accepted and finishes server-side after we stop
+    // polling, so the timeout still carries the usage Vertex bills.
     throw UpstreamError.fromProvider(504, {
         message: "Video generation timed out after 3 minutes",
         requestUrl: new URL(pollUrl),
+        billedUsage: paidUsage,
     });
 }
