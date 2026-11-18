@@ -3464,7 +3464,11 @@ const TEXT_BASE_SERVICES = {
             "Budget-friendly reasoning with room for very long documents",
         inputModalities: ["text", "image", "video"],
         outputModalities: ["text"],
-        maxReferenceImages: 20, // Bedrock Converse image limit.
+        // AWS Nova 2 Developer Guide, multimodal-input limits: images embedded
+        // in the request are capped at 5 objects (25 MB total). The previous
+        // value (20) was Claude-on-Bedrock's limit; every 6-20 image request
+        // downloaded all sources and then deterministically 400'd at AWS.
+        maxReferenceImages: 5,
         tools: true,
         reasoning: true,
         contextLength: 1048576,
