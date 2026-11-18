@@ -3,6 +3,8 @@ import {
     mediaResponseHeaders,
 } from "@shared/utils/api-docs.ts";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
+import { HTTPException } from "hono/http-exception";
 import { describeRoute } from "hono-openapi";
 import {
     handleStemSeparation,
@@ -22,8 +24,31 @@ import {
     generationAccess,
 } from "../utils/generation-access.ts";
 
+const STEM_UPLOAD_BODY_LIMIT_BYTES = 52 * 1024 * 1024;
+
+/**
+ * Pre-parse cap for the stem-separation upload. This router is mounted
+ * separately from the audio routes, and its request body is fully buffered
+ * by `resolveModel` and `prepareGenerationRequest` before `generationAccess`
+ * can reject an anonymous request, so an un-gated body kills the shared
+ * isolate long before the documented 50 MB file check inside the handler.
+ * The cap mirrors the family precedent (52 MiB multipart envelope, 32 MiB
+ * JSON ceilings on other routes) and, unlike a content-length-only gate,
+ * hono's `bodyLimit` also enforces the ceiling on streamed bodies that
+ * arrive without a declaration.
+ */
+export const stemBodyLimit = bodyLimit({
+    maxSize: STEM_UPLOAD_BODY_LIMIT_BYTES,
+    onError: () => {
+        throw new HTTPException(413, {
+            message: "Request body exceeds the 52 MiB limit",
+        });
+    },
+});
+
 export const stemSeparationRoutes = new Hono<Env>()
     .use("/alpha/audio/stem-separation", edgeRateLimit)
+    .use("/alpha/audio/stem-separation", stemBodyLimit)
     .use("/alpha/audio/stem-separation", auth(), balance)
     .post(
         "/alpha/audio/stem-separation",
