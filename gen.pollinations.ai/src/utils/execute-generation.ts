@@ -10,6 +10,7 @@ import type {
     GenerationOutcome,
 } from "@/middleware/generation-deduplication.ts";
 import { logger } from "@/middleware/logger.ts";
+import { edgeRateLimit } from "@/middleware/rate-limit-edge.ts";
 import { generationExecutorRoutes } from "@/routes/generation-executor.ts";
 import { nameD1Caller, withD1Calls } from "../d1-calls.ts";
 
@@ -186,9 +187,14 @@ function handoffOutcome(outcome: GenerationOutcome): HandoffOutcome {
 }
 
 /** Runs a job handed off by a coordinator alarm, under this request's zone. */
-export const generationHandoffRoutes = new Hono<Env>().post(
-    "/:id{[0-9a-f]{64}}",
-    async (c) => {
+export const generationHandoffRoutes = new Hono<Env>()
+    // The nonce check lives inside the Durable Object, so an unthrottled
+    // request otherwise performs a DO stub call (and an on-demand DO
+    // instantiation) for any 64-hex id before it can be refused. Real
+    // handoffs are internal and low-volume; internal calls arrive without
+    // a client IP and are not limited.
+    .use("*", edgeRateLimit)
+    .post("/:id{[0-9a-f]{64}}", async (c) => {
         const coordinators = c.env.GENERATION_COORDINATOR;
         let id: DurableObjectId;
         try {
@@ -216,5 +222,4 @@ export const generationHandoffRoutes = new Hono<Env>().post(
         );
         c.executionCtx.waitUntil(settlement);
         return c.json(handoffOutcome(result));
-    },
-);
+    });

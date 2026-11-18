@@ -152,3 +152,72 @@ describe("enter rate limit", () => {
         expect(statuses).toEqual(Array(10).fill(200));
     });
 });
+
+describe("edge rate limit coverage on routes outside proxyRoutes", () => {
+    function limitedEnv() {
+        return {
+            ...env,
+            ENVIRONMENT: "production" as const,
+            EDGE_RATE_LIMITER: limiter(0),
+            EDGE_IP_RATE_LIMITER: limiter(0),
+        };
+    }
+
+    it("refuses /v1/messages before its body is parsed", async () => {
+        const ctx = createExecutionContext();
+        // Invalid JSON: without a limiter on the route this is a 400 from
+        // the body validator, proving the parse ran — after the fix the
+        // limiter answers before the 32 MiB body is read.
+        const response = await worker.fetch(
+            new Request("https://gen.pollinations.ai/v1/messages", {
+                method: "POST",
+                headers: {
+                    "CF-Connecting-IP": "203.0.113.7",
+                    "Content-Type": "application/json",
+                },
+                body: "{",
+            }),
+            limitedEnv(),
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+        expect(response.status).toBe(429);
+        expect(response.headers.get("Retry-After")).toBe("10");
+    });
+
+    it("refuses /internal/generation handoffs before the coordinator RPC", async () => {
+        const ctx = createExecutionContext();
+        // The nonce check lives inside the Durable Object; without a
+        // limiter this request performs a DO stub call (instantiating an
+        // attacker-chosen object) and then 404s.
+        const response = await worker.fetch(
+            new Request(
+                `https://gen.pollinations.ai/internal/generation/${"a".repeat(64)}`,
+                {
+                    method: "POST",
+                    headers: {
+                        "CF-Connecting-IP": "203.0.113.7",
+                        "x-generation-handoff": "x",
+                    },
+                },
+            ),
+            limitedEnv(),
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+        expect(response.status).toBe(429);
+    });
+
+    it("refuses /openapi.json floods", async () => {
+        const ctx = createExecutionContext();
+        const response = await worker.fetch(
+            new Request("https://gen.pollinations.ai/openapi.json", {
+                headers: { "CF-Connecting-IP": "203.0.113.7" },
+            }),
+            limitedEnv(),
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+        expect(response.status).toBe(429);
+    });
+});
