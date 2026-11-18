@@ -17,7 +17,7 @@ import type { AuthVariables } from "@/middleware/auth.ts";
 import type { BalanceVariables } from "@/middleware/balance.ts";
 import type { LoggerVariables } from "@/middleware/logger.ts";
 import type { ModelVariables } from "@/middleware/model.ts";
-import { getEstimatedPrice } from "@/utils/model-stats.ts";
+import { getEstimatedPrice, type PerMegapixelRequestBound } from "@/utils/model-stats.ts";
 import { keyBudgetExhausted, requireFunds } from "@/utils/refusals.ts";
 import { enforceModelRateLimit } from "./model-rate-limit.ts";
 
@@ -31,6 +31,69 @@ type GenerationAccessEnv = {
     Variables: GenerationAccessVariables;
 };
 
+/**
+ * Request facts that bound a per-megapixel image bill, read from the
+ * validated query (GET /image and /video) or JSON body (POST /v1/images/*)
+ * after the route's zod validator has run. Other routes have no such
+ * fields, so the bound is undefined and their estimate is unchanged.
+ */
+export function perMegapixelRequestBound(
+    // The Env generic is deliberately loose: the middleware chain's contexts
+    // carry different schema types, and valid("query"/"json") is only
+    // present on routes whose zod validator ran before the gate.
+    c: {
+        req: {
+            valid: (target: any) => any;
+        };
+    },
+): PerMegapixelRequestBound | undefined {
+    let width: number | undefined;
+    let height: number | undefined;
+    let imageCount: number | undefined;
+    for (const target of ["query", "json"] as const) {
+        let parsed: unknown;
+        try {
+            parsed = c.req.valid(target);
+        } catch {
+            parsed = undefined;
+        }
+        if (!parsed || typeof parsed !== "object") continue;
+        const body = parsed as {
+            width?: unknown;
+            height?: unknown;
+            size?: unknown;
+            image?: unknown;
+        };
+        if (typeof body.width === "number" && typeof body.height === "number") {
+            width = body.width;
+            height = body.height;
+        } else if (typeof body.size === "string") {
+            const dims = body.size.split(/x/i).map((s) => Number.parseInt(s, 10));
+            if (dims.length === 2 && dims.every(Number.isFinite)) {
+                [width, height] = dims;
+            }
+        }
+        const images = body.image;
+        if (Array.isArray(images)) {
+            imageCount = images.length;
+        } else if (typeof images === "string" && images) {
+            imageCount = images.includes("|")
+                ? images.split("|").filter(Boolean).length
+                : 1;
+        }
+        if (width !== undefined) break;
+    }
+    if (width === undefined || height === undefined || height <= 0) {
+        return undefined;
+    }
+    return {
+        requestedMegapixels: (width * height) / 1_000_000,
+        ...(imageCount !== undefined && imageCount > 0
+            ? { referenceImageCount: imageCount }
+            : {}),
+    };
+}
+
 export async function checkBalance(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
@@ -38,6 +101,7 @@ export async function checkBalance(
         ModelVariables["model"],
         "resolved" | "definition"
     > = vars.model,
+    request?: PerMegapixelRequestBound,
 ): Promise<void> {
     const { auth, balance, log } = vars;
     if (!auth.user?.id) return;
@@ -48,6 +112,7 @@ export async function checkBalance(
             await getModelStats(env.KV, log),
             model.resolved,
             model.definition,
+            request,
         ),
         Boolean(auth.apiKey?.byopMarkupApplies),
     );
@@ -117,10 +182,17 @@ export async function requireModelAttemptAccess(
     candidate: FallbackCandidate,
 ): Promise<void> {
     if (candidate.definition && c.var.model.requested.includes(",")) {
-        await checkBalance(c.var, c.env, {
-            resolved: candidate.id,
-            definition: candidate.definition,
-        });
+        await checkBalance(
+            c.var,
+            c.env,
+            {
+                resolved: candidate.id,
+                definition: candidate.definition,
+            },
+            perMegapixelRequestBound(
+                c as unknown as Parameters<typeof perMegapixelRequestBound>[0],
+            ),
+        );
         await reserveApiKeyBudget(c.var, c.env);
     }
     await enforceModelRateLimit(c, candidate);
@@ -166,10 +238,11 @@ export const apiKeyBudgetReservation = createMiddleware<GenerationAccessEnv>(
 export async function requireGenerationAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    request?: PerMegapixelRequestBound,
 ): Promise<void> {
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
-    await checkBalance(vars, env);
+    await checkBalance(vars, env, vars.model, request);
 }
 
 /**
@@ -180,9 +253,10 @@ export async function requireGenerationAccess(
 async function requireListAccess(
     vars: GenerationAccessVariables,
     env: CloudflareBindings,
+    request?: PerMegapixelRequestBound,
 ): Promise<void> {
     if (!vars.model.requested.includes(",")) {
-        return requireGenerationAccess(vars, env);
+        return requireGenerationAccess(vars, env, request);
     }
     vars.auth.requireUser();
     vars.auth.requireModelAccess();
@@ -196,7 +270,7 @@ async function requireListAccess(
     let refusal: unknown;
     for (const model of listed) {
         try {
-            return await checkBalance(vars, env, model);
+            return await checkBalance(vars, env, model, request);
         } catch (error) {
             if (!(error instanceof PaymentRequiredError)) throw error;
             refusal ??= error;
@@ -207,7 +281,13 @@ async function requireListAccess(
 
 export const generationAccess = createMiddleware<GenerationAccessEnv>(
     async (c, next) => {
-        await requireListAccess(c.var, c.env);
+        await requireListAccess(
+            c.var,
+            c.env,
+            perMegapixelRequestBound(
+                c as unknown as Parameters<typeof perMegapixelRequestBound>[0],
+            ),
+        );
         await next();
     },
 );

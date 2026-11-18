@@ -145,6 +145,11 @@ const IMAGE_BASE_SERVICES = {
         inputModalities: ["text", "image"],
         outputModalities: ["image"],
         maxReferenceImages: 8, // Azure FLUX.2 Pro route limit.
+        // BFL documents the FLUX.2 4 MP per-image ceiling: inputs over
+        // 4 MP are resized and generation is capped at 4 MP (bfl.ai FAQ;
+        // Replicate's flux-2 logs show the same resize), so the
+        // per-megapixel preflight worst case uses it as the bound.
+        maxInputMegapixels: 4,
     },
     "black-forest-labs/flux-3-image": {
         aliases: [],
@@ -254,6 +259,11 @@ const IMAGE_BASE_SERVICES = {
         inputModalities: ["text", "image"],
         outputModalities: ["image"],
         maxReferenceImages: 10,
+        // BFL documents the FLUX.2 4 MP per-image ceiling: inputs over
+        // 4 MP are resized and generation is capped at 4 MP (bfl.ai FAQ;
+        // Replicate's flux-2 logs show the same resize), so the
+        // per-megapixel preflight worst case uses it as the bound.
+        maxInputMegapixels: 4,
     },
     "black-forest-labs/flux.2-max": {
         aliases: [],
@@ -296,6 +306,11 @@ const IMAGE_BASE_SERVICES = {
         inputModalities: ["text", "image"],
         outputModalities: ["image"],
         maxReferenceImages: 8, // Replicate and OpenRouter both cap the API at 8 reference images.
+        // BFL documents the FLUX.2 4 MP per-image ceiling: inputs over
+        // 4 MP are resized and generation is capped at 4 MP (bfl.ai FAQ;
+        // Replicate's flux-2 logs show the same resize), so the
+        // per-megapixel preflight worst case uses it as the bound.
+        maxInputMegapixels: 4,
     },
     "microsoft/mai-image-2.6-flash": {
         aliases: ["microsoft/mai-image-2.5-flash"],
