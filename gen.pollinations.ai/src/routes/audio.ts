@@ -1665,6 +1665,67 @@ function createConditionedCompositionPlan(opts: {
     };
 }
 
+/**
+ * Both ElevenLabs Music models' registry maxDuration (300 s). A reference
+ * longer than the maximum output cannot be fully conditioned (the auto range
+ * clamps to 30 s), and ingestion is billed per second.
+ */
+const MUSIC_MAX_REFERENCE_SECONDS = 300;
+
+/**
+ * Validate a caller-provided composition_plan before anything is paid: every
+ * chunk must declare `duration_ms` or a `range`, and the plan's total must
+ * stay within maxDuration — the same contract `resolveAudioDuration`
+ * enforces on the plain-prompt path.
+ */
+function validateCallerCompositionPlan(
+    modelName: string,
+    plan: unknown,
+): void {
+    if (typeof plan !== "object" || plan === null) return;
+    const chunks = (plan as { chunks?: unknown }).chunks;
+    if (!Array.isArray(chunks) || chunks.length === 0) return;
+    let totalMs = 0;
+    for (const chunk of chunks) {
+        if (typeof chunk !== "object" || chunk === null) {
+            throw new UpstreamError(400 as ContentfulStatusCode, {
+                message: `${modelName} composition_plan chunks must be objects`,
+            });
+        }
+        const c = chunk as {
+            duration_ms?: unknown;
+            range?: { start_ms?: unknown; end_ms?: unknown };
+        };
+        let ms: number | undefined;
+        if (
+            typeof c.duration_ms === "number" &&
+            Number.isFinite(c.duration_ms)
+        ) {
+            ms = c.duration_ms;
+        } else if (
+            c.range &&
+            typeof c.range.start_ms === "number" &&
+            typeof c.range.end_ms === "number" &&
+            Number.isFinite(c.range.start_ms) &&
+            Number.isFinite(c.range.end_ms)
+        ) {
+            ms = c.range.end_ms - c.range.start_ms;
+        }
+        if (ms === undefined || !Number.isFinite(ms) || ms <= 0) {
+            throw new UpstreamError(400 as ContentfulStatusCode, {
+                message: `${modelName} composition_plan chunks must declare a positive duration_ms or a time range`,
+            });
+        }
+        totalMs += ms;
+    }
+    const maxMs = MUSIC_MAX_REFERENCE_SECONDS * 1000;
+    if (totalMs > maxMs) {
+        throw new UpstreamError(400 as ContentfulStatusCode, {
+            message: `Unsupported duration for ${modelName}: composition_plan totals ${(totalMs / 1000).toFixed(1)}s; accepts 3-${MUSIC_MAX_REFERENCE_SECONDS} seconds`,
+        });
+    }
+}
+
 async function uploadMusicReference(opts: {
     file: File;
     modelId: (typeof ELEVENLABS_MUSIC_MODEL_IDS)[ElevenLabsMusicModelName];
@@ -1750,6 +1811,10 @@ export async function generateMusic(
         });
     }
 
+    if (opts.compositionPlan !== undefined) {
+        validateCallerCompositionPlan(modelName, opts.compositionPlan);
+    }
+
     const modelId = ELEVENLABS_MUSIC_MODEL_IDS[modelName];
     let uploadedSongId: string | undefined;
     let uploadedReferenceDuration: number | undefined;
@@ -1770,6 +1835,15 @@ export async function generateMusic(
             });
         }
         uploadedReferenceDuration = getUploadedMusicDurationSeconds(upload);
+        if (uploadedReferenceDuration > MUSIC_MAX_REFERENCE_SECONDS) {
+            // The upload already billed the ingestion seconds; settle the
+            // caller's charge (issue-25 billedUsage pattern) but never
+            // dispatch the generation leg.
+            throw new UpstreamError(413 as ContentfulStatusCode, {
+                message: `reference_audio is too long: ${uploadedReferenceDuration}s (max ${MUSIC_MAX_REFERENCE_SECONDS}s)`,
+                billedUsage: createAudioSecondsUsage(uploadedReferenceDuration),
+            });
+        }
         if (conditioningRef === undefined) {
             conditioningRef = {
                 song_id: uploadedSongId,
@@ -1815,7 +1889,12 @@ export async function generateMusic(
         elevenLabsBody.prompt = prompt;
     }
     if (durationSeconds !== undefined && compositionPlan === undefined) {
-        elevenLabsBody.music_length_ms = Math.round(durationSeconds * 1000);
+        // Defensive clamp (resolveAudioDuration already validates); mirrors
+        // generateSoundEffect's clamp so the provider never sees an
+        // out-of-contract music_length_ms.
+        elevenLabsBody.music_length_ms = Math.round(
+            Math.min(durationSeconds, MUSIC_MAX_REFERENCE_SECONDS) * 1000,
+        );
     }
     if (forceInstrumental && compositionPlan === undefined) {
         elevenLabsBody.force_instrumental = true;
@@ -3519,6 +3598,10 @@ export async function generateStableAudio3Large(opts: {
                         `Stable Audio 3 Large polling failed: ${pollResponse.status}`,
                     upstreamStatus: pollResponse.status,
                     responseBody: errorText,
+                    // Stability charged the flat fee at submit; the caller
+                    // settles it even though polling failed (issue-25
+                    // billedUsage pattern).
+                    billedUsage: createAudioTokenUsage(1),
                 });
             }
             continue;
@@ -3546,6 +3629,11 @@ export async function generateStableAudio3Large(opts: {
 
     throw new UpstreamError(504 as ContentfulStatusCode, {
         message: "Stable Audio 3 Large generation timed out",
+        // Stability charges the flat 26-credit generation fee at submit, so
+        // an abandoned poll must still settle the caller's charge
+        // (issue-25 billedUsage pattern) instead of returning an unbilled
+        // 504 while the platform eats the cost.
+        billedUsage: createAudioTokenUsage(1),
     });
 }
 
