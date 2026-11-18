@@ -17,6 +17,8 @@ import { toUpstreamError } from "../model3d/modelUtils.ts";
 export const SONILO_MODEL = "sonilo/sonilo-1.1-sfx";
 const ENDPOINT = "sonilo/v1.1/video-to-sound-effects";
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+/** Audio-family convention cap on the reference video's billed seconds. */
+const SONILO_MAX_VIDEO_SECONDS = 380;
 
 /**
  * Sonilo returns sound effects timed to the whole `reference_video` as one
@@ -67,6 +69,14 @@ export async function generateSoniloSfx(opts: {
         throw toUpstreamError(error);
     }
     const units = falBillableUnits(response);
+    if (units > SONILO_MAX_VIDEO_SECONDS) {
+        // fal already billed the video's seconds; settle the caller's
+        // charge (issue-25 billedUsage pattern) but deliver no output.
+        throw new UpstreamError(413, {
+            message: `${SONILO_MODEL} reference_video is too long: fal billed ${units}s (max ${SONILO_MAX_VIDEO_SECONDS}s)`,
+            billedUsage: createCompletionAudioSecondsUsage(units),
+        });
+    }
     const data = (await response.json()) as { audio?: { url?: string } };
     if (!data.audio?.url) {
         throw new UpstreamError(502, {
