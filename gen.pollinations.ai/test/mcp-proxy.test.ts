@@ -749,3 +749,98 @@ test("bills FFmpeg MCP usage when authorized with an ag_ run token", async () =>
         packBalance: 0,
     });
 });
+
+test("rejects an oversized MCP JSON-RPC body before dispatching it", async () => {
+    const { key } = await createTestApiKey({ user: { tierBalance: 1 } });
+    // ~9 MB of JSON-RPC tool arguments against the 8 MiB MCP body cap —
+    // the route family was the one authenticated JSON surface on gen
+    // without a body limit (chat/messages carry 32/100 MiB, image JSON
+    // routes their own). 8 MiB keeps the umbrella's documented 5 MB
+    // deploySite payloads working, so the oversized probe must exceed it.
+    const payload = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+            name: "listModels",
+            arguments: { filler: "x".repeat(9 * 1024 * 1024) },
+        },
+    });
+
+    const response = await SELF.fetch(
+        "https://gen.pollinations.ai/mcp/ffmpeg",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+            },
+            body: payload,
+        },
+    );
+
+    expect(response.status).toBe(413);
+});
+
+test("rejects an oversized chunked MCP JSON-RPC body without a content-length", async () => {
+    const { key } = await createTestApiKey({ user: { tierBalance: 1 } });
+    const payload = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+            name: "listModels",
+            arguments: { filler: "x".repeat(9 * 1024 * 1024) },
+        },
+    });
+    // Stream the same oversized payload with no content-length header so
+    // only a running byte count can reject it.
+    const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+            const bytes = new TextEncoder().encode(payload);
+            for (let offset = 0; offset < bytes.length; offset += 64 * 1024) {
+                controller.enqueue(
+                    bytes.slice(offset, offset + 64 * 1024),
+                );
+            }
+            controller.close();
+        },
+    });
+
+    const response = await SELF.fetch("https://gen.pollinations.ai/mcp/ffmpeg", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+        },
+        body,
+    });
+
+    expect(response.status).toBe(413);
+});
+
+test("still dispatches a small MCP JSON-RPC body under the cap", async () => {
+    const { key } = await createTestApiKey({ user: { tierBalance: 1 } });
+    const response = await SELF.fetch(
+        "https://gen.pollinations.ai/mcp/ffmpeg",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${key}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                ...MCP_REQUEST,
+                params: {
+                    name: "listModels",
+                    arguments: { filler: "x".repeat(64 * 1024) },
+                },
+            }),
+        },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+        result: { content: [{ type: "text", text: "ffmpeg proxied" }] },
+    });
+});

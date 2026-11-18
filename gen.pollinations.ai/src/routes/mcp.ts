@@ -165,6 +165,72 @@ async function settleUsage(
     );
 }
 
+const MAX_MCP_BODY_BYTES = 8 * 1024 * 1024;
+
+// Read the JSON-RPC message bounded at MAX_MCP_BODY_BYTES: JSON-RPC tool
+// arguments are KB-scale, and this keeps one authenticated POST from
+// buffering a transport-sized body into the shared gen isolate before it is
+// forwarded to the server binding — the route family was the one
+// authenticated JSON surface on gen without a body cap (chat/messages carry
+// 32/100 MiB, the image JSON routes their own). 8 MiB keeps the umbrella's
+// documented 5 MB deploySite payloads routed through gen working — the same
+// size the standalone workers' cap chose.
+async function readMcpMessage(
+    request: Request,
+): Promise<{ method?: unknown } | null> {
+    const declared = Number.parseInt(
+        request.headers.get("content-length") ?? "",
+        10,
+    );
+    if (Number.isFinite(declared) && declared > MAX_MCP_BODY_BYTES) {
+        throw new HTTPException(413, {
+            message: "MCP request body exceeds 8 MiB",
+        });
+    }
+    const clone = request.clone();
+    const reader = clone.body?.getReader();
+    if (!reader) {
+        return clone
+            .json<{ method?: unknown } | null>()
+            .catch(() => null);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > MAX_MCP_BODY_BYTES) {
+                // Best-effort drop of the branch, the shape ask-jev's probe
+                // uses: a teed clone's cancel only settles once the other
+                // branch finishes too, and this branch is discarded either
+                // way.
+                void reader.cancel().catch(() => {});
+                throw new HTTPException(413, {
+                    message: "MCP request body exceeds 8 MiB",
+                });
+            }
+            chunks.push(value);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    try {
+        return JSON.parse(new TextDecoder().decode(bytes)) as {
+            method?: unknown;
+        } | null;
+    } catch {
+        return null;
+    }
+}
+
 export const mcpRoutes = new Hono<Env>()
     .use("/mcp", edgeRateLimit)
     .use("/mcp/*", edgeRateLimit)
@@ -185,10 +251,7 @@ export const mcpRoutes = new Hono<Env>()
         const user = c.var.auth.requireUser();
         const message =
             c.req.method === "POST"
-                ? await c.req.raw
-                      .clone()
-                      .json<{ method?: unknown } | null>()
-                      .catch(() => null)
+                ? await readMcpMessage(c.req.raw)
                 : null;
         if (Array.isArray(message)) {
             throw new HTTPException(400, {
