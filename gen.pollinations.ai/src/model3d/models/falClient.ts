@@ -16,6 +16,12 @@ import { getModel3dEnv } from "../env.ts";
 
 const QUEUE_BASE = "https://queue.fal.run";
 const POLL_INTERVAL_MS = 5000;
+// A queue job that never terminates must not pin the request (or the
+// generation alarm) forever. 20 minutes keeps the documented slow-job
+// polling semantics (an 11-minute triposr job is pinned by test) while
+// bounding the wait when no external timeout arrives.
+const JOB_TIMEOUT_MS = 20 * 60 * 1_000;
+const TIMEOUT_MESSAGE = "fal.ai generation timed out after 1200 seconds";
 
 export class FalError extends Error {
     constructor(
@@ -34,7 +40,11 @@ interface FalQueueSubmitResponse {
 }
 
 interface FalQueueStatusResponse {
-    status: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED";
+    // FAILED is fal's documented terminal status for a job that ran and did
+    // not produce output; any other unknown value is also terminal-garbage,
+    // not a pollable state.
+    status?: "IN_QUEUE" | "IN_PROGRESS" | "COMPLETED" | "FAILED" | string;
+    error?: string;
 }
 
 export interface FalModelMesh {
@@ -69,27 +79,48 @@ export async function runFalJobResponse(
     opts: RunFalJobOptions,
     apiKey = requireFalApiKey(),
 ): Promise<Response> {
+    const deadline = Date.now() + JOB_TIMEOUT_MS;
     const submitted = await falFetch(apiKey, {
         method: "POST",
         url: `${QUEUE_BASE}/${opts.endpoint}`,
         body: opts.input,
+        deadline,
     });
     const submission = (await submitted.json()) as FalQueueSubmitResponse;
 
     // Fal still runs and bills a job we stop polling, so wait until it
-    // finishes. The durable generation alarm bounds the wait.
+    // finishes. The deadline bounds the wait even when the durable
+    // generation alarm is slow or absent.
     while (true) {
-        await sleep(POLL_INTERVAL_MS);
+        await sleep(Math.min(POLL_INTERVAL_MS, remainingTime(deadline)));
         const polled = await falFetch(apiKey, {
             method: "GET",
             url: submission.status_url,
+            deadline,
         });
         const status = (await polled.json()) as FalQueueStatusResponse;
         if (status.status === "COMPLETED") {
             return falFetch(apiKey, {
                 method: "GET",
                 url: submission.response_url,
+                deadline,
             });
+        }
+        if (status.status === "FAILED") {
+            throw new FalError(
+                status.error ||
+                    `fal.ai job FAILED: ${submission.status_url}`,
+                502,
+            );
+        }
+        if (
+            status.status !== "IN_QUEUE" &&
+            status.status !== "IN_PROGRESS"
+        ) {
+            throw new FalError(
+                `fal.ai returned an invalid status: ${JSON.stringify(status.status)}`,
+                502,
+            );
         }
     }
 }
@@ -118,6 +149,7 @@ async function falFetch(
         method: "GET" | "POST";
         url: string;
         body?: Record<string, unknown>;
+        deadline: number;
     },
 ): Promise<Response> {
     const headers: Record<string, string> = {
@@ -125,11 +157,25 @@ async function falFetch(
     };
     if (args.body) headers["Content-Type"] = "application/json";
 
-    const response = await fetch(args.url, {
-        method: args.method,
-        headers,
-        body: args.body ? JSON.stringify(args.body) : undefined,
-    });
+    const signal = AbortSignal.timeout(remainingTime(args.deadline));
+    let response: Response;
+    try {
+        response = await fetch(args.url, {
+            method: args.method,
+            headers,
+            body: args.body ? JSON.stringify(args.body) : undefined,
+            signal,
+        });
+    } catch (error) {
+        if (signal.aborted || Date.now() >= args.deadline) {
+            throw new FalError(TIMEOUT_MESSAGE, 504);
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        throw new FalError(
+            `fal.ai ${args.method} ${args.url} failed: ${message}`,
+            502,
+        );
+    }
 
     if (!response.ok) {
         const text = await response.text().catch(() => "<no body>");
@@ -140,6 +186,14 @@ async function falFetch(
         );
     }
     return response;
+}
+
+function remainingTime(deadline: number): number {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+        throw new FalError(TIMEOUT_MESSAGE, 504);
+    }
+    return remaining;
 }
 
 export function classifyFalHttpStatus(httpStatus: number): number {
