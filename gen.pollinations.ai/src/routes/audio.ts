@@ -13,7 +13,9 @@ import {
     resolveElevenLabsVoiceId,
 } from "@shared/registry/audio.ts";
 import {
+    calculateUsageBilling,
     durationError,
+    isFreeModel,
     type ModelDefinition,
 } from "@shared/registry/registry.ts";
 import {
@@ -55,12 +57,15 @@ import {
     apiKeyBudgetReservation,
     generationAccess,
     requireGenerationAccess,
+    reserveApiKeyBudget,
 } from "@/utils/generation-access.ts";
+import { requireFunds } from "@/utils/refusals.ts";
 import {
     callCommunitySpeechEndpoint,
     callCommunityTranscriptionEndpoint,
 } from "../audio/communityEndpoint.ts";
 import { generateLyria35 } from "../audio/lyria.ts";
+import { stemInputSeconds } from "../audio/stem-separation.ts";
 import { transcribeMai } from "../audio/mai-transcription.ts";
 import { generateSoniloSfx, SONILO_MODEL } from "../audio/sonilo.ts";
 import {
@@ -1729,6 +1734,97 @@ function getUploadedMusicDurationSeconds(upload: {
     }, 0);
 
     return totalMilliseconds / 1000;
+}
+
+/**
+ * A caller-supplied composition_plan replaces the `duration` parameter
+ * upstream (`music_length_ms` is only sent when no plan is present), so the
+ * plan's chunk durations are the request's real output length. Validate them
+ * against the model's documented duration range — the same contract
+ * `resolveAudioDuration` enforces on the `duration` parameter — and return the
+ * total for the funds gate.
+ */
+export function validatedMusicPlanSeconds(
+    plan: unknown,
+    definition: ModelDefinition,
+): number {
+    const chunks = (plan as { chunks?: unknown } | null | undefined)?.chunks;
+    if (!Array.isArray(chunks) || chunks.length === 0) {
+        throw new UpstreamError(400 as ContentfulStatusCode, {
+            message:
+                "composition_plan must be an object with a non-empty chunks array",
+        });
+    }
+    let totalMilliseconds = 0;
+    for (const chunk of chunks) {
+        const durationMs = (chunk as { duration_ms?: unknown } | null)
+            ?.duration_ms;
+        if (
+            typeof durationMs !== "number" ||
+            !Number.isFinite(durationMs) ||
+            durationMs <= 0
+        ) {
+            throw new UpstreamError(400 as ContentfulStatusCode, {
+                message:
+                    "every composition_plan chunk needs a positive numeric duration_ms",
+            });
+        }
+        totalMilliseconds += durationMs;
+    }
+    const totalSeconds = totalMilliseconds / 1000;
+    const message = durationError(
+        "composition_plan",
+        definition,
+        totalSeconds,
+    );
+    if (message) {
+        throw new UpstreamError(400 as ContentfulStatusCode, { message });
+    }
+    return totalSeconds;
+}
+
+/**
+ * Reference ingestion bills the uploaded clip's full decoded duration, a
+ * charge the worker knows before ElevenLabs sees the file (the fetch already
+ * buffered it). Gate on it — plus the plan's output seconds when the caller
+ * supplied one — mirroring the stem-separation gate: the mean-based
+ * generationAccess estimate does not bound a 20 MB low-bitrate upload
+ * (thousands of billed seconds).
+ */
+export async function requireMusicFunds(
+    c: AudioContext,
+    model: string,
+    definition: ModelDefinition,
+    referenceSeconds: number | undefined,
+    outputSeconds: number | undefined,
+): Promise<void> {
+    const userId = c.var.auth.user?.id;
+    if (!userId) return;
+    const usage = {
+        promptAudioSeconds: referenceSeconds ?? 0,
+        completionAudioSeconds: outputSeconds ?? 0,
+    };
+    const charge = calculateUsageBilling({
+        model,
+        usage,
+        servedBy: definition,
+    }).price.totalPrice;
+    await requireFunds(
+        { var: c.var, env: c.env },
+        charge,
+        () => c.var.balance.getBalance(userId),
+        definition.paidOnly,
+        isFreeModel(definition),
+    );
+    // The key budget reservation was sized by the mean estimate; the exact
+    // charge can exceed it, so reserve the difference before dispatch.
+    if (typeof c.var.auth.apiKey?.pollenBalance === "number") {
+        c.var.balance.apiKeyBudgetEstimate = Math.max(
+            c.var.balance.apiKeyBudgetEstimate ?? 0,
+            charge,
+        );
+        await reserveApiKeyBudget(c.var, c.env);
+    }
 }
 
 export async function generateMusic(
@@ -3627,6 +3723,27 @@ async function dispatchAudioGeneration(
     }
 
     if (model in ELEVENLABS_MUSIC_MODEL_IDS) {
+        const musicDefinition =
+            AUDIO_SERVICES[model as ElevenLabsMusicModelName];
+        // Ingestion seconds are decodable before ElevenLabs sees the file
+        // (the reference fetch already buffered it), so gate on the exact
+        // charge instead of the mean-based admission estimate.
+        const referenceSeconds = referenceAudio
+            ? await stemInputSeconds(referenceAudio)
+            : undefined;
+        // A caller-supplied plan replaces the duration parameter upstream:
+        // validate its chunk total against the model's own range.
+        const planSeconds =
+            compositionPlan !== undefined
+                ? validatedMusicPlanSeconds(compositionPlan, musicDefinition)
+                : undefined;
+        await requireMusicFunds(
+            c,
+            model,
+            musicDefinition,
+            referenceSeconds,
+            planSeconds ?? duration,
+        );
         return withSafetyHeaders(
             c,
             await generateMusic({
