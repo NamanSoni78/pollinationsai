@@ -1,4 +1,6 @@
 import { UpstreamError } from "@shared/error.ts";
+import { openaiUsageToUsage } from "@shared/registry/usage-headers.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { createParser } from "eventsource-parser";
 import { requireChatCompletionUsage } from "./chat/usage.ts";
 import { genericOpenAIClient } from "./genericOpenAIClient.ts";
@@ -79,26 +81,76 @@ export async function callVercelSearch(
         config,
     );
     const searchUsage = requireUsage(search);
+    // Vercel already charged the search step: every later failure must settle
+    // it (plus whatever the formatting step reported), or the platform pays
+    // both providers while the caller pays nothing.
+    const billedSearchUsage = openaiUsageToUsage(
+        searchUsage as Parameters<typeof openaiUsageToUsage>[0],
+    );
+    const settleSearchCharge = (
+        error: unknown,
+        formattedUsage?: unknown,
+    ): UpstreamError => {
+        const source =
+            formattedUsage &&
+            typeof formattedUsage === "object" &&
+            "prompt_tokens" in formattedUsage
+                ? sumUsage(
+                      searchUsage,
+                      formattedUsage as Record<string, unknown>,
+                  )
+                : searchUsage;
+        let billedUsage = openaiUsageToUsage(
+            source as Parameters<typeof openaiUsageToUsage>[0],
+        );
+        if (error instanceof UpstreamError && error.billedUsage) {
+            // The formatting step already settled its own provider charge
+            // (e.g. usage without content): add the search step on top.
+            billedUsage = sumUsage(
+                { ...error.billedUsage },
+                { ...billedSearchUsage },
+            ) as unknown as Usage;
+        }
+        if (error instanceof UpstreamError) {
+            Object.assign(error, { billedUsage });
+            return error;
+        }
+        return new UpstreamError(502, {
+            message: error instanceof Error ? error.message : String(error),
+            cause: error,
+            billedUsage,
+        });
+    };
     const searchContent = search.choices?.[0]?.message?.content;
     if (typeof searchContent !== "string" || !searchContent.trim())
         throw new UpstreamError(502, {
             message: "Vercel search returned no answer to format",
             requestUrl: search.upstreamRequestUrl,
+            billedUsage: billedSearchUsage,
         });
-    const result = await genericOpenAIClient(
-        [
-            ...messages,
-            {
-                role: "user",
-                content: `Format this search answer as JSON for the requested format. Preserve its facts and source URLs; do not invent facts or sources.\n${searchContent}`,
-            },
-        ],
-        { ...options, tools: undefined, tool_choice: undefined },
-        config,
-    );
+    let result: ChatCompletion;
+    try {
+        result = await genericOpenAIClient(
+            [
+                ...messages,
+                {
+                    role: "user",
+                    content: `Format this search answer as JSON for the requested format. Preserve its facts and source URLs; do not invent facts or sources.\n${searchContent}`,
+                },
+            ],
+            { ...options, tools: undefined, tool_choice: undefined },
+            config,
+        );
+    } catch (error) {
+        throw settleSearchCharge(error);
+    }
     const metadata = search.choices?.[0]?.message?.provider_metadata;
     if (!result.stream) {
-        result.usage = sumUsage(searchUsage, requireUsage(result));
+        try {
+            result.usage = sumUsage(searchUsage, requireUsage(result));
+        } catch (error) {
+            throw settleSearchCharge(error, result.usage);
+        }
         if (result.choices?.[0]?.message)
             result.choices[0].message.provider_metadata = metadata;
         return result;
