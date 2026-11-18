@@ -94,6 +94,12 @@ export async function callFalFallbackImage(
     }
     const editing = params.image.length > 0;
     try {
+        // fal bills the queue job the moment it reports COMPLETED; settle
+        // the caller on every failure from that point on.
+        const usage = {
+            ...(editing ? { promptImageTokens: params.image.length } : {}),
+            completionImageTokens: 1,
+        };
         const result = await runFalJob(
             {
                 endpoint: editing
@@ -113,24 +119,26 @@ export async function callFalFallbackImage(
                 ),
             },
             requireFalKey(),
+            usage,
         );
-        const { buffer, mimeType } = await download(
-            (result.images as FalFile[] | undefined)?.[0],
-            "Seedream 5 Lite",
-        );
-        return {
-            buffer,
-            mimeType,
-            trackingData: {
-                actualModel: params.model,
-                usage: {
-                    ...(editing
-                        ? { promptImageTokens: params.image.length }
-                        : {}),
-                    completionImageTokens: 1,
+        try {
+            const { buffer, mimeType } = await download(
+                (result.images as FalFile[] | undefined)?.[0],
+                "Seedream 5 Lite",
+            );
+            return {
+                buffer,
+                mimeType,
+                trackingData: {
+                    actualModel: params.model,
+                    usage,
                 },
-            },
-        };
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error, "Seedream 5 Lite"), {
+                billedUsage: usage,
+            });
+        }
     } catch (error) {
         throw toUpstreamError(error, "Seedream 5 Lite");
     }
@@ -305,12 +313,24 @@ export async function callFalFallbackVideo(
                 ),
             },
             apiKey,
+            usage,
         );
-        const providerBilling =
-            unitCost === undefined
-                ? undefined
-                : { units: falBillableUnits(response), unitCost };
-        const result = (await response.json()) as { video?: FalFile };
+        // fal bills the completed queue job: every failure from here on
+        // settles the usage. The grok missing-duration site below stays with
+        // solution14's unmerged branch so the two fixes compose.
+        let providerBilling: { units: number; unitCost: number } | undefined;
+        let result: { video?: FalFile };
+        try {
+            providerBilling =
+                unitCost === undefined
+                    ? undefined
+                    : { units: falBillableUnits(response), unitCost };
+            result = (await response.json()) as { video?: FalFile };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error, params.model), {
+                billedUsage: usage,
+            });
+        }
         if (params.model === "x-ai/grok-imagine-video:fal") {
             const seconds = result.video?.duration;
             if (
@@ -326,17 +346,26 @@ export async function callFalFallbackVideo(
             // Weighted fal billing units are not video seconds.
             usage.completionVideoSeconds = seconds;
         }
-        const { buffer, mimeType } = await download(result.video, params.model);
-        return {
-            buffer,
-            mimeType: mimeType || "video/mp4",
-            durationSeconds: usage.completionVideoSeconds,
-            trackingData: {
-                actualModel: params.model,
-                usage,
-                ...(providerBilling ? { providerBilling } : {}),
-            },
-        };
+        try {
+            const { buffer, mimeType } = await download(
+                result.video,
+                params.model,
+            );
+            return {
+                buffer,
+                mimeType: mimeType || "video/mp4",
+                durationSeconds: usage.completionVideoSeconds,
+                trackingData: {
+                    actualModel: params.model,
+                    usage,
+                    ...(providerBilling ? { providerBilling } : {}),
+                },
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error, params.model), {
+                billedUsage: usage,
+            });
+        }
     } catch (error) {
         if (config.billsRejectedVideos && isRejectedAfterGeneration(error)) {
             throw UpstreamError.fromProvider(422, {
@@ -410,18 +439,27 @@ export async function callMireloSfxAPI(
             apiKey,
         );
         const units = falBillableUnits(response);
-        const result = (await response.json()) as { video?: FalFile[] };
-        const { buffer } = await download(result.video?.[0], params.model);
-        return {
-            buffer,
-            mimeType: "video/mp4",
-            durationSeconds: units,
-            trackingData: {
-                actualModel: params.model,
-                usage: { completionVideoSeconds: units },
-                providerBilling: { units, unitCost },
-            },
-        };
+        // fal bills the completed job's reported seconds; the receipt guard
+        // above can throw before the units are known, so failures from the
+        // receipt onward settle.
+        try {
+            const result = (await response.json()) as { video?: FalFile[] };
+            const { buffer } = await download(result.video?.[0], params.model);
+            return {
+                buffer,
+                mimeType: "video/mp4",
+                durationSeconds: units,
+                trackingData: {
+                    actualModel: params.model,
+                    usage: { completionVideoSeconds: units },
+                    providerBilling: { units, unitCost },
+                },
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error, params.model), {
+                billedUsage: { completionVideoSeconds: units },
+            });
+        }
     } catch (error) {
         throw toUpstreamError(error, params.model);
     }

@@ -85,8 +85,13 @@ export function parseModel3dParams(
 
 export function assertNonEmptyMedia(result: Model3dGenerationResult): void {
     if (!result.buffer || result.buffer.length === 0) {
+        // The provider completed (and was paid for) the generation — the
+        // buffer came back from its post-paid leg — so an empty delivery
+        // still settles the model's own usage.
         throw UpstreamError.fromProvider(502, {
             message: "3D provider returned an empty response",
+            billedUsage:
+                result.trackingData?.usage ?? { completionImageTokens: 1 },
         });
     }
 }

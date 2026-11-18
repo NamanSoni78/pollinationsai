@@ -42,18 +42,28 @@ export async function callTripoP2(
             },
         });
         const billableUnits = falBillableUnits(response);
-        const data = (await response.json()) as Record<string, unknown>;
-        const buffer = await downloadMesh(extractFalModelMesh(data).url);
-        assertGlb(buffer);
-        return {
-            buffer,
-            contentType: "model/gltf-binary",
-            trackingData: {
-                // 110 fal credits × $0.01 = one $1.10 catalog generation.
-                // Normalize the reported quantity, never assume one generation.
-                usage: { completionImageTokens: billableUnits / 110 },
-            },
-        };
+        // fal already billed the reported units: settle them on any failure
+        // from the receipt onward. (A missing receipt above stays unbilled —
+        // the units are unknowable then.)
+        const paidUsage = { completionImageTokens: billableUnits / 110 };
+        try {
+            const data = (await response.json()) as Record<string, unknown>;
+            const buffer = await downloadMesh(extractFalModelMesh(data).url);
+            assertGlb(buffer);
+            return {
+                buffer,
+                contentType: "model/gltf-binary",
+                trackingData: {
+                    // 110 fal credits × $0.01 = one $1.10 catalog generation.
+                    // Normalize the reported quantity, never assume one generation.
+                    usage: paidUsage,
+                },
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error), {
+                billedUsage: paidUsage,
+            });
+        }
     } catch (error) {
         throw toUpstreamError(error);
     }

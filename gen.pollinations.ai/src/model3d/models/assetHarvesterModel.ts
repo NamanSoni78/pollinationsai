@@ -17,8 +17,13 @@ export async function callAssetHarvester(
             imageUrls: [params.image[0]],
         });
         if (!result.plyBase64) {
-            throw new InferenceportError(
-                "nvidia/asset-harvester returned no PLY output",
+            // runInferenceport only returns completed (charged) jobs, so a
+            // GLB-only delivery still settles the flat 3D unit.
+            throw Object.assign(
+                new InferenceportError(
+                    "nvidia/asset-harvester returned no PLY output",
+                ),
+                { billedUsage: { completionImageTokens: 1 } },
             );
         }
         return {

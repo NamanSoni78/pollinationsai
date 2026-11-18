@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { FalError } from "./models/falClient.ts";
 import { InferenceportError } from "./models/inferenceportClient.ts";
 import type { Model3dParams } from "./params.ts";
@@ -13,6 +14,10 @@ export function toUpstreamError(
         return UpstreamError.fromProvider(err.status ?? 502, {
             message: err.message,
             responseBody: err.responseBody,
+            // Settlement sites attach billedUsage dynamically on these client
+            // errors after the provider's paid event; keep it through the
+            // conversion so the tracking middleware can settle the caller.
+            billedUsage: (err as { billedUsage?: Usage }).billedUsage,
         });
     }
     const message = err instanceof Error ? err.message : String(err);
