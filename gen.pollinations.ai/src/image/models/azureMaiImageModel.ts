@@ -47,6 +47,30 @@ type MaiRoute = (typeof MAI_ROUTES)[string];
 // 16px steps down silently.
 const AZURE_MAI_DIMENSION_STEP = 16;
 
+/**
+ * Microsoft's published per-image output token schedule at 1024x1024, used
+ * only to settle requests whose delivered image proves the render was paid
+ * but whose usage receipt's output leg was missing: MAI Image 2.7 ~$35 per
+ * 1,000 images at $34/M output tokens and 2.7 Flash ~$10/1,000 at $10/M
+ * (microsoft.ai, 2026-11-17) → ~1,030/1,000 tokens per image; the 2.6 Flash
+ * generation measured $19.46/1,000 images at $19/M → 1,024. 2.6 itself has
+ * no published per-image figure, so it borrows 2.7's count (same family and
+ * output caps).
+ */
+const MAI_IMAGE_OUTPUT_TOKENS_PER_IMAGE: Record<string, number> = {
+    "MAI-Image-2.7": 1030,
+    "MAI-Image-2.7-Flash": 1000,
+    "MAI-Image-2.6": 1030,
+    "MAI-Image-2.6-Flash": 1024,
+};
+
+function maiImageOutputTokens(deployment: string): number {
+    return (
+        MAI_IMAGE_OUTPUT_TOKENS_PER_IMAGE[deployment] ??
+        MAI_IMAGE_OUTPUT_TOKENS_PER_IMAGE["MAI-Image-2.7"]
+    );
+}
+
 type AzureMaiResponse = {
     data?: Array<{ b64_json?: string }>;
     usage?: {
@@ -219,9 +243,18 @@ export async function callAzureMaiImage(
             upstreamStatus: response.status,
             responseBody: responseSummary,
             upstreamHeaders: collectUpstreamHeaders(response.headers),
-            // The image was delivered, so the render was billed; the input
-            // legs are the readable part of the receipt.
-            ...(settle ? { billedUsage: settle } : {}),
+            // The image was delivered, so the render was billed. The input
+            // legs are the readable part of the receipt; the output leg —
+            // the dominant cost at Azure's $34/$19/$10 per million output
+            // tokens — settles from Microsoft's published per-image output
+            // token schedule (issue 91's companion: the unreadable-output
+            // case previously dropped it).
+            billedUsage: {
+                ...(settle ?? {}),
+                completionImageTokens:
+                    Math.max(1, data.data?.length ?? 1) *
+                    maiImageOutputTokens(route.deployment),
+            },
         });
     }
     const promptTextTokens = tokenCount(data.usage?.num_input_text_tokens);
