@@ -54,6 +54,11 @@ describe("createReasoningEffortTransform — mandatory", () => {
         const { options } = await mandatory([], { reasoning_effort: "xhigh" });
         expect(options.reasoning_effort).toBe("high");
     });
+
+    it("normalizes max to high (mandatory models top out at high)", async () => {
+        const { options } = await mandatory([], { reasoning_effort: "max" });
+        expect(options.reasoning_effort).toBe("high");
+    });
 });
 
 describe("createReasoningEffortTransform — strip", () => {
@@ -209,14 +214,21 @@ describe("reasoning_effort levels providers reject (#19784)", () => {
     it.each([
         ["openai/gpt-5.4-nano", "max", "xhigh"],
         ["openai/gpt-5.4-mini", "max", "xhigh"],
+        ["openai/gpt-5.4", "max", "xhigh"],
+        ["openai/gpt-5-nano", "max", "xhigh"],
         ["openai/gpt-5.3-codex", "max", "xhigh"],
         ["openai/gpt-5.5", "max", "xhigh"],
+        ["pollinations/midijourney", "max", "xhigh"],
         ["pollinations/midijourney-large", "max", "xhigh"],
         ["openai/gpt-6.1-sol", "none", "low"],
         ["openai/gpt-6-astra", "none", "low"],
+        ["openai/gpt-6-sol", "none", "low"],
+        ["openai/gpt-6.2-astra", "none", "low"],
+        ["openai/gpt-6.2-sol", "none", "low"],
         ["openai/gpt-oss-20b", "none", "low"],
         ["openai/gpt-oss-20b", "xhigh", "high"],
         ["openai/gpt-oss-20b", "max", "high"],
+        ["minimax-m2.7", "max", "high"],
         ["x-ai/grok-4.6", "none", "low"],
         ["x-ai/grok-4.6", "max", "xhigh"],
         ["x-ai/grok-4.3", "max", "xhigh"],

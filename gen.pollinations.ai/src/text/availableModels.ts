@@ -242,7 +242,9 @@ const models: ModelDefinition[] = [
     {
         name: "openai/gpt-5-nano",
         config: portkeyConfig["gpt-5-nano-2025-08-07"],
-        transform: omitOpenAISampling,
+        // Same myceli-prod-eastus resource + 2024-12-01-preview api-version
+        // as the remapped gpt-5.4-nano/-mini siblings (#19789).
+        transform: pipe(omitOpenAISampling, effortMaxToXhigh),
     },
     {
         name: "openai/gpt-5-nano:openai",
@@ -286,7 +288,9 @@ const models: ModelDefinition[] = [
     {
         name: "openai/gpt-5.4",
         config: portkeyConfig["gpt-5.4"],
-        transform: omitOpenAISampling,
+        // Same myceli-prod-eastus resource + 2024-12-01-preview api-version
+        // as the remapped gpt-5.4-nano/-mini siblings (#19789).
+        transform: pipe(omitOpenAISampling, effortMaxToXhigh),
     },
     {
         name: "openai/gpt-5.4-mini:openai",
@@ -373,7 +377,9 @@ const models: ModelDefinition[] = [
     {
         name: "openai/gpt-6-sol",
         config: portkeyConfig["gpt-6-sol"],
-        transform: omitOpenAISampling,
+        // Same myceli-prod-eastus resource + 2025-04-01-preview api-version
+        // as the remapped gpt-6-astra/-6.1-sol siblings (#19789).
+        transform: pipe(omitOpenAISampling, effortNoneToLow),
         useResponsesApi: true,
     },
     {
@@ -397,7 +403,9 @@ const models: ModelDefinition[] = [
     {
         name: "openai/gpt-6.2-astra",
         config: portkeyConfig["gpt-6.2-astra"],
-        transform: omitOpenAISampling,
+        // Same myceli-prod-eastus resource + 2025-04-01-preview api-version
+        // as the remapped gpt-6-astra/-6.1-sol siblings (#19789).
+        transform: pipe(omitOpenAISampling, effortNoneToLow),
         useResponsesApi: true,
     },
     {
@@ -409,7 +417,9 @@ const models: ModelDefinition[] = [
     {
         name: "openai/gpt-6.2-sol",
         config: portkeyConfig["gpt-6.2-sol"],
-        transform: omitOpenAISampling,
+        // Same myceli-prod-eastus resource + 2025-04-01-preview api-version
+        // as the remapped gpt-6-astra/-6.1-sol siblings (#19789).
+        transform: pipe(omitOpenAISampling, effortNoneToLow),
         useResponsesApi: true,
     },
     {
@@ -1162,9 +1172,12 @@ const models: ModelDefinition[] = [
     {
         name: "pollinations/midijourney",
         config: portkeyConfig["gpt-5.4-mini-chat"],
+        // The same myceli-prod-eastus gpt-5.4-mini deployment + 2024-12-01
+        // api-version the remapped openai/gpt-5.4-mini route uses (#19789).
         transform: pipe(
             createMessageTransform(midijourneyPrompt),
             omitOpenAISampling,
+            effortMaxToXhigh,
         ),
     },
     {

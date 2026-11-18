@@ -16,6 +16,10 @@ const EFFORT_TO_BUDGET: Record<string, number> = {
     medium: 4096,
     high: 8192,
     xhigh: 8192,
+    // The public enum accepts "max" (f82845b4c4); without this key it fell
+    // through to the medium default (4096) — below "high". Map it to the top
+    // budget, same as xhigh.
+    max: 8192,
 };
 
 function normalizeEffort(value: unknown): string | undefined {

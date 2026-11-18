@@ -22,6 +22,19 @@ describe("createGeminiThinkingTransform", () => {
         expect(options.reasoning_effort).toBeUndefined();
     });
 
+    it("maps reasoning_effort=max to the top Gemini 2.5 budget, not the medium default", async () => {
+        // "max" was missing from EFFORT_TO_BUDGET and fell through to the
+        // medium default (4096) — below "high" (8192).
+        const transform = createGeminiThinkingTransform("v2.5");
+        const { options } = await transform([], { reasoning_effort: "max" });
+
+        expect(options.thinking).toEqual({
+            type: "enabled",
+            budget_tokens: 8192,
+        });
+        expect(options.reasoning_effort).toBeUndefined();
+    });
+
     it("passes reasoning_effort=none through for Gemini 3 Flash", async () => {
         const transform = createGeminiThinkingTransform("v3-flash");
         const { options } = await transform([], { reasoning_effort: "none" });
