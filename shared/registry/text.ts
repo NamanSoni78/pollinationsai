@@ -2897,7 +2897,10 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 1,
         cost: {
             // Vercel AI Gateway list rates (2026-11-16). Vercel adds no gateway fee.
+            // Image input is reported separately and bills at the input rate,
+            // matching the Vercel-hosted Gemini and qwen4-max conventions.
             promptTextTokens: perMillion(0.035),
+            promptImageTokens: perMillion(0.035),
             promptCachedTokens: perMillion(0.0015),
             completionTextTokens: perMillion(0.1405),
         },
