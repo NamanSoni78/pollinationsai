@@ -246,7 +246,28 @@ function routerUsage(payload, status) {
     };
 }
 
+/**
+ * The tool names the platform's Composio surface defines. The hosted tool
+ * router answers other names too (REMOTE_BASH, REMOTE_WORKBENCH, per-app
+ * tools once an app is connected), and those execute under the platform's
+ * Composio key — so anything outside this set is refused before proxying
+ * instead of settled at zero. Only MULTI_EXECUTE executes connected apps,
+ * and it keeps its per-tool billing as it is.
+ */
+const PROXIED_TOOLS = new Set([
+    "COMPOSIO_MULTI_EXECUTE_TOOL",
+    "COMPOSIO_SEARCH_TOOLS",
+    "COMPOSIO_GET_TOOL_SCHEMAS",
+    "COMPOSIO_MANAGE_CONNECTIONS",
+]);
+
 async function proxyRouter(request, userId, payload, env, fetchImpl) {
+    if (payload?.method === "tools/call") {
+        const name = payload.params?.name;
+        if (typeof name !== "string" || !PROXIED_TOOLS.has(name)) {
+            throw new ComposioFailure(400, "Unknown Composio tool");
+        }
+    }
     const incomingSession = request.headers.get("mcp-session-id");
     let session;
     let transportSessionId;
