@@ -521,3 +521,75 @@ describe("OpenRouter Grok Video Pro", () => {
         },
     );
 });
+
+// OpenRouter bills grok video by its own receipt (usage.cost on the completed
+// poll): a documented 5-second minimum per clip and 1080p output for a
+// requested 720p. The happyhorse and heygen handlers in this module thread
+// that receipt into providerBilling (units x 1.055 credit fee) so settlement
+// follows the provider; the grok-lite handler discarded it and settled the
+// REQUESTED duration at the registry's fixed per-second sheet instead.
+describe("grok video 1.5 lite:openrouter settles on the provider receipt", () => {
+    it("threads the poll's reported usage.cost into providerBilling", async () => {
+        setOpenRouterEnv();
+        const requests: Record<string, unknown>[] = [];
+        // mockGrokFetch's completed poll reports usage.cost: 0.35.
+        mockGrokFetch(requests);
+
+        const result = await callOpenRouterGrokVideoAPI("a calm ocean", {
+            ...baseParams,
+            model: "x-ai/grok-imagine-video-1.5-lite:openrouter",
+            duration: 1, // the requested-duration sheet would bill 1 x $0.0317
+            // while OpenRouter's receipt for the same request is $0.35.
+            resolution: "720p",
+        });
+
+        expect(result.trackingData?.providerBilling).toEqual({
+            units: 0.35,
+            unitCost: 1.055,
+        });
+    });
+
+    it("rejects an invalid reported cost instead of settling a bogus receipt", async () => {
+        setOpenRouterEnv();
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+            const href = typeof url === "string" ? url : url.toString();
+            if (href === SUBMIT_URL && init?.method === "POST") {
+                return new Response(
+                    JSON.stringify({
+                        id: "job-grok-test",
+                        polling_url: GROK_POLL_URL,
+                        status: "pending",
+                    }),
+                    { status: 200 },
+                );
+            }
+            if (href === GROK_POLL_URL) {
+                return new Response(
+                    JSON.stringify({
+                        id: "job-grok-test",
+                        polling_url: GROK_POLL_URL,
+                        status: "completed",
+                        unsigned_urls: [GROK_VIDEO_URL],
+                        usage: { cost: -1 },
+                    }),
+                    { status: 200 },
+                );
+            }
+            if (href === GROK_VIDEO_URL) {
+                return new Response(new Uint8Array([0, 0, 0, 24]), {
+                    status: 200,
+                    headers: { "Content-Type": "video/mp4" },
+                });
+            }
+            return new Response("unexpected URL", { status: 404 });
+        });
+
+        await expect(
+            callOpenRouterGrokVideoAPI("a calm ocean", {
+                ...baseParams,
+                model: "x-ai/grok-imagine-video-1.5-lite:openrouter",
+                duration: 5,
+            }),
+        ).rejects.toThrow(/invalid Grok Video billing cost/i);
+    });
+});

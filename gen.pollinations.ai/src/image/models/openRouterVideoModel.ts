@@ -236,6 +236,14 @@ export async function callOpenRouterGrokVideoAPI(
         requestBody,
         GROK_15_POLL_TIMEOUT_MS,
     );
+    if (
+        providerCost != null &&
+        (!Number.isFinite(providerCost) || providerCost < 0)
+    ) {
+        throw UpstreamError.fromProvider(502, {
+            message: "OpenRouter returned invalid Grok Video billing cost",
+        });
+    }
 
     logOps("Grok Video Pro generation complete", {
         duration,
@@ -253,6 +261,14 @@ export async function callOpenRouterGrokVideoAPI(
                 ...(safeParams.image?.[0] ? { promptImageTokens: 1 } : {}),
                 completionVideoSeconds: duration,
             },
+            // OpenRouter bills by its own receipt (5-second minimum per
+            // clip, 1080p returned for a requested 720p), so settlement
+            // must follow usage.cost - not the requested duration re-priced
+            // through the registry sheet. Mirrors the HappyHorse/HeyGen
+            // handlers, including the 5.5% credit-purchase fee.
+            ...(providerCost != null && {
+                providerBilling: { units: providerCost, unitCost: 1.055 },
+            }),
         },
     };
 }

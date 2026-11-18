@@ -401,7 +401,15 @@ describe("Fal fallback media models", () => {
         await vi.advanceTimersByTimeAsync(5_000);
         await resultPromise;
 
-        expect(requests[0].body).toEqual({
+        // providerPriced adds a /pricing probe before the submit, so select
+        // the generation request itself (the filter the sibling tests use).
+        expect(
+            requests.find(
+                ({ url }) =>
+                    url.includes("/image-to-video") &&
+                    !url.includes("/pricing"),
+            )?.body,
+        ).toEqual({
             prompt: "move",
             duration: 5,
             resolution: "720p",
@@ -786,5 +794,30 @@ describe("Grok Replicate primary", () => {
         });
         expect(billing.cost.totalCost).toBeCloseTo(0.07, 12);
         expect(billing.price.totalPrice).toBe(0.07291669);
+    });
+});
+
+// The grok 1.5 fal route must settle on fal's own receipt like its sibling
+// x-ai/grok-imagine-video:fal (providerPriced): fal's weighted billable units
+// at the endpoint's live price, not the requested duration re-priced through
+// the registry sheet.
+describe("grok video 1.5 fal settles on the fal receipt", () => {
+    it("bills fal's reported billable units at the live unit price", async () => {
+        const requests = mockFal({
+            video: { url: MEDIA_URL, content_type: "video/mp4" },
+        });
+        const resultPromise = callFalFallbackVideo("move", {
+            ...baseParams,
+            model: "x-ai/grok-imagine-video-1.5:fal",
+            duration: 5,
+            resolution: "720p",
+        });
+        await vi.advanceTimersByTimeAsync(5_000);
+        const result = await resultPromise;
+
+        expect(result.trackingData?.providerBilling).toEqual({
+            units: 1,
+            unitCost: 0.17,
+        });
     });
 });

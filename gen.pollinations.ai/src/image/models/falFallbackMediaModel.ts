@@ -173,6 +173,10 @@ const VIDEO_CONFIGS: Record<string, FalVideoConfig> = {
             resolution: params.resolution ?? "720p",
             ...(!hasImage ? { aspect_ratio: aspectRatio(params) } : {}),
         }),
+        // Settle on fal's weighted billable units at the endpoint's live
+        // price, like the grok-imagine-video:fal sibling: the registry's
+        // per-second sheet stays the quote, the receipt settles.
+        providerPriced: true,
     },
     "alibaba/wan-2.6:fal": {
         textEndpoint: "wan/v2.6/text-to-video",
