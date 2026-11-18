@@ -1141,3 +1141,12 @@ Baseline: upstream advanced `6824ff7b77` → `379be828d` (5 commits: four quests
 - Branches `solution105-enter-anonymous-body-limits` / `solution106-media-put-byte-cap` built off upstream HEAD `379be828d`, pushed (names verified unique via `ls-remote` before push).
 - `issues_mds`: append-only on round 31's head `6524b4b5e` (issues 1-104 and all prior rounds untouched); this round adds issues 105-106 + this WORKLOG section + SYNC_LOG row + AGENT_PROGRESS wave 31. No history rewrite, no branch deletions.
 - Live probes: **$0** (both findings deterministic offline; the bounty key was not used).
+
+### Round 32 addendum — mid-session upstream movement (2026-11-19, later)
+
+Upstream advanced `379be828d` → `7e8c248eb` while this round's PRs were being opened (two commits, both diff-audited clean before the resync):
+
+- `d88831f3` "fix: read community quest issues directly from the GitHub label (#20141)" — enter quest-catalog fetch refactored from GitHub search to a direct `repository(owner,name){label(name:"QUEST"){issues}}` GraphQL listing (search can lag a label rename); amounts still derive solely from maintainer-only `reward-N` labels, the OPEN-or-merged-closers state filter is equivalent, pagination is equivalent, and no new untrusted input reaches money logic. No overlap with any audited surface.
+- `7e8c248eb` "feat(audio): clone a ZONOS voice from reference audio (#20129)" — `zyphra/zonos3-mini` now accepts `reference_audio`, routed through the **existing** validated user-media fetch (`validateUserMediaUrl` + 30 s deadline + 20 MiB `readResponseBytes` — the one properly-guarded fetch in audio.ts, per this round's W31-B evidence); the ZONOS GPU worker gains a 20 MiB + 64 KiB multipart cap with 413, passes the clip to the model server as base64 (no shell), spawns `/usr/bin/ffmpeg` with fixed argv, and a new `decode-reference.sh` wrapper enforces `-protocol_whitelist file` + format whitelists (mov/matroska/webm for MP4/WebM audio) with a self-test script. No gated finding.
+
+`fork/main` fast-forwarded to `7e8c248eb` (a concurrent session raced the same sync; result verified 0/0 both sides). The round-32 fix branches are based on `379be828d` and are untouched by both commits (file-disjoint); PRs #119/#120 remain the live review surface.
