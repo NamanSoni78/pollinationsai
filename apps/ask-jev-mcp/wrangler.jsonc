@@ -14,6 +14,17 @@
       "custom_domain": true
     }
   ],
+  // Per client IP, before tool calls reach Gen and Enter's D1 — the same
+  // guard the sibling pollinations-mcp worker installs on its public
+  // custom domain; namespace 1007 is the account's MCP rate-limit
+  // namespace (the sibling documents staging as sharing it).
+  "ratelimits": [
+    {
+      "name": "IP_RATE_LIMITER",
+      "namespace_id": "1007",
+      "simple": { "limit": 200, "period": 10 }
+    }
+  ],
   "observability": {
     "enabled": true
   },
@@ -24,6 +35,13 @@
       "workers_dev": true,
       "routes": [],
       "vars": { "POLLINATIONS_BASE_URL": "https://staging.gen.pollinations.ai" },
+      "ratelimits": [
+        {
+          "name": "IP_RATE_LIMITER",
+          "namespace_id": "1007",
+          "simple": { "limit": 200, "period": 10 }
+        }
+      ],
       "observability": { "enabled": true }
     }
   }

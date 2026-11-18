@@ -80,7 +80,7 @@ function unauthorizedResponse() {
 }
 
 export default {
-    async fetch(request) {
+    async fetch(request, env) {
         const url = new URL(request.url);
 
         if (url.pathname === "/health" && request.method === "GET") {
@@ -96,25 +96,51 @@ export default {
             return new Response("Not found", { status: 404 });
         }
 
+        // Tool calls carry the caller's key to Gen, and so to Enter's D1,
+        // from Cloudflare's shared Workers IP — the exact threat the sibling
+        // pollinations-mcp worker caps on its public custom domain. This
+        // worker's own public domain (ask-jev-mcp.pollinations.ai) previously
+        // had no cap, so cap each client IP here the same way: requests
+        // without a valid key still burn a D1 auth read per call.
+        const ip = request.headers.get("cf-connecting-ip");
+        if (ip && !(await env.IP_RATE_LIMITER.limit({ key: ip })).success) {
+            return Response.json(
+                {
+                    error: "rate_limited",
+                    message: "Too many requests. Please slow down.",
+                },
+                { status: 429, headers: { "Retry-After": "10" } },
+            );
+        }
+
         const token = readBearerToken(request);
         if (!token) return unauthorizedResponse();
 
-        if (
-            request.method === "POST" &&
-            Array.isArray(
-                await request
-                    .clone()
-                    .json()
-                    .catch(() => null),
-            )
-        ) {
-            return Response.json(
-                {
-                    error: "invalid_request",
-                    message: "Batch requests are not supported.",
-                },
-                { status: 400 },
-            );
+        if (request.method === "POST") {
+            // The batch probe used to clone().json() whatever the caller
+            // sent, and the Workers platform accepts up to 100 MB of
+            // request body. Read the probe body once under a 1 MiB cap — no
+            // MCP message needs more — and refuse larger bodies before they
+            // are parsed.
+            const probe = await readBodyProbe(request.clone());
+            if (probe.oversized) {
+                return Response.json(
+                    {
+                        error: "payload_too_large",
+                        message: "Request body is too large.",
+                    },
+                    { status: 413 },
+                );
+            }
+            if (Array.isArray(probe.value)) {
+                return Response.json(
+                    {
+                        error: "invalid_request",
+                        message: "Batch requests are not supported.",
+                    },
+                    { status: 400 },
+                );
+            }
         }
 
         return mcpHandler.fetch(request, {
@@ -126,3 +152,43 @@ export default {
         });
     },
 };
+
+const MAX_PROBE_BODY_BYTES = 1024 * 1024;
+
+// Read a cloned request body once, bounded at MAX_PROBE_BODY_BYTES.
+// Returns { oversized: true } over the cap, else { value } with the parsed
+// JSON body (null when it is not valid JSON).
+async function readBodyProbe(clone) {
+    const reader = clone.body?.getReader();
+    if (!reader) {
+        return { value: await clone.json().catch(() => null) };
+    }
+    const chunks = [];
+    let total = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_PROBE_BODY_BYTES) {
+            // Best-effort: drop the branch without waiting for the cancel
+            // to settle — a teed clone's cancel only completes once the other
+            // branch finishes too, and the probe branch is discarded either
+            // way.
+            void reader.cancel().catch(() => {});
+            return { oversized: true };
+        }
+        chunks.push(value);
+    }
+    reader.releaseLock();
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+    }
+    try {
+        return { value: JSON.parse(new TextDecoder().decode(bytes)) };
+    } catch {
+        return { value: null };
+    }
+}

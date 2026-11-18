@@ -367,3 +367,62 @@ test("uses shared gateway error mapping", async (t) => {
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /Insufficient balance/);
 });
+
+test("caps each client IP before the bearer check", async () => {
+    // Tool calls carry the caller's key to Gen, and so to Enter's D1, from
+    // Cloudflare's shared Workers IP — the sibling pollinations-mcp worker
+    // caps exactly this on its public custom domain. This worker's own
+    // public domain must cap each client IP the same way: requests without
+    // a valid key still burn a D1 auth read per call.
+    const counts = new Map();
+    const env = {
+        IP_RATE_LIMITER: {
+            limit: async ({ key }) => {
+                const count = (counts.get(key) ?? 0) + 1;
+                counts.set(key, count);
+                return { success: count <= 2 };
+            },
+        },
+    };
+    const post = (ip) =>
+        new Request("https://ask-jev-mcp.pollinations.ai", {
+            method: "POST",
+            headers: {
+                "cf-connecting-ip": ip,
+                "Content-Type": "application/json",
+            },
+            body: "{}",
+        });
+
+    assert.equal((await worker.fetch(post("203.0.113.7"), env)).status, 401);
+    assert.equal((await worker.fetch(post("203.0.113.7"), env)).status, 401);
+    const third = await worker.fetch(post("203.0.113.7"), env);
+    assert.equal(third.status, 429);
+    assert.equal(third.headers.get("retry-after"), "10");
+    // A different client IP keeps its own budget.
+    assert.equal((await worker.fetch(post("198.51.100.9"), env)).status, 401);
+    assert.equal(counts.get("198.51.100.9"), 1);
+});
+
+test("rejects oversized bodies before parsing them", async () => {
+    // The batch probe used to clone().json() whatever the caller sent, and
+    // the Workers platform accepts up to 100 MB of request body. Bound the
+    // probe read at 1 MiB — no MCP message needs more — and refuse larger
+    // bodies before they are parsed.
+    const oversized = JSON.stringify({
+        state: "x".repeat(1024 * 1024),
+        questions: {},
+    });
+    const response = await worker.fetch(
+        new Request("https://ask-jev-mcp.pollinations.ai", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${TOKEN}`,
+                "Content-Type": "application/json",
+            },
+            body: oversized,
+        }),
+    );
+    assert.equal(response.status, 413);
+    assert.equal((await response.json()).error, "payload_too_large");
+});
