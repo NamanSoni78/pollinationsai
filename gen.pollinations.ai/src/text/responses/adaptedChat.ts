@@ -138,12 +138,13 @@ function chatMessages(request: CreateResponseRequest): ChatMessage[] {
                 },
             };
             // Chat keeps one turn's text and parallel calls in one message.
+            // Append in place: rebuilding the array per call made a long
+            // batch of parallel function_call items quadratic (n² element
+            // copies across the 32 MiB /v1/responses body) and pinned the
+            // isolate on CPU before the upstream call.
             const previous = messages.at(-1);
             if (previous?.role === "assistant") {
-                previous.tool_calls = [
-                    ...(previous.tool_calls ?? []),
-                    toolCall,
-                ];
+                (previous.tool_calls ??= []).push(toolCall);
             } else {
                 messages.push({
                     role: "assistant",

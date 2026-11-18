@@ -236,6 +236,96 @@ describe("Responses to Chat request", () => {
             }),
         );
     });
+
+    it("keeps parallel calls in one assistant message in order", () => {
+        const chat = responsesToChatRequest(
+            request({
+                input: [
+                    {
+                        type: "function_call",
+                        call_id: "a",
+                        name: "a",
+                        arguments: "{}",
+                    },
+                    {
+                        type: "function_call",
+                        call_id: "b",
+                        name: "b",
+                        arguments: "{}",
+                    },
+                    {
+                        type: "function_call",
+                        call_id: "c",
+                        name: "c",
+                        arguments: "{}",
+                    },
+                ],
+            }),
+        );
+
+        expect(chat.messages).toHaveLength(1);
+        expect(chat.messages[0]).toEqual({
+            role: "assistant",
+            content: null,
+            tool_calls: [
+                {
+                    id: "a",
+                    type: "function",
+                    function: { name: "a", arguments: "{}" },
+                },
+                {
+                    id: "b",
+                    type: "function",
+                    function: { name: "b", arguments: "{}" },
+                },
+                {
+                    id: "c",
+                    type: "function",
+                    function: { name: "c", arguments: "{}" },
+                },
+            ],
+        });
+    });
+
+    it("accumulates a long parallel tool-call batch without quadratic rebuilds", () => {
+        // Rebuilding the accumulated tool_calls array per item made a long
+        // batch of parallel function_call items quadratic: tens of thousands
+        // of calls in a single /v1/responses body pinned the isolate on CPU
+        // before the upstream call. The in-place append stays linear, so
+        // 4x the input stays ~4x the work instead of ~16x.
+        const batch = (count: number) =>
+            Array.from({ length: count }, (_, index) => ({
+                type: "function_call",
+                call_id: `a${index}`,
+                name: "a",
+                arguments: "",
+            }));
+        const timed = (count: number) => {
+            const startedAt = Date.now();
+            const chat = responsesToChatRequest(
+                request({ input: batch(count) }),
+            );
+            return { elapsedMs: Date.now() - startedAt, chat };
+        };
+
+        const small = timed(10_000);
+        const large = timed(40_000);
+
+        expect(large.elapsedMs / Math.max(small.elapsedMs, 1)).toBeLessThan(10);
+        expect(large.chat.messages).toHaveLength(1);
+        const message = large.chat.messages[0];
+        expect(message.role).toBe("assistant");
+        expect(message.tool_calls).toHaveLength(40_000);
+        expect(message.tool_calls?.[0]).toEqual({
+            id: "a0",
+            type: "function",
+            function: { name: "a", arguments: "" },
+        });
+        const lastCall = message.tool_calls?.at(-1) as
+            | { id?: string }
+            | undefined;
+        expect(lastCall?.id).toBe("a39999");
+    });
 });
 
 describe("Chat completion to Responses JSON", () => {
