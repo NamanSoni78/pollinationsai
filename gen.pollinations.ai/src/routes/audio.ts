@@ -3814,6 +3814,7 @@ async function dispatchAudioGeneration(
                     text,
                     voice,
                     responseFormat,
+                    c.env.PLN_GPU_TOKEN,
                 ),
             );
         case "fish-audio/s2.1-pro":
