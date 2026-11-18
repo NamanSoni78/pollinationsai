@@ -6,6 +6,7 @@ import {
 } from "@shared/schemas/openai.ts";
 import { SafeSchema, type SafeValue } from "@shared/schemas/safety.ts";
 import type { Context } from "hono";
+import { createMiddleware } from "hono/factory";
 import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -36,6 +37,39 @@ export const textBodyLimit = bodyLimit({
             message: "Request body exceeds the 32 MiB limit",
         });
     },
+});
+
+const JSON_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
+
+/**
+ * Pre-parse ceiling for JSON request bodies on the media generation routes
+ * (audio/image/3D/E2B), the JSON-side sibling of multipartBodyLimit: without
+ * it a large `application/json` body is fully buffered several times over
+ * (model extraction in resolveModel, the generation cache's
+ * prepareGenerationRequest, validator("json"), coordinator persistence)
+ * before any handler or schema cap runs, deterministically killing the
+ * isolate. The text routes already enforce the same 32 MiB ceiling via
+ * textBodyLimit; non-JSON content types pass through untouched so multipart
+ * uploads keep their own limits.
+ */
+export const jsonBodyLimit = createMiddleware<Env>(async (c, next) => {
+    const contentType = c.req.header("content-type") || "";
+    if (!/\bjson\b/i.test(contentType)) {
+        return next();
+    }
+    const contentLengthHeader = c.req.raw.headers.get("content-length");
+    if (contentLengthHeader) {
+        const contentLength = Number.parseInt(contentLengthHeader, 10);
+        if (
+            !Number.isNaN(contentLength) &&
+            contentLength > JSON_BODY_LIMIT_BYTES
+        ) {
+            throw new HTTPException(413, {
+                message: "JSON request body exceeds the 32 MiB limit",
+            });
+        }
+    }
+    return next();
 });
 
 export const simpleAudioQuerySchema = z.object({

@@ -112,6 +112,7 @@ import {
     generateModel3d,
     generateSimpleText,
     generateTextContent,
+    jsonBodyLimit,
     simpleAudioQuerySchema,
     textBodyLimit,
 } from "./generation-handlers.ts";
@@ -1151,6 +1152,7 @@ export const proxyRoutes = new Hono<Env>()
         validator("query", Generate3dRequestQueryParamsSchema),
         ...model3dHandlers,
     )
+    .use("/3d/:prompt{[\\s\\S]+}", jsonBodyLimit)
     .post(
         "/3d/:prompt{[\\s\\S]+}",
         describeRoute({
@@ -1258,6 +1260,8 @@ export const proxyRoutes = new Hono<Env>()
         apiKeyBudgetReservation,
         handleSimpleAudio,
     )
+    .use("/v1/images/generations", jsonBodyLimit)
+    .use("/v1/images/edits", jsonBodyLimit)
     .post(
         "/v1/images/generations",
         describeRoute({

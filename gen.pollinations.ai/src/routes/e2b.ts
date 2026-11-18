@@ -44,6 +44,7 @@ import {
 } from "@/middleware/auth.ts";
 import { logger } from "@/middleware/logger.ts";
 import { edgeRateLimit } from "@/middleware/rate-limit-edge.ts";
+import { jsonBodyLimit } from "./generation-handlers.ts";
 import { requestIdentity } from "@/middleware/track.ts";
 import { requireAccountFunds } from "@/utils/generation-access.ts";
 import {
@@ -923,7 +924,7 @@ export const e2bRoutes = new Hono<Env>()
         }),
     )
     .all("/sandbox/*", (c) => proxyEnvd(c, `${E2B_PATH}/sandbox`))
-    .route("/", sandboxApi(false, edgeRateLimit, auth()));
+    .route("/", sandboxApi(false, edgeRateLimit, jsonBodyLimit, auth()));
 
 // Read again for every renewal, so deleting the key, letting it expire,
 // removing its machines permission or banning the account ends them. A keep
