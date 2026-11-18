@@ -111,12 +111,39 @@ export async function callInferencePortImage(
         responseKeys: Object.keys(data).sort(),
         dataCount: Array.isArray(data.data) ? data.data.length : undefined,
     });
+    // The usage receipt rides the same response as the image; read it once
+    // for the post-paid legs below (the guards keep their own settle).
+    const reportedCount = data.usage?.image_count;
+    const billableCount =
+        typeof reportedCount === "number" &&
+        Number.isInteger(reportedCount) &&
+        reportedCount > 0
+            ? reportedCount
+            : undefined;
 
     let buffer: Buffer;
     if (encodedImage) {
-        buffer = base64ToBuffer(encodedImage);
+        try {
+            buffer = base64ToBuffer(encodedImage);
+        } catch (error) {
+            // The b64 image is in hand: the completed job was charged; a
+            // decode failure still settles the image (n: 1).
+            throw Object.assign(error as object, {
+                billedUsage: { completionImageTokens: billableCount ?? 1 },
+            });
+        }
     } else if (imageUrl) {
-        buffer = (await downloadUserImage(imageUrl)).buffer;
+        buffer = (
+            await downloadUserImage(imageUrl).catch((error: unknown) => {
+                // The image URL is in hand: the completed job was charged;
+                // a failed download still settles the image.
+                throw Object.assign(error as object, {
+                    billedUsage: {
+                        completionImageTokens: billableCount ?? 1,
+                    },
+                });
+            })
+        ).buffer;
     } else {
         throw new UpstreamError(502, {
             message: `InferencePort ${INFERENCEPORT_TITLE} returned no image`,
