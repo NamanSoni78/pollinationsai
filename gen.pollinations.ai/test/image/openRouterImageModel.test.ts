@@ -107,6 +107,7 @@ describe("OpenRouter Grok Imagine Pro", () => {
         expect(result.buffer).toEqual(Buffer.from([1, 2, 3]));
         expect(result.trackingData).toEqual({
             actualModel: "x-ai/grok-imagine-image-quality",
+            providerBilling: { units: 0.05, unitCost: 1.055 },
             usage: { completionImageTokens: 1 },
         });
     });
@@ -149,6 +150,27 @@ describe("OpenRouter Grok Imagine Pro", () => {
         expect(result.trackingData?.usage).toEqual({
             promptImageTokens: 2,
             completionImageTokens: 1,
+        });
+        expect(result.trackingData?.providerBilling).toEqual({
+            units: 0.05,
+            unitCost: 1.055,
+        });
+    });
+
+    it("rejects a receipt-less success", async () => {
+        syncImageEnv(
+            { OPENROUTER_API_KEY: "openrouter-test-key" } as CloudflareBindings,
+            ["OPENROUTER_API_KEY"],
+        );
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(
+            Response.json({ data: [{ b64_json: "AQID" }] }),
+        );
+
+        await expect(
+            callOpenRouterGrokImagineProAPI("test prompt", baseParams),
+        ).rejects.toMatchObject({
+            status: 502,
+            message: "OpenRouter returned invalid image billing usage",
         });
     });
 
@@ -318,6 +340,7 @@ describe("OpenRouter Grok Imagine Image 2.0", () => {
             });
             expect(result.trackingData).toEqual({
                 actualModel: "x-ai/grok-imagine-image-2.0:openrouter",
+                providerBilling: { units: 0.05, unitCost: 1.055 },
                 usage: {
                     promptImageTokens: 3,
                     completionImageTokens: 1,
@@ -1123,7 +1146,14 @@ describe("OpenRouter Gemini image", () => {
 });
 
 describe("OpenRouter Seedream 4.5 Pro", () => {
-    function mockSeedreamResponse(requests: Record<string, unknown>[]) {
+    function mockSeedreamResponse(
+        requests: Record<string, unknown>[],
+        usage: Record<string, unknown> | null = {
+            completion_tokens: 16384,
+            cost: 0.04,
+            completion_tokens_details: { image_tokens: 16384 },
+        },
+    ) {
         return vi
             .spyOn(globalThis, "fetch")
             .mockImplementation(async (url, init) => {
@@ -1147,16 +1177,12 @@ describe("OpenRouter Seedream 4.5 Pro", () => {
                 );
                 return Response.json({
                     data: [{ b64_json: PNG.toString("base64") }],
-                    usage: {
-                        completion_tokens: 16384,
-                        cost: 0.04,
-                        completion_tokens_details: { image_tokens: 16384 },
-                    },
+                    usage: usage ?? undefined,
                 });
             });
     }
 
-    it("pins the Seed provider without fallbacks and preserves flat billing", async () => {
+    it("pins the Seed provider without fallbacks and settles from the gateway receipt", async () => {
         syncImageEnv(
             { OPENROUTER_API_KEY: "openrouter-test-key" } as CloudflareBindings,
             ["OPENROUTER_API_KEY"],
@@ -1194,6 +1220,7 @@ describe("OpenRouter Seedream 4.5 Pro", () => {
         expect(result.buffer).toEqual(PNG);
         expect(result.trackingData).toEqual({
             actualModel: "bytedance/seedream-4.5",
+            providerBilling: { units: 0.04, unitCost: 1.055 },
             usage: {
                 completionImageTokens: 1,
                 totalTokenCount: 1,
@@ -1222,6 +1249,51 @@ describe("OpenRouter Seedream 4.5 Pro", () => {
             aspect_ratio: "16:9",
         });
     });
+
+    it("settles the unpriced 4K tier from the provider receipt", async () => {
+        syncImageEnv(
+            { OPENROUTER_API_KEY: "openrouter-test-key" } as CloudflareBindings,
+            ["OPENROUTER_API_KEY"],
+        );
+        const requests: Record<string, unknown>[] = [];
+        mockSeedreamResponse(requests, { cost: 0.08 });
+
+        const result = await callOpenRouterSeedreamProAPI("wide prompt", {
+            ...baseParams,
+            model: "bytedance/seedream-4.5",
+            width: 4096,
+            height: 2304,
+        });
+
+        expect(requests[0]).toMatchObject({ resolution: "4K" });
+        expect(result.trackingData?.providerBilling).toEqual({
+            units: 0.08,
+            unitCost: 1.055,
+        });
+    });
+
+    it.each([null, { cost: 0 }, { cost: -0.04 }, { cost: Infinity }])(
+        "rejects an invalid provider receipt: %j",
+        async (usage) => {
+            syncImageEnv(
+                {
+                    OPENROUTER_API_KEY: "openrouter-test-key",
+                } as CloudflareBindings,
+                ["OPENROUTER_API_KEY"],
+            );
+            mockSeedreamResponse([], usage);
+
+            await expect(
+                callOpenRouterSeedreamProAPI("test prompt", {
+                    ...baseParams,
+                    model: "bytedance/seedream-4.5",
+                }),
+            ).rejects.toMatchObject({
+                status: 502,
+                message: "OpenRouter returned invalid image billing usage",
+            });
+        },
+    );
 
     it("inlines all reference images and matches their aspect ratio automatically", async () => {
         syncImageEnv(

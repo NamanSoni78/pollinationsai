@@ -426,15 +426,29 @@ export async function callOpenRouterSeedreamProAPI(
         throw buildOpenRouterNoImageError(data);
     }
 
+    const providerCost = data.usage?.cost;
+    if (
+        typeof providerCost !== "number" ||
+        !Number.isFinite(providerCost) ||
+        providerCost <= 0
+    ) {
+        invalidOpenRouterImageUsage(data.usage);
+    }
+
     logOps("Seedream 4.5 Pro generation complete", {
         referenceImages: safeParams.image.length,
-        providerUsage: data.usage,
+        providerCost,
     });
 
     return {
         buffer: base64ToBuffer(encodedImage),
         trackingData: {
             actualModel: "bytedance/seedream-4.5",
+            // The 4K tier (and OpenRouter's per-resolution repricing) only
+            // exists in the gateway receipt, so settle from it fail-closed
+            // like the seedream-5.0-flash route instead of the flat 2K-era
+            // sheet rate.
+            providerBilling: { units: providerCost, unitCost: 1.055 },
             usage: {
                 completionImageTokens: 1,
                 totalTokenCount: 1,
@@ -659,15 +673,28 @@ export async function callOpenRouterGrokImagineProAPI(
         });
     }
 
+    const providerCost = data.usage?.cost;
+    if (
+        typeof providerCost !== "number" ||
+        !Number.isFinite(providerCost) ||
+        providerCost <= 0
+    ) {
+        invalidOpenRouterImageUsage(data.usage);
+    }
+
     logOps("Grok Imagine Pro generation complete", {
         referenceImages: inputReferences.length,
-        providerCost: data.usage?.cost,
+        providerCost,
     });
 
     return {
         buffer: base64ToBuffer(encodedImage),
         trackingData: {
             actualModel: "x-ai/grok-imagine-image-quality",
+            // This route has no provider pin, so OpenRouter's routing and
+            // per-resolution repricing only shows up in the gateway receipt;
+            // settle from it fail-closed like the seedream flash route.
+            providerBilling: { units: providerCost, unitCost: 1.055 },
             usage: {
                 ...(inputReferences.length > 0
                     ? { promptImageTokens: inputReferences.length }
@@ -715,15 +742,28 @@ export async function callOpenRouterGrokImagineImage2API(
         throw buildOpenRouterNoImageError(data);
     }
 
+    const providerCost = data.usage?.cost;
+    if (
+        typeof providerCost !== "number" ||
+        !Number.isFinite(providerCost) ||
+        providerCost <= 0
+    ) {
+        invalidOpenRouterImageUsage(data.usage);
+    }
+
     logOps("Grok Imagine Image 2.0 generation complete", {
         referenceImages: inputReferences.length,
-        providerCost: data.usage?.cost,
+        providerCost,
     });
 
     return {
         buffer: base64ToBuffer(encodedImage),
         trackingData: {
             actualModel: safeParams.model,
+            // Settle from the gateway receipt fail-closed like the sibling
+            // OpenRouter image routes so xAI repricing cannot outrun the
+            // flat sheet rate.
+            providerBilling: { units: providerCost, unitCost: 1.055 },
             usage: {
                 ...(inputReferences.length > 0
                     ? { promptImageTokens: inputReferences.length }
