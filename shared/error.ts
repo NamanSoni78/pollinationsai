@@ -13,6 +13,7 @@ import {
 import { PaymentRequiredError } from "./http/payment-required-error.ts";
 import { PermissionRequiredError } from "./http/permission-required-error.ts";
 import { ValidationError } from "./http/validation-error.ts";
+import { readResponseText } from "./response-bytes.ts";
 import {
     collectRequestInputs,
     type RequestInputs,
@@ -108,12 +109,23 @@ export function collectUpstreamHeaders(
 export async function ensureUpstreamOk(
     response: Response,
     requestUrl: string | URL,
+    maxBytes?: number,
 ): Promise<Response> {
     if (response.ok) return response;
     let responseBody: string | undefined;
     let cause: unknown;
     try {
-        responseBody = await response.text();
+        // Untrusted publishers can answer with arbitrarily large error
+        // bodies; callers that pass a cap get a bounded read instead of
+        // buffering the whole payload in the isolate.
+        responseBody =
+            maxBytes === undefined
+                ? await response.text()
+                : await readResponseText(
+                      response,
+                      maxBytes,
+                      () => new Error("Upstream error body is too large"),
+                  );
     } catch (error) {
         cause = error;
     }
