@@ -56,6 +56,16 @@ type UpstreamErrorOptions = {
      * xAI video rejected after generation. Tracking charges it.
      */
     billedUsage?: Usage;
+    /**
+     * The URL points at a third-party community endpoint rather than a
+     * platform-managed provider. The publisher's hostname, raw error body, and
+     * upstream-authored message must not reach arbitrary callers: the hostname
+     * enables direct attacks on the publisher's server (bypassing our rate
+     * limits and safety features), and the body/message is a
+     * response-amplification channel. Server-side logs keep the full values;
+     * only the client response is redacted.
+     */
+    redactUpstream?: boolean;
 };
 
 /** Public HTTP failure plus original provider diagnostics. Bodies are not redacted or truncated. */
@@ -68,6 +78,7 @@ export class UpstreamError extends HTTPException {
     public readonly upstreamHeaders?: UpstreamHeaders;
     public readonly errorCode?: OverrideErrorCode;
     public readonly billedUsage?: Usage;
+    public readonly redactUpstream?: boolean;
 
     constructor(status: ContentfulStatusCode, options?: UpstreamErrorOptions) {
         super(status, options);
@@ -78,6 +89,7 @@ export class UpstreamError extends HTTPException {
         this.upstreamHeaders = options?.upstreamHeaders;
         this.errorCode = options?.errorCode;
         this.billedUsage = options?.billedUsage;
+        this.redactUpstream = options?.redactUpstream;
     }
 
     /** Keep the provider status for diagnostics and retries; expose gateway failures as 5xx. */
@@ -458,12 +470,18 @@ function createUpstreamErrorResponse(
     status: ContentfulStatusCode,
     timestamp: string,
 ): ErrorResponse {
+    // Community endpoints are third-party servers. Their hostname and raw
+    // error body never go to callers (see
+    // UpstreamErrorOptions.redactUpstream); server-side logs keep the full
+    // diagnostics for debugging. Gateway-authored messages are unaffected —
+    // they are ours, not the publisher's.
+    const redacted = error.redactUpstream === true;
     return createErrorResponse(error, status, timestamp, {
         details: {
             name: error.name,
             upstreamStatus: error.upstreamStatus,
-            upstreamHost: error.requestUrl?.hostname,
-            upstreamBody: error.responseBody,
+            upstreamHost: redacted ? undefined : error.requestUrl?.hostname,
+            upstreamBody: redacted ? undefined : error.responseBody,
         },
         code: error.errorCode,
     });

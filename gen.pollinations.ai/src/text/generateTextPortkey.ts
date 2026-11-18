@@ -2,7 +2,10 @@ import type { ModelDefinition } from "@shared/registry/registry.ts";
 import debug from "debug";
 import { findModelByName } from "./availableModels.js";
 import { sanitizeCohereResponse } from "./cohereCommandAPlus.js";
-import { communityEndpointFetch } from "./communityEndpoint.js";
+import {
+    communityEndpointFetch,
+    tagCommunityUpstreamError,
+} from "./communityEndpoint.js";
 import {
     genericOpenAIClient,
     withMistralThinking,
@@ -160,11 +163,16 @@ export async function generateTextPortkey(
         !modelDef &&
         typeof state.options.modelConfig?.responsesEndpoint === "string";
     if (modelDef?.useResponsesApi || communityResponsesEndpoint) {
-        return await callChatViaResponses(
+        const attempt = callChatViaResponses(
             state.messages,
             state.options,
             responsesFetcher ?? communityFetcher,
         );
+        // A community attempt must never leak the publisher's upstream
+        // diagnostics to the caller.
+        return communityFetcher || communityResponsesEndpoint
+            ? tagCommunityUpstreamError(attempt)
+            : attempt;
     }
 
     // This internal transport belongs only to the Responses adapter.
@@ -173,11 +181,15 @@ export async function generateTextPortkey(
     if (modelDef?.useVercelSearchFormatting)
         return callVercelSearch(state.messages, state.options, requestConfig);
 
-    const completion = await genericOpenAIClient(
-        state.messages,
-        state.options,
-        requestConfig,
-    );
+    const completion = communityFetcher
+        ? await tagCommunityUpstreamError(
+              genericOpenAIClient(state.messages, state.options, requestConfig),
+          )
+        : await genericOpenAIClient(
+              state.messages,
+              state.options,
+              requestConfig,
+          );
     return modelDef?.name === "cohere/command-a-plus"
         ? sanitizeCohereResponse(completion)
         : completion;

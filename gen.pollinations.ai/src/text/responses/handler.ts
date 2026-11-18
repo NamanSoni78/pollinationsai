@@ -30,6 +30,7 @@ import { requireChatStreamUsage } from "../chat/usage.js";
 import {
     communityEndpointFetch,
     communityEndpointModelConfig,
+    tagCommunityUpstreamError,
 } from "../communityEndpoint.js";
 import { syncTextEnvironment } from "../environment.js";
 import { throwTextError } from "../errors.js";
@@ -155,11 +156,15 @@ async function callAdaptedChat(
 ): Promise<DirectResponsesResult> {
     const completion = await generateChatAttempt(c, chatRequest, attempt);
     const requestUrl = completion.upstreamRequestUrl ?? new URL(c.req.url);
+    // A community attempt must never leak the publisher's host in the
+    // envelope details.
+    const communityAttempt = attempt.definition?.provider === "community";
     if (request.stream) {
         if (!completion.responseStream) {
             throw new UpstreamError(502, {
                 message: "Text model returned an empty stream",
                 requestUrl,
+                redactUpstream: communityAttempt || undefined,
             });
         }
         const [client, tracking] = requireChatStreamUsage(
@@ -232,16 +237,24 @@ async function handleDirectResponse(
                     c,
                     attempt,
                 );
-                const result = await callDirectResponses(
+                // A community attempt must never leak the publisher's
+                // upstream diagnostics to the caller.
+                const communityAttempt =
+                    responsesClient.fetcher === communityEndpointFetch;
+                const directAttempt = callDirectResponses(
                     buffered ? { ...request, stream: false } : request,
                     responsesClient.target,
                     responsesClient.fetcher,
                 );
+                const result = await (communityAttempt
+                    ? tagCommunityUpstreamError(directAttempt)
+                    : directAttempt);
                 if (request.stream && !buffered) {
                     assertStreamContentType(
                         c,
                         result.response,
                         result.requestUrl,
+                        { redactUpstream: communityAttempt },
                     );
                     return { ...result, usage: null };
                 }
@@ -253,6 +266,7 @@ async function handleDirectResponse(
                     throw new UpstreamError(502, {
                         message: "Responses provider returned invalid JSON",
                         requestUrl: result.requestUrl,
+                        redactUpstream: communityAttempt || undefined,
                         cause,
                     });
                 }
@@ -262,6 +276,7 @@ async function handleDirectResponse(
                         message:
                             "Responses provider returned an invalid response or omitted usage",
                         requestUrl: result.requestUrl,
+                        redactUpstream: communityAttempt || undefined,
                     });
                 }
                 if (
@@ -273,6 +288,7 @@ async function handleDirectResponse(
                         message:
                             "Responses provider returned a non-terminal response",
                         requestUrl: result.requestUrl,
+                        redactUpstream: communityAttempt || undefined,
                     });
                 }
                 if (buffered) {

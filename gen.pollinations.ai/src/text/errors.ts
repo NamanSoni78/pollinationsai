@@ -1,4 +1,8 @@
-import { remapUpstreamStatus, UpstreamError } from "@shared/error.ts";
+import {
+    getDefaultErrorMessage,
+    remapUpstreamStatus,
+    UpstreamError,
+} from "@shared/error.ts";
 import { ValidationError } from "@shared/http/validation-error.ts";
 import { HTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -44,7 +48,16 @@ export function throwTextError(error: ServiceError): never {
               : 500;
 
     throw new UpstreamError(status as ContentfulStatusCode, {
-        message: error.message || "Text generation failed",
+        // A community attempt's message is redacted only when it is
+        // upstream-derived (the publisher's error text, headers, or network
+        // failure, which can name their infrastructure): answer with the
+        // gateway default instead. Gateway-authored messages — thrown as
+        // UpstreamError/HTTPException above, or flagged as our own — keep
+        // their actionable diagnostics.
+        message:
+            error.redactUpstream === true && error.upstreamMessage === true
+                ? getDefaultErrorMessage(status as ContentfulStatusCode)
+                : error.message || "Text generation failed",
         // Propagate only — the code is decided at the throw site.
         errorCode: error.errorCode,
         requestUrl: error.requestUrl,
@@ -53,6 +66,9 @@ export function throwTextError(error: ServiceError): never {
             error.responseBody ??
             serializeDetails(error.details || error.response?.data),
         upstreamHeaders: error.upstreamHeaders,
+        // Community-endpoint attempts keep the publisher's diagnostics out of
+        // the client response; the flag comes from the community pipeline.
+        redactUpstream: error.redactUpstream,
         cause: error,
     });
 }

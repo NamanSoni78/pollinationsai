@@ -259,6 +259,8 @@ function assertCompletionOk(
     const error = new Error(
         details.message || "Text generation failed",
     ) as ServiceError;
+    // The message mirrors the upstream's own error object.
+    error.upstreamMessage = true;
     const upstreamStatus =
         typeof details.status === "number"
             ? details.status
@@ -366,6 +368,8 @@ function createApiError(
     const error = new Error(
         detailMessage ? `${statusMessage}: ${detailMessage}` : statusMessage,
     ) as ServiceError;
+    // detailMessage comes from the upstream's error body.
+    error.upstreamMessage = true;
     error.status = apiErrorStatus(details, response.status);
     error.upstreamStatus = response.status;
     error.details = details;
@@ -394,6 +398,8 @@ function withUpstreamContext(thrown: unknown, requestUrl: URL): ServiceError {
     const error = toServiceError(thrown);
     error.requestUrl ??= requestUrl;
     error.status ??= 502;
+    // Network failures name the upstream they failed against.
+    error.upstreamMessage = true;
     return error;
 }
 

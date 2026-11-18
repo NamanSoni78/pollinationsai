@@ -163,6 +163,8 @@ async function finalStreamResponse(
     const error = new Error(
         failure ?? "Responses provider stream ended without a final response",
     ) as ServiceError;
+    // failure comes from the upstream's error event.
+    error.upstreamMessage = true;
     error.status = 502;
     error.requestUrl = requestUrl;
     throw error;
@@ -242,6 +244,8 @@ export async function callDirectResponses(
                 : (new Error(String(thrown)) as ServiceError);
         error.status ??= 502;
         error.requestUrl = requestUrl;
+        // Network failures name the upstream they failed against.
+        error.upstreamMessage = true;
         throw error;
     }
 
@@ -251,6 +255,8 @@ export async function callDirectResponses(
         const error = new Error(
             errorMessage(details, response),
         ) as ServiceError;
+        // errorMessage comes from the upstream's error body.
+        error.upstreamMessage = true;
         error.status = target.callerFacingStatus
             ? response.status
             : remapUpstreamStatus(response.status);
