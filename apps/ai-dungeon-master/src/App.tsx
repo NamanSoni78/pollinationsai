@@ -5,12 +5,16 @@ import { GalleryModal } from "./components/GalleryModal.tsx";
 import { MainGameScreen } from "./components/MainGameScreen.tsx";
 import { StoryHistory } from "./components/StoryHistory.tsx";
 import { useAuth } from "./hooks/useAuth.ts";
+import {
+    buildImageUrl,
+    fetchAuthorizedImage,
+    persistableImage,
+} from "./utils/imageUrls.ts";
 import { countPendingUploads, uploadToMedia } from "./utils/mediaUpload.ts";
 
 // API Configuration
 const API_URL = {
     story: "https://gen.pollinations.ai/v1/chat/completions",
-    image: "https://gen.pollinations.ai/image/",
 };
 // Enhanced interfaces
 interface Character {
@@ -114,10 +118,21 @@ export default function App() {
                     parsed.character &&
                     parsed.saveVersion
                 ) {
-                    // Restore the game state, excluding loading states
+                    // Restore the game state, excluding loading states.
+                    // Older saves can hold image URLs with the API key
+                    // embedded in them; those never load (the key is a
+                    // credential — same filter the catgpt fix applies).
                     const loadedState: GameState = {
-                        character: parsed.character,
-                        inventory: parsed.inventory || [],
+                        character: {
+                            ...parsed.character,
+                            avatar: persistableImage(parsed.character.avatar),
+                        },
+                        inventory: (parsed.inventory || []).map(
+                            (item: InventoryItem) => ({
+                                ...item,
+                                image: persistableImage(item.image),
+                            }),
+                        ),
                         currentScene: parsed.currentScene || {
                             description: "",
                             image: "",
@@ -128,7 +143,12 @@ export default function App() {
                         isLoading: false, // Always start with loading false
                         isCreatingCharacter: false, // Always start with creating false
                         currentEnemy: parsed.currentEnemy || null,
-                        storyHistory: parsed.storyHistory || [],
+                        storyHistory: (parsed.storyHistory || []).map(
+                            (entry: StoryEntry) => ({
+                                ...entry,
+                                image: persistableImage(entry.image),
+                            }),
+                        ),
                     };
 
                     setGameState(loadedState);
@@ -197,6 +217,18 @@ export default function App() {
                         }),
                     ),
                 ]);
+            }
+
+            // Keyed and blob: URLs never persist: the former is a
+            // credential leak, the latter dies with the page session. Only
+            // an uploaded media URL is a lasting reference worth saving.
+            character.avatar = persistableImage(character.avatar);
+            uploadedSceneImage = persistableImage(uploadedSceneImage);
+            for (const entry of storyHistory) {
+                entry.image = persistableImage(entry.image);
+            }
+            for (const item of inventory) {
+                item.image = persistableImage(item.image);
             }
 
             const currentScene = {
@@ -360,7 +392,9 @@ Core rules you must ALWAYS follow:
         return text;
     };
 
-    // Fetch AI-generated image
+    // Fetch AI-generated image. The key goes in the Authorization header,
+    // never the URL, so it stays out of the page, saved games and access
+    // logs (the catgpt #18754 fix); display uses a short-lived blob URL.
     const fetchImage = async (description: string): Promise<string> => {
         try {
             // Validate input
@@ -377,22 +411,37 @@ Core rules you must ALWAYS follow:
                 .substring(0, 200); // Limit length
 
             if (!apiKey)
-                return generateFallbackImage("mysterious fantasy scene");
+                return await generateFallbackImage("mysterious fantasy scene");
 
             const imagePrompt = `fantasy rpg scene, ${cleanDescription}, digital art, detailed, atmospheric, high quality`;
-            const imageUrl = `${API_URL.image}${encodeURIComponent(imagePrompt)}?width=1024&height=768&model=flux&seed=${Date.now()}&key=${apiKey}`;
+            const imageUrl = buildImageUrl(imagePrompt, {
+                width: 1024,
+                height: 768,
+                seed: Date.now(),
+            });
 
-            return imageUrl;
+            return await fetchAuthorizedImage(imageUrl, apiKey);
         } catch (error) {
             console.error("Error fetching image:", error);
-            return generateFallbackImage(description);
+            return await generateFallbackImage(description);
         }
     };
 
     // Generate fallback image when main image generation fails
-    const generateFallbackImage = (_description: string): string => {
+    const generateFallbackImage = async (_description: string): Promise<string> => {
         const fallbackPrompt = `fantasy rpg, medieval, atmospheric, digital art`;
-        return `${API_URL.image}${encodeURIComponent(fallbackPrompt)}?width=1024&height=768&model=flux&seed=fallback${apiKey ? `&key=${apiKey}` : ""}`;
+        if (!apiKey) return "";
+        try {
+            const fallbackUrl = buildImageUrl(fallbackPrompt, {
+                width: 1024,
+                height: 768,
+                seed: "fallback",
+            });
+            return await fetchAuthorizedImage(fallbackUrl, apiKey);
+        } catch (error) {
+            console.error("Error generating fallback image:", error);
+            return "";
+        }
     };
 
     // Fetch AI-generated character avatar
@@ -404,8 +453,11 @@ Core rules you must ALWAYS follow:
         try {
             const avatarPrompt = `fantasy character portrait, ${character.name} the ${character.class}, ${character.backstory}, medieval fantasy art, detailed face, character design, portrait style`;
             if (!apiKey) return "";
-            const avatarUrl = `${API_URL.image}${encodeURIComponent(avatarPrompt)}?width=512&height=512&model=flux&key=${apiKey}`;
-            return avatarUrl;
+            const avatarUrl = buildImageUrl(avatarPrompt, {
+                width: 512,
+                height: 512,
+            });
+            return await fetchAuthorizedImage(avatarUrl, apiKey);
         } catch (error) {
             console.error("Error fetching character avatar:", error);
             return "";
@@ -656,8 +708,11 @@ Core rules you must ALWAYS follow:
         try {
             const imagePrompt = `fantasy RPG item, ${itemName}, ${itemType}, detailed game asset, item icon, clean background`;
             if (!apiKey) return "";
-            const imageUrl = `${API_URL.image}${encodeURIComponent(imagePrompt)}?width=256&height=256&model=flux&key=${apiKey}`;
-            return imageUrl;
+            const imageUrl = buildImageUrl(imagePrompt, {
+                width: 256,
+                height: 256,
+            });
+            return await fetchAuthorizedImage(imageUrl, apiKey);
         } catch (error) {
             console.error("Error fetching item image:", error);
             return "";
