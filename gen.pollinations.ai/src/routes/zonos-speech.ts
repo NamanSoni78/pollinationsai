@@ -9,6 +9,7 @@ export async function generateZonosSpeech(
     text: string,
     voice: string,
     format: string,
+    backendToken?: string,
 ): Promise<Response> {
     if (voice !== "alloy" || (format !== "mp3" && format !== "pcm")) {
         throw new UpstreamError(400, {
@@ -26,7 +27,12 @@ export async function generateZonosSpeech(
     const response = await ensureUpstreamOk(
         await binding.fetch(endpoint, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                // The GPU service refuses requests without the shared backend
+                // token (PLN_GPU_TOKEN), like the flux/dreamshaper/klein hops.
+                ...(backendToken && { "x-backend-token": backendToken }),
+            },
             body: JSON.stringify({ text, format }),
         }),
         endpoint,

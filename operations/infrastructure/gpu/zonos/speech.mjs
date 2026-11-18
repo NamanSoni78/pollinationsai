@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -8,12 +9,36 @@ const maxConcurrent = 6;
 const speakerId = "default_853b30a7338f306e";
 let active = 0;
 
+// The worker authenticates with this header, like every other GPU service
+// (flux, dreamshaper, klein). Refuse to run without it: an unauthenticated
+// speech endpoint on the box is one tunnel misconfiguration away from public.
+const backendToken = process.env.PLN_GPU_TOKEN;
+if (!backendToken) {
+    console.error("PLN_GPU_TOKEN not configured - refusing to start");
+    process.exit(1);
+}
+
+const port = Number(process.env.ZONOS_PORT) || 1920;
+
+function authorized(request) {
+    const provided = request.headers["x-backend-token"];
+    return (
+        typeof provided === "string" &&
+        provided.length === backendToken.length &&
+        timingSafeEqual(Buffer.from(provided), Buffer.from(backendToken))
+    );
+}
+
 function unavailable(response, status, message) {
     response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: message }));
 }
 
 async function handleSpeech(request, response) {
+    if (!authorized(request)) {
+        unavailable(response, 403, "Forbidden");
+        return;
+    }
     if (request.method !== "POST" || request.url !== "/speech") {
         unavailable(response, 404, "Unknown route");
         return;
@@ -146,4 +171,4 @@ async function handleSpeech(request, response) {
     }
 }
 
-createServer(handleSpeech).listen(1920, "127.0.0.1");
+createServer(handleSpeech).listen(port, "127.0.0.1");
