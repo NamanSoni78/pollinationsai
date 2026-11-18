@@ -262,6 +262,7 @@ export const TEXT_FALLBACKS = {
             provider: "vercel",
             addedDate: new Date("2026-11-16").getTime(),
             cost: {
+                promptImageTokens: perMillion(1.5),
                 promptTextTokens: perMillion(1.5),
                 promptCachedTokens: perMillion(0.075),
                 promptCacheWriteTokens: perMillion(1.875),
