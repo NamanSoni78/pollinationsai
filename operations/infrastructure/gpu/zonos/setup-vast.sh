@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# The gen Worker calls this host through the ZONOS3 Cloudflare tunnel and
+# authenticates every request with the shared backend token; the speech
+# runtime refuses to start without it (the same contract as every other
+# Vast GPU in this repo — see klein/zimage/flux/dreamshaper, whose setup
+# scripts all fail fast without PLN_GPU_TOKEN).
+#
+# Usage:
+#   PLN_GPU_TOKEN=... bash setup-vast.sh
+if [ -z "${PLN_GPU_TOKEN:-}" ]; then
+    echo "Usage: PLN_GPU_TOKEN=... bash setup-vast.sh" >&2
+    exit 1
+fi
+
 # Use an RTX 3060 with a CUDA 12.4 development image and Node.js 22 or newer.
 node -e 'if (+process.versions.node.split(".")[0] < 22) process.exit(1)'
 nvcc --version
