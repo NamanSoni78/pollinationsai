@@ -1,3 +1,5 @@
+import { UpstreamError } from "@shared/error.ts";
+import { openaiUsageToUsage } from "@shared/registry/usage-headers.ts";
 import { describe, expect, it } from "vitest";
 import type {
     OpenAIClientConfig,
@@ -268,4 +270,148 @@ describe("Vercel search then JSON formatting", () => {
             ).rejects.toThrow();
         },
     );
+});
+
+describe("Vercel search settlement when the request fails after the paid search", () => {
+    it("settles the search charge when the formatting step fails at the provider", async () => {
+        const { config, requests } = upstream([
+            Response.json(completion(firstUsage)),
+            Response.json(
+                { error: { message: "Unavailable" } },
+                { status: 503 },
+            ),
+        ]);
+        const error: UpstreamError = await callVercelSearch(
+            messages,
+            options,
+            config,
+        ).then(
+            () => {
+                throw new Error("expected a rejection");
+            },
+            (e) => e,
+        );
+        expect(error).toBeInstanceOf(UpstreamError);
+        expect(error.message).toContain("Unavailable");
+        expect(error.billedUsage).toEqual(
+            openaiUsageToUsage(firstUsage as never),
+        );
+        expect(requests).toHaveLength(2);
+    });
+
+    it.each([null, "", "   "])(
+        "settles the search charge when the search answer is empty %j",
+        async (content) => {
+            const { config, requests } = upstream([
+                Response.json({
+                    ...completion(firstUsage),
+                    choices: [
+                        {
+                            message: {
+                                role: "assistant",
+                                content,
+                                tool_calls: [{ id: "search" }],
+                            },
+                            finish_reason: "tool_calls",
+                        },
+                    ],
+                }),
+            ]);
+            const error: UpstreamError = await callVercelSearch(
+                messages,
+                options,
+                config,
+            ).then(
+                () => {
+                    throw new Error("expected a rejection");
+                },
+                (e) => e,
+            );
+            expect(error).toBeInstanceOf(UpstreamError);
+            expect(error.status).toBe(502);
+            expect(error.billedUsage).toEqual(
+                openaiUsageToUsage(firstUsage as never),
+            );
+            expect(requests).toHaveLength(1);
+        },
+    );
+
+    it("settles the search charge when the formatting answer omits usage", async () => {
+        const { config } = upstream([
+            Response.json(completion(firstUsage)),
+            Response.json(completion(undefined)),
+        ]);
+        const error: UpstreamError = await callVercelSearch(
+            messages,
+            options,
+            config,
+        ).then(
+            () => {
+                throw new Error("expected a rejection");
+            },
+            (e) => e,
+        );
+        expect(error).toBeInstanceOf(UpstreamError);
+        expect(error.message).toContain("omitted usage");
+        expect(error.billedUsage).toEqual(
+            openaiUsageToUsage(firstUsage as never),
+        );
+    });
+
+    it("settles both steps' tokens when the formatting answer reports usage without a charge", async () => {
+        const { config } = upstream([
+            Response.json(completion(firstUsage)),
+            Response.json(completion({ ...lastUsage, cost: undefined })),
+        ]);
+        const error: UpstreamError = await callVercelSearch(
+            messages,
+            options,
+            config,
+        ).then(
+            () => {
+                throw new Error("expected a rejection");
+            },
+            (e) => e,
+        );
+        expect(error).toBeInstanceOf(UpstreamError);
+        expect(error.message).toContain("omitted its provider charge");
+        expect(error.billedUsage).toEqual(
+            openaiUsageToUsage(
+                {
+                    ...firstUsage,
+                    prompt_tokens: firstUsage.prompt_tokens + lastUsage.prompt_tokens,
+                    completion_tokens:
+                        firstUsage.completion_tokens + lastUsage.completion_tokens,
+                    total_tokens: firstUsage.total_tokens + lastUsage.total_tokens,
+                    prompt_tokens_details: {
+                        cached_tokens: 70,
+                    },
+                    completion_tokens_details: {
+                        reasoning_tokens: 15,
+                    },
+                } as never,
+            ),
+        );
+    });
+
+    it("does not settle when the search itself fails before any charge", async () => {
+        const { config, requests } = upstream([
+            Response.json(
+                { error: { message: "Unavailable" } },
+                { status: 503 },
+            ),
+        ]);
+        const error: { billedUsage?: unknown } = await callVercelSearch(
+            messages,
+            options,
+            config,
+        ).then(
+            () => {
+                throw new Error("expected a rejection");
+            },
+            (e) => e,
+        );
+        expect(error.billedUsage).toBeUndefined();
+        expect(requests).toHaveLength(1);
+    });
 });
