@@ -195,7 +195,7 @@ test("requires purchased balance", async ({ apiKey }) => {
     expect(response.status).toBe(402);
 });
 
-test("rejects a non-ZIP upstream response without billing or caching it", async () => {
+test("rejects a non-ZIP upstream response without caching it, settling the decoded input duration", async () => {
     const tinybird = createMockTinybird();
     let calls = 0;
     const mocks = createFetchMock({
@@ -244,11 +244,23 @@ test("rejects a non-ZIP upstream response without billing or caching it", async 
         // A cached audio body would be served without a second upstream call.
         expect(calls).toBe(attempt);
     }
-    expect(tinybird.state.events.filter((e) => e.isBilledUsage)).toHaveLength(
-        0,
-    );
+    // ElevenLabs answered 200 after processing the upload, so the decoded
+    // input duration settles on every failed attempt — the same floor the
+    // success path treats as the minimum billable seconds.
+    const billed = tinybird.state.events.filter((e) => e.isBilledUsage);
+    expect(billed).toHaveLength(2);
+    for (const event of billed) {
+        expect(event).toMatchObject({
+            modelUsed: "elevenlabs/stem-separation",
+            modelProviderUsed: "elevenlabs",
+            tokenCountPromptAudioSeconds: 0.25,
+            tokenPricePromptAudioSeconds: 0.005,
+            totalCost: 0.005 * 0.25,
+            totalPrice: 0.005 * 0.25,
+        });
+    }
     const balance = await getUserBalance(drizzle(env.DB), userId);
-    expect(balance.packBalance).toBe(1);
+    expect(balance.packBalance).toBeCloseTo(1 - 2 * 0.005 * 0.25, 10);
 });
 
 test("enforces model permissions", async () => {

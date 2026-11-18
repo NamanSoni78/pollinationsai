@@ -1,6 +1,7 @@
 import { UpstreamError } from "@shared/error.ts";
 import { IMMUTABLE_CACHE_CONTROL } from "@shared/http/cache-control.ts";
 import { DEFAULT_IMAGE_MODEL } from "@shared/registry/image.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { FALLBACK_TARGET_HEADER } from "@shared/registry/usage-headers.ts";
 import { secretEquals } from "@shared/secret-equal.ts";
 import type { Context } from "hono";
@@ -279,10 +280,17 @@ export function throwImageError(error: unknown): never {
     });
 }
 
-function assertNonEmptyMedia(buffer: Buffer, label: string): void {
+export function assertNonEmptyMedia(
+    buffer: Buffer,
+    label: string,
+    billedUsage?: Usage,
+): void {
     if (buffer.length === 0) {
+        // The provider completed (and billed) the generation; the success
+        // path's usage settles the attempt even though delivery failed.
         throw UpstreamError.fromProvider(502, {
             message: `${label} returned an empty response`,
+            billedUsage: billedUsage ?? { completionImageTokens: 1 },
         });
     }
 }
@@ -373,16 +381,25 @@ async function generateMediaWithFallback(
                     isVideo
                         ? "Community video endpoint"
                         : "Community image endpoint",
+                    generated.trackingData?.usage,
                 );
                 return { result: generated, params };
             }
             if (isVideoModel(params.model)) {
                 const generated = await generateVideoResult(prompt, params);
-                assertNonEmptyMedia(generated.buffer, "Video provider");
+                assertNonEmptyMedia(
+                    generated.buffer,
+                    "Video provider",
+                    generated.trackingData?.usage,
+                );
                 return { result: generated, params };
             }
             const generated = await generateImageResult(c, prompt, params);
-            assertNonEmptyMedia(generated.buffer, "Image provider");
+            assertNonEmptyMedia(
+                generated.buffer,
+                "Image provider",
+                generated.trackingData?.usage,
+            );
             return { result: generated, params };
         },
         c.var.track?.attempts,

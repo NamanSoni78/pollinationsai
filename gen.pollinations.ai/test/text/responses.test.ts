@@ -1,6 +1,8 @@
 import { env } from "cloudflare:test";
+import { UpstreamError } from "@shared/error.ts";
 import { validator } from "@shared/middleware/validator.ts";
 import { TEXT_SERVICES } from "@shared/registry/text.ts";
+import { responsesUsageToUsage } from "@shared/registry/usage-headers.ts";
 import {
     type CreateResponseRequest,
     CreateResponseRequestSchema,
@@ -16,6 +18,7 @@ import {
     resolveDirectResponsesTarget,
     responsesTargetFromConfig,
 } from "@/text/responses/client.ts";
+import * as responsesClient from "@/text/responses/client.ts";
 import { generateCreateResponse } from "@/text/responses/handler.ts";
 import {
     buildDirectResponsesRequestBody,
@@ -808,3 +811,85 @@ it.each([
         });
     },
 );
+
+it("settles the provider's usage when a direct Responses answer fails schema validation", async () => {
+    // The provider answered 200 and metered tokens, but the payload missed
+    // the schema (no output array). The failure must carry the usage it
+    // reported — and the raw body, like the chat path does — instead of
+    // settling nothing for a generation the provider billed.
+    const app = new Hono<Env>();
+    app.use("*", async (c, next) => {
+        c.set("model", {
+            requested: "qwen-large",
+            resolved: "qwen/qwen3.7-plus",
+            definition: TEXT_SERVICES["qwen/qwen3.7-plus"],
+        });
+        await next();
+    });
+    let captured: unknown;
+    app.onError((error, c) => {
+        captured = error;
+        return c.json({ error: { message: "captured" } }, 502);
+    });
+    app.post(
+        "/v1/responses",
+        validator("json", CreateResponseRequestSchema),
+        generateCreateResponse,
+    );
+    const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+            Response.json({
+                id: "resp_1",
+                object: "response",
+                model: "qwen/qwen3.7-plus",
+                status: "completed",
+                usage: {
+                    input_tokens: 5,
+                    output_tokens: 7,
+                    total_tokens: 12,
+                },
+            }),
+        );
+    // The test environment has no provider key, so hand the handler an
+    // authorized direct target (the production flow builds the same shape
+    // once the key is present).
+    const targetMock = vi
+        .spyOn(responsesClient, "resolveDirectResponsesTarget")
+        .mockReturnValue(authorizedTarget(request()));
+    try {
+        const response = await app.request(
+            "/v1/responses",
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    model: "qwen-large",
+                    input: "Hello",
+                    stream: false,
+                    store: false,
+                    safe: "false",
+                }),
+            },
+            env,
+        );
+        expect(response.status).toBe(502);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        expect(captured).toBeInstanceOf(UpstreamError);
+        const error = captured as UpstreamError;
+        expect(error.message).toContain(
+            "invalid response or omitted usage",
+        );
+        expect(error.billedUsage).toEqual(
+            responsesUsageToUsage({
+                input_tokens: 5,
+                output_tokens: 7,
+                total_tokens: 12,
+            }),
+        );
+        expect(error.responseBody).toContain("resp_1");
+    } finally {
+        fetchMock.mockRestore();
+        targetMock.mockRestore();
+    }
+});
