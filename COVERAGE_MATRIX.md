@@ -18,3 +18,7 @@ Wave 2 of SECURITY_AUDIT.md is now fully swept (sessions 3–5 combined). Next f
 
 | operations/infrastructure/gpu (zonos speech) | R15 | covered (round 15) | issues 50-51 (backend token, both-hop deadlines) + the mistral vision line (issue 49, companion to session-11's fleet-wide issue 46); flux/dreamshaper/klein previously swept clean; sessions 10-11 clean-lists superseded on the auth point |
 | new-commit diff-audit b4d7ebcb..a38014db/8dd9e0ed | R14/R15 | covered (rounds 14-15, both sessions) | wording sweep, quests rework, games, packages/CI, community deadline, model registry — see both round-14/15 WORKLOG sections |
+| community serve-path response caps (transcription/embeddings legs) | R21 | covered (round 21) | issue 77 fixed — completes the cap family: image/video (native), text (issue 22 pending), transcription+embeddings (this round) |
+| community asset-URL destination policy (response-body layer) | R21 | covered (round 21) | issue 78 fixed — companion to issue 57's stored-base-URL layer; zone rule now on both validators |
+| apps/ask-jev-mcp public worker (limiter + body guard) | R21 | covered (round 21) | issue 79 fixed — sibling apps/mcp parity; exa-mcp-class unrouted workers flagged as day-one findings if ever routed |
+| OpenRouter endpoint-level price parity (registry-wide vs /endpoints API) | R21 | covered (round 21) | issue 80 fixed (5 sheets + 2 dead pins); residuals recorded in issue 80 for the next re-priced/delisted endpoints |
