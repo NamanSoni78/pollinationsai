@@ -2,7 +2,7 @@ import { z } from "zod";
 import { normalizeCommunityAssetUrl } from "./community-endpoint-urls.ts";
 import { COMMUNITY_ENDPOINT_TIMEOUT_MS } from "./community-endpoints.ts";
 import { UpstreamError } from "./error.ts";
-import { readResponseBytes } from "./response-bytes.ts";
+import { readResponseBytes, readResponseText } from "./response-bytes.ts";
 
 export const MAX_COMMUNITY_IMAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_COMMUNITY_VIDEO_BYTES = 20 * 1024 * 1024;
@@ -171,7 +171,17 @@ async function fetchCommunityImageBytes(
         throw new UpstreamError(502, {
             message: `Endpoint image URL responded ${response.status}`,
             upstreamStatus: response.status,
-            responseBody: await response.text().catch(() => undefined),
+            // The asset server is the publisher's: its error body is
+            // attacker-influenced, so cap the diagnostic read the way the
+            // success body is capped instead of buffering it whole.
+            responseBody: await readResponseText(
+                response,
+                MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
+                () =>
+                    UpstreamError.fromProvider(502, {
+                        message: "Endpoint asset URL error body is too large",
+                    }),
+            ).catch(() => undefined),
             requestUrl: new URL(url),
         });
     }
@@ -206,7 +216,16 @@ async function fetchCommunityVideoBytes(
         throw new UpstreamError(502, {
             message: `Endpoint video URL responded ${response.status}`,
             upstreamStatus: response.status,
-            responseBody: await response.text().catch(() => undefined),
+            // Same publisher-controlled error body: cap the read instead of
+            // buffering the whole (possibly endless) failure payload.
+            responseBody: await readResponseText(
+                response,
+                MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
+                () =>
+                    UpstreamError.fromProvider(502, {
+                        message: "Endpoint asset URL error body is too large",
+                    }),
+            ).catch(() => undefined),
             requestUrl: new URL(url),
         });
     }
