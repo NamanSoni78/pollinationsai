@@ -268,4 +268,86 @@ describe("Vercel search then JSON formatting", () => {
             ).rejects.toThrow();
         },
     );
+
+    // Both generations are one public request, and step 1 completed and was
+    // billed before any of these failures: the error must settle it. Usage
+    // buckets are exclusive, the way openaiUsageToUsage converts them.
+    const settledStepOne = {
+        promptTextTokens: 60,
+        promptCachedTokens: 40,
+        completionTextTokens: 10,
+        completionReasoningTokens: 10,
+    };
+
+    it("settles step one when the formatting call fails", async () => {
+        const { config, requests } = upstream([
+            Response.json(completion(firstUsage)),
+            new Response(JSON.stringify({ error: { message: "Invalid response schema" } }), {
+                status: 400,
+            }),
+        ]);
+        await expect(
+            callVercelSearch(messages, options, config),
+        ).rejects.toMatchObject({
+            billedUsage: settledStepOne,
+        });
+        expect(requests).toHaveLength(2);
+    });
+
+    it("settles step one when the search answer is empty", async () => {
+        const { config, requests } = upstream([
+            Response.json({
+                ...completion(firstUsage),
+                choices: [
+                    {
+                        message: {
+                            role: "assistant",
+                            content: "",
+                            tool_calls: [{ id: "search" }],
+                        },
+                        finish_reason: "tool_calls",
+                    },
+                ],
+            }),
+        ]);
+        await expect(
+            callVercelSearch(messages, options, config),
+        ).rejects.toMatchObject({
+            status: 502,
+            billedUsage: settledStepOne,
+        });
+        expect(requests).toHaveLength(1);
+    });
+
+    it("settles step one when the formatting answer omits its charge", async () => {
+        const { config, requests } = upstream([
+            Response.json(completion(firstUsage)),
+            Response.json(completion(undefined)),
+        ]);
+        await expect(
+            callVercelSearch(messages, options, config),
+        ).rejects.toMatchObject({
+            status: 502,
+            billedUsage: settledStepOne,
+        });
+        expect(requests).toHaveLength(2);
+    });
+
+    it("does not settle a step one that itself failed before any charge", async () => {
+        const { config, requests } = upstream([
+            Response.json(
+                { error: { message: "Unavailable" } },
+                { status: 503 },
+            ),
+        ]);
+        const error = await callVercelSearch(messages, options, config).then(
+            () => {
+                throw new Error("expected a rejection");
+            },
+            (rejection: unknown) => rejection,
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect((error as { billedUsage?: unknown }).billedUsage).toBeUndefined();
+        expect(requests).toHaveLength(1);
+    });
 });

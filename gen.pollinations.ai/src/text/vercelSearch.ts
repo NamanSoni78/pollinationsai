@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import { openaiUsageToUsage } from "@shared/registry/usage-headers.ts";
 import { createParser } from "eventsource-parser";
 import { requireChatCompletionUsage } from "./chat/usage.ts";
 import { genericOpenAIClient } from "./genericOpenAIClient.ts";
@@ -79,26 +80,51 @@ export async function callVercelSearch(
         config,
     );
     const searchUsage = requireUsage(search);
+    // Both generations are one public request, and step 1 completed and was
+    // billed here: every later failure on this request settles it (the
+    // issue-72 convention for two-step flows — the throw site carries the
+    // paid step's usage).
+    const settleStepOne = () =>
+        openaiUsageToUsage(
+            searchUsage as Parameters<typeof openaiUsageToUsage>[0],
+        );
     const searchContent = search.choices?.[0]?.message?.content;
     if (typeof searchContent !== "string" || !searchContent.trim())
         throw new UpstreamError(502, {
             message: "Vercel search returned no answer to format",
             requestUrl: search.upstreamRequestUrl,
+            billedUsage: settleStepOne(),
         });
-    const result = await genericOpenAIClient(
-        [
-            ...messages,
-            {
-                role: "user",
-                content: `Format this search answer as JSON for the requested format. Preserve its facts and source URLs; do not invent facts or sources.\n${searchContent}`,
-            },
-        ],
-        { ...options, tools: undefined, tool_choice: undefined },
-        config,
-    );
+    let result: ChatCompletion;
+    try {
+        result = await genericOpenAIClient(
+            [
+                ...messages,
+                {
+                    role: "user",
+                    content: `Format this search answer as JSON for the requested format. Preserve its facts and source URLs; do not invent facts or sources.\n${searchContent}`,
+                },
+            ],
+            { ...options, tools: undefined, tool_choice: undefined },
+            config,
+        );
+    } catch (error) {
+        // Step 2 failed after step 1 was paid.
+        throw Object.assign(error as object, {
+            billedUsage: settleStepOne(),
+        });
+    }
     const metadata = search.choices?.[0]?.message?.provider_metadata;
     if (!result.stream) {
-        result.usage = sumUsage(searchUsage, requireUsage(result));
+        let resultUsage: Record<string, unknown>;
+        try {
+            resultUsage = requireUsage(result);
+        } catch (error) {
+            throw Object.assign(error as object, {
+                billedUsage: settleStepOne(),
+            });
+        }
+        result.usage = sumUsage(searchUsage, resultUsage);
         if (result.choices?.[0]?.message)
             result.choices[0].message.provider_metadata = metadata;
         return result;

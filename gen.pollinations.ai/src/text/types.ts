@@ -3,6 +3,7 @@
  */
 
 import type { OverrideErrorCode, UpstreamHeaders } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 
 /** OpenAI-style chat message. */
 export interface ChatMessage {
@@ -124,6 +125,12 @@ export interface ServiceError extends Error {
     provider?: string;
     response?: { data?: unknown };
     upstreamHeaders?: UpstreamHeaders;
+    /**
+     * Usage the provider billed even though the request failed — carried on
+     * client errors the same way `UpstreamError.billedUsage` does, and
+     * propagated through the text error funnel so the settlement collects it.
+     */
+    billedUsage?: Usage;
 }
 
 export type TextVariables = {

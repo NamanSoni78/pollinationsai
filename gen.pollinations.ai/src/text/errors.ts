@@ -53,6 +53,10 @@ export function throwTextError(error: ServiceError): never {
             error.responseBody ??
             serializeDetails(error.details || error.response?.data),
         upstreamHeaders: error.upstreamHeaders,
+        // A paid failure settles for the usage its throw site attached (the
+        // issue-72 convention) — the funnel must not drop it on the way to
+        // the settlement middleware.
+        billedUsage: error.billedUsage,
         cause: error,
     });
 }
