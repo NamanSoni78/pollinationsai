@@ -19,6 +19,10 @@ export async function callRodinFalAPI(
     try {
         const seedInput =
             params.seed !== undefined ? { seed: params.seed } : {};
+        // fal bills the queue job the moment it reports COMPLETED; rodin
+        // success carries no trackingData, so settle at the handler's
+        // default flat 3D unit on any post-completion failure.
+        const paidUsage = { completionImageTokens: 1 };
         const result = await runFalJob(
             hasImages
                 ? {
@@ -33,18 +37,26 @@ export async function callRodinFalAPI(
                       endpoint: RODIN_TEXT_ENDPOINT,
                       input: { prompt, ...seedInput },
                   },
+            undefined,
+            paidUsage,
         );
-        const mesh = extractFalModelMesh(result);
-        const buffer = await downloadMesh(mesh.url);
-        // fal's mesh.content_type isn't consistently "model/gltf-binary"
-        // (sometimes application/octet-stream) even though the file is a GLB
-        // by default (we don't pass geometry_file_format), so pin the
-        // content-type the same way trellis2Model.ts does — this also keeps
-        // model3dCache's "model/" content-type check matching for both models.
-        return {
-            buffer,
-            contentType: "model/gltf-binary",
-        };
+        try {
+            const mesh = extractFalModelMesh(result);
+            const buffer = await downloadMesh(mesh.url);
+            // fal's mesh.content_type isn't consistently "model/gltf-binary"
+            // (sometimes application/octet-stream) even though the file is a GLB
+            // by default (we don't pass geometry_file_format), so pin the
+            // content-type the same way trellis2Model.ts does — this also keeps
+            // model3dCache's "model/" content-type check matching for both models.
+            return {
+                buffer,
+                contentType: "model/gltf-binary",
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error), {
+                billedUsage: paidUsage,
+            });
+        }
     } catch (err) {
         throw toUpstreamError(err);
     }

@@ -12,6 +12,8 @@
  */
 
 import { sleep } from "../../image/util.ts";
+import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { getModel3dEnv } from "../env.ts";
 
 const QUEUE_BASE = "https://queue.fal.run";
@@ -57,17 +59,48 @@ function requireFalApiKey(): string {
     return apiKey;
 }
 
+/** Settle a post-completion fal failure onto the caller's usage. */
+function settleFalError(error: unknown, paidUsage: Usage): UpstreamError {
+    if (error instanceof UpstreamError) {
+        return error.billedUsage === undefined
+            ? Object.assign(error, { billedUsage: paidUsage })
+            : error;
+    }
+    return UpstreamError.fromProvider(
+        error instanceof FalError ? (error.status ?? 502) : 502,
+        {
+            message: error instanceof Error ? error.message : String(error),
+            ...(error instanceof FalError && error.responseBody !== undefined
+                ? { responseBody: error.responseBody }
+                : {}),
+            billedUsage: paidUsage,
+        },
+    );
+}
+
 export async function runFalJob(
     opts: RunFalJobOptions,
     apiKey = requireFalApiKey(),
+    paidUsage?: Usage,
 ): Promise<Record<string, unknown>> {
-    return (await runFalJobResponse(opts, apiKey)).json();
+    const response = await runFalJobResponse(opts, apiKey, paidUsage);
+    if (paidUsage === undefined) {
+        return (await response.json()) as Record<string, unknown>;
+    }
+    try {
+        return (await response.json()) as Record<string, unknown>;
+    } catch (error) {
+        // fal billed the completed queue job; a malformed result body must
+        // still settle it.
+        throw settleFalError(error, paidUsage);
+    }
 }
 
 /** Preserve the result headers for callers that use fal's reported billing units. */
 export async function runFalJobResponse(
     opts: RunFalJobOptions,
     apiKey = requireFalApiKey(),
+    paidUsage?: Usage,
 ): Promise<Response> {
     const submitted = await falFetch(apiKey, {
         method: "POST",
@@ -86,10 +119,24 @@ export async function runFalJobResponse(
         });
         const status = (await polled.json()) as FalQueueStatusResponse;
         if (status.status === "COMPLETED") {
-            return falFetch(apiKey, {
-                method: "GET",
-                url: submission.response_url,
-            });
+            try {
+                return await falFetch(apiKey, {
+                    method: "GET",
+                    url: submission.response_url,
+                });
+            } catch (error) {
+                // The queue reported completion, so fal bills the job: a
+                // failed result fetch settles the caller's usage. A 422 at
+                // this fetch is fal's content checker — whether that
+                // rejection happened before or after generation (and thus
+                // whether it was billed) is model-specific, so let FalError
+                // 422s through unconverted for the caller to classify.
+                if (paidUsage === undefined) throw error;
+                if (error instanceof FalError && error.status === 422) {
+                    throw error;
+                }
+                throw settleFalError(error, paidUsage);
+            }
         }
     }
 }

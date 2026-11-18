@@ -15,22 +15,35 @@ export async function callTrellis2Fal(
     requireImages(params, "microsoft/trellis-2");
 
     try {
-        const result = await runFalJob({
-            endpoint: "fal-ai/trellis-2",
-            input: {
-                image_url: params.image[0],
-                resolution: RESOLUTION[params.resolution],
+        // fal bills the queue job at COMPLETED; settle the success path's
+        // usage on any post-completion failure.
+        const paidUsage = { completionImageTokens: 1 };
+        const result = await runFalJob(
+            {
+                endpoint: "fal-ai/trellis-2",
+                input: {
+                    image_url: params.image[0],
+                    resolution: RESOLUTION[params.resolution],
+                },
             },
-        });
-        const mesh = extractFalModelMesh(result);
-        return {
-            buffer: await downloadMesh(mesh.url),
-            contentType: "model/gltf-binary",
-            trackingData: {
-                actualModel: "microsoft/trellis-2:fal",
-                usage: { completionImageTokens: 1 },
-            },
-        };
+            undefined,
+            paidUsage,
+        );
+        try {
+            const mesh = extractFalModelMesh(result);
+            return {
+                buffer: await downloadMesh(mesh.url),
+                contentType: "model/gltf-binary",
+                trackingData: {
+                    actualModel: "microsoft/trellis-2:fal",
+                    usage: paidUsage,
+                },
+            };
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error), {
+                billedUsage: paidUsage,
+            });
+        }
     } catch (error) {
         throw toUpstreamError(error);
     }

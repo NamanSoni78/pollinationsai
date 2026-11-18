@@ -113,16 +113,26 @@ export async function runInferenceport(
         if (job.status === "completed") {
             const cost = job.usage?.payg_credits_charged;
             if (cost !== undefined && (!Number.isFinite(cost) || cost < 0)) {
-                throw new InferenceportError(
-                    "InferencePort returned an invalid charge",
-                    502,
+                // The job completed and charged payg credits: settle the
+                // caller even when the receipt cannot be read.
+                throw Object.assign(
+                    new InferenceportError(
+                        "InferencePort returned an invalid charge",
+                        502,
+                    ),
+                    { billedUsage: { completionImageTokens: 1 } },
                 );
             }
             const output = job.data?.[0];
             if (!output?.model_glb_b64_bytes && !output?.model_ply_b64_bytes) {
-                throw new InferenceportError(
-                    "InferencePort completed without output",
-                    502,
+                // Completed means charged (the registry prices these models
+                // at a flat unit): settle it.
+                throw Object.assign(
+                    new InferenceportError(
+                        "InferencePort completed without output",
+                        502,
+                    ),
+                    { billedUsage: { completionImageTokens: 1 } },
                 );
             }
             return {

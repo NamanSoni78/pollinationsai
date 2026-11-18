@@ -19,8 +19,13 @@ export async function callTrellis2(
             resolution: params.resolution,
         });
         if (!result.glbBase64) {
-            throw new InferenceportError(
-                "microsoft/trellis-2 returned no GLB output",
+            // runInferenceport only returns completed (charged) jobs, so a
+            // PLY-only delivery still settles the flat 3D unit.
+            throw Object.assign(
+                new InferenceportError(
+                    "microsoft/trellis-2 returned no GLB output",
+                ),
+                { billedUsage: { completionImageTokens: 1 } },
             );
         }
         return {
