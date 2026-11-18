@@ -1801,14 +1801,16 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "google/gemma-4-26b-a4b-it": {
     "cost": {
-      "completionTextTokens": 0.0000003587,
-      "promptImageTokens": 0.00000007385,
-      "promptTextTokens": 0.00000007385,
+      "completionTextTokens": 0.0000003165,
+      "promptCachedTokens": 0.00000005275,
+      "promptImageTokens": 0.00000009495,
+      "promptTextTokens": 0.00000009495,
     },
     "price": {
-      "completionTextTokens": 0.0000003587,
-      "promptImageTokens": 0.00000007385,
-      "promptTextTokens": 0.00000007385,
+      "completionTextTokens": 0.0000003165,
+      "promptCachedTokens": 0.00000005275,
+      "promptImageTokens": 0.00000009495,
+      "promptTextTokens": 0.00000009495,
     },
   },
   "google/gemma-4-26b-a4b-it:deepinfra": {

@@ -1556,10 +1556,18 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // OpenRouter DeepInfra FP8; rates verified 2026-10-22.
-            promptTextTokens: perMillion(0.07) * 1.055,
-            promptImageTokens: perMillion(0.07) * 1.055,
-            completionTextTokens: perMillion(0.34) * 1.055,
+            // OpenRouter published rates for google/gemma-4-26b-a4b-it
+            // (openrouter.ai/api/v1/models, verified 2026-11-18): prompt
+            // $0.09, cache read $0.05, completion $0.30 per 1M tokens, plus
+            // the 5.5% credit-purchase fee. The previous sheet (verified
+            // 2026-10-22 at $0.07/$0.34) carried no cache-read line, so
+            // cached input tokens billed $0 — the registry's convertUsage
+            // bills a usage type with no rate as zero — while OpenRouter
+            // metered them at input_cache_read.
+            promptTextTokens: perMillion(0.09) * 1.055,
+            promptCachedTokens: perMillion(0.05) * 1.055,
+            promptImageTokens: perMillion(0.09) * 1.055,
+            completionTextTokens: perMillion(0.3) * 1.055,
         },
         title: "Gemma 4 26B A4B",
         description:
