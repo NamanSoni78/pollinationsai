@@ -548,3 +548,58 @@ Product-behavior note (issue 57): the former "Pollinations-compatible endpoint" 
 - `fork/main` identical to upstream `52fd0a6c824` (0/0; no push needed). Session start: upstream main (34 new commits since the `302c47b11a` baseline) merged into `issues_mds` and pushed (`d7004241c6`); sessions 14/15 then appended rounds 16/15 additively on top (`f47ab5f17b`); this round appends issues 57–58 on that head — no history rewrite, no branch deletions (`ls-remote` checked before every push).
 - Upstream PR creation re-verified this round: `403 Resource not accessible by personal access token` for both branches; fork PRs #66/#67 are the live review surface until an upstream-scoped token is supplied.
 - Live probe spend: composio `initialize`/`tools/list`/one `echo` `tools/call` all settled at 0 pollen (that is issue 58's finding); the module probe and all other verification ran against the local checkout. No production state created or modified.
+
+
+## Round 17 — session 14: full-surface residual re-audit at 52fd0a6 (2026-11-18)
+
+Baseline: upstream `52fd0a6c824` (fork/main verified identical, 0/0 — no push needed). `issues_mds` at `f47ab5f17b` (issues 1–56 + the issue49 double-file; next free index 57, unchanged by this round). Method: three parallel read-only subagent audits — (A) gen residual routes + newest upstream features (Azure image inlining `cdde268c15`; new model sheets MAI 2.7 / 2.7-Flash, Decision-1.1, ZONOS3-Mini, Qwen 4 Max, Hy4 Flash, Seedance 2.0, DeepSeek V4.1 1017; moderation restore `4a51824573`; seo/mcp-card/proxy/docs-samples/model-status/model-catalog/generation-handlers routes; middleware residual; durable objects), (B) enter quest/referral economy + services (all 8 quest verification groups, `a3172ffb96` repeat-reward stacking, claimReward, leaderboard, agents/integrations, code-agent services, github-api/secret-scanning, sites, listed-apps, analytics, account residual), (C) apps/games delta + packages + frontend + ops (the 7 new games, apps fleet catalog, sdk/mcp/auth/polli-cli, pollinations.ai sinks, ops dashboards, workflows) — plus main-agent verification of the single near-miss and one live probe.
+
+**Result: 0 accepted findings — no issue numbers consumed; the next index stays 57.** Every candidate dedup'd against issues 1–56, matched a documented deliberate design, or fell below the strict gate.
+
+### Live probe (bounty key): MAI edit-path input-image billing — retired
+
+The round-16 below-gate lead (`azureMaiImageModel.ts:193-204` throws only on missing output tokens; a missing `num_input_image_tokens` would silently zero-bill the input-image leg) was probed live: `microsoft/mai-image-2.7-flash` edits with 1 and 5 identical 768×768 PNG references → `x-usage-prompt-image-tokens: 576` / `2880` (exactly 5×576), `x-usage-prompt-text-tokens: 47` / `510`, `x-usage-completion-image-tokens: 1024` both times — Azure reports the field on the edits path and all three priced legs settle. Retired by transport evidence (the issue-46 deferred-Fireworks retirement pattern). Probe spend ≈ $0.023 (bounty key shared with concurrent cron sessions; the gen `/v1/balance` path 404s, so per-request deltas are not attributable from outside).
+
+### Near-miss verified and closed (below gate)
+
+- Unauthenticated `POST /api/account/agents/:id/sync` (`agents.ts:686-707`, mounted public): the route's own describeRoute documents the unauthenticated trigger + 30 s per-agent conditional-write throttle as intentional; each sync burns 2 shared GitHub App installation-token REST calls + a dispatch PUT; a single IP at ~1 rps ≈ 7,200 GH calls/h ≈ 48% of the 15,000/h installation budget, degrading GitHub-backed quest checks to their 5-min KV fallback. Same disposition class as the realtime overdraft (documented deliberate design, graceful degradation, no data/money loss). Recorded for re-evaluation if the sync path ever gains steps; a global GH-token budget guard is the fix shape.
+
+### Below-gate dispositions recorded (future-round dedup)
+
+1. `azureContentSafety.ts:87-106` fails open on Content-Safety errors (availability choice).
+2. Gemini image routes' moderation is opt-in via `safe` (default false) — `createAndReturnImages.ts:982,1010`.
+3. `/openapi.json` + `/docs/open-api/generate-schema` unauthenticated, unrate-limited, uncached ENTER binding subrequest + media fetch per hit (bounded ~2–3× fan-out).
+4. `/models/status` `minutes` 1–10080 varies the edge cache key, multiplying Tinybird pipe executions (public pipe token by design).
+5. GitHub-rename namespace takeover pays the 2-pollen community-model usage quest once (pipe attribution by owner_username; rename + name-grab + >$0.50 third-party spend preconditions).
+6. Sites assets-completion JWT passed verbatim into the script PUT (cross-session reuse depends on CF-side scoping; unverifiable offline).
+7. `quest_agent_usage`/`quest_app_usage` client-side filters are load-bearing only in the quest groups; `/account/earnings*` trusts the pipes (both verified fail-closed today).
+8. CI askpolli/polli-assistant expose `PLN_GITHUB_POLLY_KEY` to web-tooled LLM agents — not attacker-triggerable (sender-ID allowlists + actor equality), same class as issue 19.
+9. computer-mcp shell egress unvalidated (per-user DO, own-key billing, CF egress constraints).
+10. machines-mcp `timeout: 0` ≈ 24-day paid lease, caller's own key by design.
+11. quest-dashboard loads React from unpkg without SRI (no secrets on that origin; needs CDN compromise).
+12. SDK defaults API keys to localStorage (documented integration contract; no XSS sink found in the frontend).
+13. Unauthenticated `POST /referral` — allowlisted `ref` enum + IP edge limit; telemetry-spam only.
+
+### Clean-sweep records
+
+- gen Azure inlining (`cdde268c15`): count-capped (`maxReferenceImages ?? 8`), 20 MiB aggregate byte cap, redirects refused, no double-fetch, billing via the `image_tokens` carve-out (unpriced-sheet instances already filed 46/49/52; the deadline gap is issue 20's scope).
+- New model sheets: MAI 2.7/2.7-Flash (3 legs priced, settled, output-absence throws; input legs live-verified above), Decision-1.1 (0-output = Azure single input meter, consistent with Decision-1), ZONOS3-Mini (byte usage matches the sheet; auth runs before the cache lookup), Seedance 2.0 (aspect-only change), DeepSeek V4.1 1017 (4 legs; the Fireworks residual is issue 52 row 15), Qwen 4 Max / Hy4 Flash (dups of issue 45 / PRs #57–#58).
+- Azure moderation restore (`4a51824573`): unconditional on every Azure image path (GPT-image family, MAI incl. the OpenRouter fallback, Flux Kontext/1.1/2, InferencePort).
+- gen residual routes (seo, mcp-card, well-known, proxy, model-status, model-catalog, generation-handlers, transcription-response, docs): static/linear/validated; no injection, no unauthenticated heavy work.
+- middleware: rate limiting counts keyed requests per key AND per IP; auth on every generation path; guardrails bounded (50k chars / 25 parts); large-chat-body 100 MiB streaming cap.
+- durable objects: CommunityModelRateLimiter keyed `modelId:userId`; GenerationCoordinator owner-gated, 1 MiB job chunks, TTL-bounded records.
+- enter quest groups (all 8): OAuth-verified identity anchors (immutable `githubId` at account-create; Discord/Google via link-social only), server-side GraphQL/REST reads filtered by `databaseId`, D1 keyed `user.id`, Tinybird pipes filter `user_id`/`dev_user_id` fail-closed.
+- `a3172ffb96` repeat-reward stacking: per-event reward keys + global-unique idempotency with `onConflictDoNothing`; `claimReward` conditional-update + `changes()`-gated credit; the claim endpoint is dashboard-session-only and rejects API keys.
+- agents/integrations/code-agent services: owner-scoped CRUD, fixed GH hosts with URL-encoded segments (no SSRF), sucrase (no exec), 64 KiB source cap, short-lived `ag_run` tokens, 16 MCP tool-call cap, outbound auth same-origin only + `redirect: manual`.
+- github-secret-scanning: GitHub rotating public-key signature over the raw body before any key disable; no third-party submissions.
+- sites/listed-apps/client-metadata/product-analytics/notices/signup-domains/tinybird/d1-sync: authed or admin-gated, parameterized, https-only + private-host blocklist + 5 s / 5 KB caps.
+- community endpoints: encrypted bearer tokens, 30 s probe throttle, URL validation in every builder, byte caps, allowlist-gated publication.
+- account residual: owner-scoped key CRUD with budget reserve/refund, plaintext secrets only for `pk_` by design, usage/earnings pipes fail-closed.
+- apps: the 7 new games are `app.json` catalog rows on external hosts (scheme-filtered URLs, screenshot-host allowlist, React text render, `noopener`); grouped MCP workers are service-binding-only with strictly-public fetch and 512 KiB caps; fleet spot-checks clean (client-only Vite apps; `agent-*` prompt-only; floret/ask-jev own-key; pi-workbench traversal-guarded; computer-mcp GitHub App token repo-scoped away from the shell).
+- packages: sdk (encodeURIComponent, regex-gated ids, single-use OAuth state, key in headers only), mcp (validated base URL; `d2294d1978` passthrough surfaces only the gateway's `error.message` to authed callers), auth (admin revalidation, HMAC cookie, AES-GCM origin-bound token, same-origin returnTo), polli-cli spot-check consistent with the filed argv-redaction fix.
+- frontend: no innerHTML/dangerouslySetInnerHTML/postMessage/iframe sinks; react-markdown without rehype-raw; fixed-location redirects; media CSP sandbox + attachment disposition.
+- ops: SOPS-encrypted secrets throughout; economics/kpi admin-role-gated; Grafana strips identity headers with anonymous disabled; workflows check out base-branch code only, interpolate numeric ids, run the review agent in an iptables-blocked container, SHA-only npm publish interpolation.
+
+### Sync
+
+- `fork/main` identical to upstream `52fd0a6c824` (0/0; no push needed this round). `issues_mds` append-only: no new issue files (0 accepted), WORKLOG.md updated only. No branch created (nothing to fix), no PR opened (nothing to fix; upstream PR creation was 403 with this token as of round 16 — not re-verified this round — so fork PRs #61–#65 remain the live review queue, and the issues 11/15/33 fixes are still unmerged upstream).
