@@ -86,6 +86,28 @@ describe("vision input token billing", () => {
         );
     });
 
+    it("bills image tokens on the mistral-large-3 Bedrock fallback too", () => {
+        const parent = TEXT_SERVICES["mistralai/mistral-large-3"];
+        const fallback = TEXT_SERVICES["mistralai/mistral-large-3:aws"];
+        const fallbackCost = fallback.cost as Record<
+            string,
+            number | undefined
+        >;
+        expect(fallbackCost.promptImageTokens).toBeDefined();
+
+        const billing = calculateUsageBilling({
+            model: "mistralai/mistral-large-3",
+            usage: {
+                promptTextTokens: 1_000,
+                promptImageTokens: 10_000,
+                completionTextTokens: 1_000,
+            },
+            servedBy: fallback,
+            quotedBy: parent,
+        });
+        expect(billing.cost.promptImageTokens ?? 0).toBeCloseTo(0.005, 15);
+    });
+
     it("still bills image tokens on the already-priced control model", () => {
         const definition = TEXT_SERVICES["x-ai/grok-4.20"];
         const billing = calculateUsageBilling({
