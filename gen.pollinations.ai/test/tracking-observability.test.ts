@@ -2808,6 +2808,216 @@ describe("tracking observability", () => {
         expect(fallback.isBilledUsage).toBe(true);
     });
 
+    it("bills a rescued attempt whose provider charged for the failed leg", async () => {
+        const tinybirdRequests: Request[] = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation(
+            async (input, init) => {
+                tinybirdRequests.push(new Request(input, init));
+                return new Response("ok");
+            },
+        );
+        const before = await getUserBalance(drizzle(env.DB), trackingUser.id);
+        // The exact object generateChatAttempt throws for a paid-but-empty
+        // completion (handler.ts): 502 empty_response with the provider's
+        // reported usage attached as billedUsage. A 502 is retryable, so the
+        // loop rescues the request with the fallback — the provider was paid.
+        const paidPrimary = UpstreamError.fromProvider(502, {
+            message: "Chat Completions provider returned an empty response",
+            errorCode: "empty_response",
+            billedUsage: {
+                promptTextTokens: 100000,
+                completionTextTokens: 20000,
+            },
+        });
+
+        const ctx = createExecutionContext();
+        const response = await createSseStreamApp(
+            25,
+            undefined,
+            true,
+            trackingUser,
+            10,
+            paidPrimary,
+        ).fetch(
+            new Request(
+                "https://gen.pollinations.ai/v1/chat/completions",
+                {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        model: "openai/gpt-5.4-nano",
+                        stream: true,
+                        messages: [{ role: "user", content: "test" }],
+                    }),
+                },
+            ),
+            {
+                DB: env.DB,
+                ENVIRONMENT: "test",
+                LOG_LEVEL: "debug",
+                LOG_FORMAT: "text",
+                BETTER_AUTH_SECRET: "test_secret",
+                TINYBIRD_INGEST_URL:
+                    "https://tinybird.test/v0/events?name=generation_event_v2",
+                TINYBIRD_INGEST_TOKEN: "test_tinybird_token",
+            } as CloudflareBindings,
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+
+        expect(response.status).toBe(200);
+        expect(tinybirdRequests).toHaveLength(2);
+        const [primary, fallback] = await Promise.all(
+            tinybirdRequests.map(
+                (request) => request.json() as Promise<TinybirdEvent>,
+            ),
+        );
+        expect(primary.isFinal).toBe(false);
+        expect(primary).toMatchObject({
+            isBilledUsage: true,
+            tokenCountPromptText: 100000,
+            tokenCountCompletionText: 20000,
+        });
+        expect(primary.totalPrice).toBeGreaterThan(0);
+        expect(fallback).toMatchObject({
+            isBilledUsage: true,
+            tokenCountCompletionText: 500,
+        });
+        const after = await getUserBalance(drizzle(env.DB), trackingUser.id);
+        // One deduction for the whole request: the rescued primary's charge
+        // plus the fallback that served it — not the fallback's alone.
+        expect(after.tierBalance + after.packBalance).toBeCloseTo(
+            before.tierBalance +
+                before.packBalance -
+                primary.totalPrice -
+                fallback.totalPrice,
+            6,
+        );
+    });
+
+    it("bills the paid primary when the fallback fails terminally after it", async () => {
+        const tinybirdRequests: Request[] = [];
+        vi.spyOn(globalThis, "fetch").mockImplementation(
+            async (input, init) => {
+                tinybirdRequests.push(new Request(input, init));
+                return new Response("ok");
+            },
+        );
+        const before = await getUserBalance(drizzle(env.DB), trackingUser.id);
+
+        const app = new Hono<Env>();
+        app.use("*", requestId());
+        app.use("*", logger);
+        app.use("*", async (c, next) => {
+            c.set("auth", {
+                user: trackingUser,
+                requireUser: () => trackingUser,
+                requireModelAccess: () => {},
+            });
+            c.set("balance", {
+                getBalance: async () => ({ tierBalance: 1, packBalance: 0 }),
+            });
+            c.set("model", {
+                requested: "openai/gpt-5.4-nano",
+                resolved: "openai/gpt-5.4-nano",
+                definition: getRegistryModelDefinition("openai/gpt-5.4-nano"),
+            });
+            await next();
+        });
+        app.post("/v1/chat/completions", track("generate.text"), (c) => {
+            const candidate = {
+                id: "openai/gpt-5.4-nano",
+                definition: getRegistryModelDefinition("openai/gpt-5.4-nano"),
+            };
+            // The primary failed terminally for the caller but was paid by
+            // the provider (billedUsage); the fallback then fails without a
+            // charge and ends the request.
+            c.var.track.attempts.push({
+                candidate,
+                startedAt: new Date(),
+                endedAt: new Date(),
+                settled: false,
+                error: UpstreamError.fromProvider(502, {
+                    message:
+                        "Chat Completions provider returned an empty response",
+                    errorCode: "empty_response",
+                    billedUsage: {
+                        promptTextTokens: 100000,
+                        completionTextTokens: 20000,
+                    },
+                }),
+            });
+            c.var.track.attempts.push({
+                candidate: { ...candidate, id: "openai/gpt-5.4-nano:aws" },
+                startedAt: new Date(),
+                endedAt: new Date(),
+                settled: true,
+            });
+            throw UpstreamError.fromProvider(429, {
+                message: "fallback exhausted",
+            });
+        });
+        app.onError(handleError);
+
+        const ctx = createExecutionContext();
+        const response = await app.fetch(
+            new Request(
+                "https://gen.pollinations.ai/v1/chat/completions",
+                {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        model: "openai/gpt-5.4-nano",
+                        stream: false,
+                        messages: [{ role: "user", content: "test" }],
+                    }),
+                },
+            ),
+            {
+                DB: env.DB,
+                ENVIRONMENT: "test",
+                LOG_LEVEL: "debug",
+                LOG_FORMAT: "text",
+                BETTER_AUTH_SECRET: "test_secret",
+                TINYBIRD_INGEST_URL:
+                    "https://tinybird.test/v0/events?name=generation_event_v2",
+                TINYBIRD_INGEST_TOKEN: "test_tinybird_token",
+            } as CloudflareBindings,
+            ctx,
+        );
+        await waitOnExecutionContext(ctx);
+
+        // Upstream 429s render as 502 by design (remapUpstreamStatus). The
+        // 502 also emits the server_error event alongside the two
+        // generation rows.
+        expect(response.status).toBe(502);
+        expect(tinybirdRequests).toHaveLength(3);
+        const generationRows = tinybirdRequests.filter((request) =>
+            request.url.includes("generation_event_v2"),
+        );
+        expect(generationRows).toHaveLength(2);
+        const [primary, final] = await Promise.all(
+            generationRows.map(
+                (request) => request.json() as Promise<TinybirdEvent>,
+            ),
+        );
+        expect(primary.isFinal).toBe(false);
+        expect(primary).toMatchObject({
+            isBilledUsage: true,
+            tokenCountPromptText: 100000,
+            tokenCountCompletionText: 20000,
+        });
+        expect(primary.totalPrice).toBeGreaterThan(0);
+        expect(final.isFinal).toBe(true);
+        // The fallback's own failure carries no charge: its row stays free.
+        expect(final.isBilledUsage).toBe(false);
+        const after = await getUserBalance(drizzle(env.DB), trackingUser.id);
+        expect(after.tierBalance + after.packBalance).toBeCloseTo(
+            before.tierBalance + before.packBalance - primary.totalPrice,
+            6,
+        );
+    });
+
     it.each([false, true])(
         "handles an opening Mistral stream error through fallback (fallback also fails: %s)",
         async (fallbackFails) => {

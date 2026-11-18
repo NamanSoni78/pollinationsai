@@ -31,6 +31,7 @@ import {
     sendToTinybird,
 } from "@shared/events.ts";
 import { PaymentRequiredError } from "@shared/http/payment-required-error.ts";
+import { roundPollenLedgerAmount } from "@shared/billing/precision.ts";
 import {
     collectRequestInputs,
     stringifyRequestInputs,
@@ -358,40 +359,63 @@ export const track = (eventType: EventType) =>
                 // ended the request is not among them: it is the response, and
                 // the settlement row below carries it — under the name only the
                 // loop can supply. So a request emits one row per upstream call.
+                //
+                // A rescued attempt can still have been paid: the handler
+                // reports the provider's charge on the error (the same
+                // billedUsage the request-ending failure settles), so the
+                // attempt row settles it too instead of emitting a free row —
+                // the direct path collects this charge, and a rescued request
+                // must not waive it. The billings are computed here and the
+                // rows emitted after the wallet deduction below, so each
+                // billed row can carry its share of the charged pollen.
+                const movedOnAttempts: Array<{
+                    attempt: FallbackAttempt;
+                    status: ReturnType<typeof failedAttemptStatus>;
+                    billedUsage: Usage | undefined;
+                    billing: ReturnType<typeof calculateUsageBilling> | undefined;
+                    errorUsage: ReturnType<typeof trackJsonErrorUsage>;
+                }> = [];
+                let attemptsBilledTotalPrice = 0;
                 for (const attempt of attempts) {
                     if (attempt.settled) continue;
-                    const model = attempt.candidate.id;
-                    const status = failedAttemptStatus(attempt.error);
-                    await emitRow({
-                        startTime: attempt.startedAt,
-                        endTime: attempt.endedAt,
-                        attemptStartTime: attempt.startedAt,
-                        balanceTracking: balanceTracking(),
-                        responseTracking: {
-                            ...trackJsonErrorUsage(
-                                eventType,
-                                requestTracking,
-                                attempt.candidate,
-                                attempt.error,
-                                pricingInput,
-                            ),
-                            responseStatus: status,
-                            cacheHit: false,
-                            isBilledUsage: false,
-                            isFinal: false,
-                            fallbackUsed:
-                                model !==
-                                requestTracking.resolvedModelRequested,
-                            modelUsed: model,
-                            modelProviderUsed:
-                                attempt.candidate.definition?.provider ??
-                                requestTracking.modelProvider,
-                        },
-                        errorTracking: collectErrorData(
-                            status,
-                            attempt.error instanceof Error
-                                ? attempt.error
-                                : undefined,
+                    const billedUsage =
+                        attempt.error instanceof UpstreamError
+                            ? attempt.error.billedUsage
+                            : undefined;
+                    const billing =
+                        billedUsage &&
+                        !isImplausibleProxyUsage(
+                            eventType,
+                            attempt.candidate,
+                            billedUsage,
+                        )
+                            ? calculateUsageBilling({
+                                  model: requestTracking.resolvedModelRequested,
+                                  usage: billedUsage,
+                                  servedBy:
+                                      attempt.candidate.definition ??
+                                      requestTracking.modelDefinition,
+                                  quotedBy: quotedModel(
+                                      requestTracking,
+                                      attempt.candidate,
+                                  ),
+                                  input: pricingInput,
+                              })
+                            : undefined;
+                    if (billing) {
+                        attemptsBilledTotalPrice += billing.price.totalPrice;
+                    }
+                    movedOnAttempts.push({
+                        attempt,
+                        status: failedAttemptStatus(attempt.error),
+                        billedUsage,
+                        billing,
+                        errorUsage: trackJsonErrorUsage(
+                            eventType,
+                            requestTracking,
+                            attempt.candidate,
+                            attempt.error,
+                            pricingInput,
                         ),
                     });
                 }
@@ -434,8 +458,15 @@ export const track = (eventType: EventType) =>
                         finalCandidate.communityEndpoint;
                     const deduction = await handleBalanceDeduction({
                         db: balanceDb,
-                        isBilledUsage: responseTracking.isBilledUsage,
-                        totalPrice: responseTracking.price?.totalPrice,
+                        // One deduction for the whole request: the final
+                        // settlement plus every rescued paid attempt the
+                        // loop settled above.
+                        isBilledUsage:
+                            responseTracking.isBilledUsage ||
+                            attemptsBilledTotalPrice > 0,
+                        totalPrice:
+                            (responseTracking.price?.totalPrice ?? 0) +
+                            attemptsBilledTotalPrice,
                         userId,
                         apiKeyId: c.var.auth?.apiKey?.id,
                         apiKeyPollenBalance: c.var.auth?.apiKey?.pollenBalance,
@@ -458,7 +489,9 @@ export const track = (eventType: EventType) =>
                     communityModelReward = deduction.communityModelReward;
                     payerBucket = deduction.payerBucket;
                     billedPrice = deduction.billedPrice;
-                    const totalPrice = responseTracking.price?.totalPrice ?? 0;
+                    const totalPrice =
+                        (responseTracking.price?.totalPrice ?? 0) +
+                        attemptsBilledTotalPrice;
                     const packBalance = deduction.postDeductionPackBalance;
                     const lowBalanceThreshold =
                         deduction.lastPackPollen == null
@@ -497,6 +530,60 @@ export const track = (eventType: EventType) =>
                       }
                     : balanceTracking();
 
+                // Emit the moved-on attempts now, after the wallet deduction:
+                // a billed row carries its share of the deduction's charged
+                // pollen (proportional to its sheet price), so the request's
+                // rows add up to what was actually deducted.
+                const chargedShareDenominator =
+                    (responseTracking.price?.totalPrice ?? 0) +
+                    attemptsBilledTotalPrice;
+                let attemptChargedShares = 0;
+                for (const row of movedOnAttempts) {
+                    const chargedShare =
+                        row.billing &&
+                        billedPrice > 0 &&
+                        chargedShareDenominator > 0 &&
+                        row.billing.price.totalPrice > 0
+                            ? roundPollenLedgerAmount(
+                                  (billedPrice *
+                                      row.billing.price.totalPrice) /
+                                      chargedShareDenominator,
+                              )
+                            : 0;
+                    attemptChargedShares += chargedShare;
+                    await emitRow({
+                        startTime: row.attempt.startedAt,
+                        endTime: row.attempt.endedAt,
+                        attemptStartTime: row.attempt.startedAt,
+                        balanceTracking: balanceTracking(),
+                        billedPrice: chargedShare,
+                        responseTracking: {
+                            ...(row.billing ? {} : row.errorUsage),
+                            ...(row.billing ?? {}),
+                            ...(row.billing
+                                ? { usage: row.billedUsage }
+                                : {}),
+                            responseStatus: row.status,
+                            cacheHit: false,
+                            isBilledUsage: Boolean(row.billing),
+                            isFinal: false,
+                            fallbackUsed:
+                                row.attempt.candidate.id !==
+                                requestTracking.resolvedModelRequested,
+                            modelUsed: row.attempt.candidate.id,
+                            modelProviderUsed:
+                                row.attempt.candidate.definition?.provider ??
+                                requestTracking.modelProvider,
+                        },
+                        errorTracking: collectErrorData(
+                            row.status,
+                            row.attempt.error instanceof Error
+                                ? row.attempt.error
+                                : undefined,
+                        ),
+                    });
+                }
+
                 const finalEvent = await emitRow({
                     startTime,
                     endTime,
@@ -507,7 +594,14 @@ export const track = (eventType: EventType) =>
                     responseTracking,
                     markup,
                     communityModelReward,
-                    billedPrice,
+                    // The final row carries the remainder of the charged
+                    // pollen after the billed attempt rows took their shares.
+                    billedPrice: Math.max(
+                        0,
+                        roundPollenLedgerAmount(
+                            billedPrice - attemptChargedShares,
+                        ),
+                    ),
                     errorTracking:
                         responseTracking.errorTracking ??
                         collectErrorData(response.status, c.get("error")),
