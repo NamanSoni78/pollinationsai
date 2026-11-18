@@ -708,6 +708,10 @@ export const proxyRoutes = new Hono<Env>()
             getVisibleModelEntriesForEventType(c, "generate.embedding"),
         ),
     )
+    // GPU servers register before auth(): their JSON body is parsed by the
+    // handler ahead of the PLN_GPU_TOKEN check, so the pre-parse JSON cap
+    // applies to both legs (GET has no body and passes through untouched).
+    .use("/register", jsonBodyLimit)
     .post("/register", handleRegisterServer)
     .get("/register", handleRegisterServer)
     // Auth required for all endpoints below (API key only - no session cookies)

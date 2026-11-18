@@ -10,10 +10,10 @@ import {
     teardownFetchMock,
 } from "@shared/test/mocks/fetch.ts";
 import { createMockTinybird } from "@shared/test/mocks/tinybird.ts";
-import { afterEach, beforeEach, describe, expect, vi } from "vitest";
 import { Hono } from "hono";
-import { jsonBodyLimit } from "../src/routes/generation-handlers.ts";
+import { afterEach, beforeEach, describe, expect, vi } from "vitest";
 import worker from "../src/index.ts";
+import { jsonBodyLimit } from "../src/routes/generation-handlers.ts";
 import googleCloudAuth from "../src/text/auth/googleCloudAuth.ts";
 import { withInlineGenerationCoordinator } from "./helpers/inline-generation-coordinator.ts";
 
@@ -201,6 +201,45 @@ describe("jsonBodyLimit", () => {
             const body = await response.text();
             expect(body).not.toMatch(/32 MiB/i);
             expect(response.status).not.toBe(413);
+        } finally {
+            await wait();
+        }
+    });
+});
+
+describe("jsonBodyLimit on /register", () => {
+    test("rejects an oversized declared JSON body before the pre-auth parse", async () => {
+        // /register parses its JSON before checking PLN_GPU_TOKEN, so the
+        // anonymous parse is exactly the surface the cap must bound.
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "content-length": String(60 * 1024 * 1024),
+            },
+            body: "x",
+        });
+
+        try {
+            const body = await response.text();
+            expect(response.status).toBe(413);
+            expect(body).toMatch(/32 MiB/i);
+        } finally {
+            await wait();
+        }
+    });
+
+    test("still parses a normal-sized /register body ahead of its token check", async () => {
+        // A well-formed anonymous body keeps reaching the parser and is
+        // answered by the PLN_GPU_TOKEN check (401 without a token).
+        const { response, wait } = await fetchWorker("/register", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ url: "https://gpu.test" }),
+        });
+
+        try {
+            expect(response.status).toBe(401);
         } finally {
             await wait();
         }
