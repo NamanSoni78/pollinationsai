@@ -4,6 +4,7 @@ import { getPublicOrigin } from "@shared/public-origin.ts";
 import { rateLimit } from "@shared/rate-limit.ts";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { api } from "./api.ts";
@@ -36,6 +37,28 @@ function redirectLegacyDocs(c: Context<Env>): Response {
     return c.redirect(url.toString(), 301);
 }
 
+const API_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Enter-wide request-body ceiling. Every route that consumes a request body
+ * on this control plane read it unbounded before this gate: the Stripe and
+ * GitHub webhook handlers buffer the whole raw body before the signature
+ * check can reject it, the public OAuth/device token endpoints parse form or
+ * JSON bodies of any size, and the account/auth JSON routes run
+ * validator("json") ahead of their 401s. 8 MiB is the MCP-gateway body cap
+ * precedent with headroom over the 5 MiB inline site deploy (the largest
+ * legitimate enter body — site file bytes go directly to Cloudflare, never
+ * through this worker).
+ */
+const apiBodyLimit = bodyLimit({
+    maxSize: API_BODY_LIMIT_BYTES,
+    onError: () => {
+        throw new HTTPException(413, {
+            message: `Request bodies on this API can be at most 8 MiB.`,
+        });
+    },
+});
+
 const app = new Hono<Env>()
     .use(
         "*",
@@ -56,6 +79,9 @@ const app = new Hono<Env>()
             c.header("X-Robots-Tag", "noindex, nofollow");
         }
     })
+    // Bound request bodies before any handler — or limiter — can buffer
+    // them (webhooks read the raw body before signature verification).
+    .use("/api/*", apiBodyLimit)
     .use("/api/*", rateLimit({ byIp: false }))
     .route("/api/docs", createDocsRoutes(api))
     .all("/api/docs", redirectLegacyDocs)
