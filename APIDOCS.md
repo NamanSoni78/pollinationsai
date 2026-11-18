@@ -5195,8 +5195,9 @@ https://gen.pollinations.ai/3d/no_prompt_for_trellis_needed?model=microsoft%2Ftr
 
 **Available models:** tripo3d/p2, microsoft/trellis-2, nvidia/asset-harvester, hyper3d/rodin-2.5
 
-> **Note:** `hyper3d/rodin-2.5` and `nvidia/asset-harvester` require the paid balance. `microsoft/trellis-2` (the default)
-> supports `low`, `medium`, and `high` resolution and works with the Quest balance.
+> **Note:** `hyper3d/rodin-2.5`, `nvidia/asset-harvester`, `tripo3d/p2`, and `microsoft/trellis-2` (the default)
+> require the paid balance — the Quest balance cannot pay for 3D generation. `microsoft/trellis-2` supports
+> `low`, `medium`, and `high` resolution.
 
 ### NVIDIA Asset Harvester
 
