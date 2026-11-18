@@ -2647,6 +2647,50 @@ describe("community endpoint helpers", () => {
                 ),
             });
         });
+
+        // 30 x 1 MiB (~30 MB) against the ~28 MB community media response
+        // cap. The speech success path streams the publisher's audio straight
+        // through; this pins the error-side read (ensureUpstreamOk at the
+        // speech leg — the one leg issue 77's fix does not reach) to the same
+        // byte ceiling the sibling legs enforce.
+        it("rejects an oversized upstream error body without buffering it whole", async () => {
+            const TOTAL_CHUNKS = 30;
+            let produced = 0;
+            const body = new ReadableStream<Uint8Array>({
+                pull(controller) {
+                    if (produced >= TOTAL_CHUNKS) {
+                        controller.close();
+                        return;
+                    }
+                    produced += 1;
+                    controller.enqueue(new Uint8Array(1024 * 1024));
+                },
+            });
+            vi.stubGlobal(
+                "fetch",
+                vi.fn().mockResolvedValue(
+                    new Response(body, {
+                        status: 500,
+                        headers: { "content-type": "application/json" },
+                    }),
+                ),
+            );
+
+            const call = callCommunitySpeechEndpoint(
+                await speechEndpoint(),
+                {
+                    input: "Hello world",
+                    voice: "alloy",
+                    responseFormat: "mp3",
+                },
+                secret,
+            );
+
+            // The status stays the remapped upstream status; the
+            // discriminator is the byte-cap rejection before a full read.
+            await expect(call).rejects.toThrow(/[Tt]oo large/);
+            expect(produced).toBeLessThan(TOTAL_CHUNKS);
+        });
     });
 
     it("builds direct Chat gateway context with the saved token", async () => {

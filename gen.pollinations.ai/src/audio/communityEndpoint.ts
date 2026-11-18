@@ -8,6 +8,7 @@ import {
     communityTranscriptionSeconds,
     normalizeCommunityEndpointBearerToken,
 } from "@shared/community-endpoints.ts";
+import { MAX_COMMUNITY_MEDIA_RESPONSE_BYTES } from "@shared/community-media.ts";
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
 import {
     buildUsageHeaders,
@@ -79,7 +80,15 @@ export async function callCommunitySpeechEndpoint(
             requestUrl: new URL(upstreamUrl),
         });
     }
-    response = await ensureUpstreamOk(response, upstreamUrl);
+    response = await ensureUpstreamOk(
+        response,
+        upstreamUrl,
+        // The success path streams the publisher's audio through untouched;
+        // the error body is the only buffered read on this leg, so bound it
+        // with the same cap the sibling community legs enforce (the leg
+        // issue 77's fix does not reach).
+        MAX_COMMUNITY_MEDIA_RESPONSE_BYTES,
+    );
 
     const contentType =
         response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
