@@ -865,9 +865,10 @@ export const TEXT_FALLBACKS = {
             provider: "openrouter",
             addedDate: new Date("2026-10-24").getTime(),
             // OpenRouter's anthropic/fast endpoint, plus the 5.5% credit fee.
+            // Cache hits at 2x the standard 10%-of-input read rate.
             cost: {
                 promptTextTokens: perMillion(8) * 1.055,
-                promptCachedTokens: perMillion(0.4) * 1.055,
+                promptCachedTokens: perMillion(0.8) * 1.055,
                 promptCacheWriteTokens: perMillion(10) * 1.055,
                 completionTextTokens: perMillion(40) * 1.055,
             },

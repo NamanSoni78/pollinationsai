@@ -2423,9 +2423,11 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 0.75,
         cost: {
-            // Anthropic global standard rates; 5-minute cache writes.
+            // Anthropic global standard rates; 5-minute cache writes. Cache
+            // hits bill at 10% of the input rate (APIDOCS prompt-caching
+            // table; every Claude sibling incl. same-generation haiku-5.5).
             promptTextTokens: perMillion(2),
-            promptCachedTokens: perMillion(0.1),
+            promptCachedTokens: perMillion(0.2),
             promptCacheWriteTokens: perMillion(2.5),
             completionTextTokens: perMillion(10),
         },
@@ -2532,10 +2534,12 @@ const TEXT_BASE_SERVICES = {
         addedDate: new Date("2026-09-22").getTime(),
         paidOnly: true,
         priceMultiplier: 1,
-        // Anthropic global standard rates; 5-minute cache writes.
+        // Anthropic global standard rates; 5-minute cache writes. Cache
+        // hits bill at 10% of the input rate (APIDOCS prompt-caching table;
+        // every Claude sibling incl. same-generation haiku-5.5 prices 10%).
         cost: {
             promptTextTokens: perMillion(4),
-            promptCachedTokens: perMillion(0.2),
+            promptCachedTokens: perMillion(0.4),
             promptCacheWriteTokens: perMillion(5),
             completionTextTokens: perMillion(20),
         },
@@ -2560,10 +2564,11 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 1,
         // Research preview: Anthropic's fast mode for Opus 5.5 at 2x standard
         // rates, served by Vercel's anthropic/claude-opus-5.5-fast pinned to
-        // Anthropic (2026-10-24). Cache writes use the 5-minute rate.
+        // Anthropic (2026-10-24). Cache writes use the 5-minute rate; cache
+        // hits at 2x the standard 10%-of-input read rate.
         cost: {
             promptTextTokens: perMillion(8),
-            promptCachedTokens: perMillion(0.4),
+            promptCachedTokens: perMillion(0.8),
             promptCacheWriteTokens: perMillion(10),
             completionTextTokens: perMillion(40),
         },
