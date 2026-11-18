@@ -41,6 +41,10 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, 
 import { homedir } from 'os'
 import { execFileSync } from 'child_process'
 import { join, extname, sep } from 'path'
+import { createSpendGate, implicitGroupPolicy, type SenderRole } from './spendGate.ts'
+
+// Per-sender cooldown for untrusted group members (see spendGate.ts).
+const spendGate = createSpendGate()
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR
   ?? join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'channels', 'telegram')
@@ -302,7 +306,7 @@ function gate(ctx: Context): GateResult {
     const policy =
       access.groups[groupId] ??
       (OWNER_IDS.size > 0
-        ? { requireMention: access.groupRequireMention ?? true, allowFrom: [] }
+        ? implicitGroupPolicy(OWNER_IDS, access.groupRequireMention)
         : undefined)
     if (!policy) return { action: 'drop' }
     const groupAllowFrom = policy.allowFrom ?? []
@@ -1020,6 +1024,18 @@ async function handleInbound(
   const from = ctx.from!
   const chat_id = String(ctx.chat!.id)
   const msgId = ctx.message?.message_id
+
+  // Spend gate: a delivered message is a full Claude Code turn on the
+  // owner's key. Owners and allowlisted senders are trusted; other group
+  // members are cooldown-limited per sender so a mention storm cannot
+  // drain the box while nobody is watching.
+  const senderId = String(from.id)
+  const senderRole: SenderRole = OWNER_IDS.has(senderId)
+    ? 'owner'
+    : access.allowFrom.includes(senderId)
+      ? 'allowed'
+      : 'group member'
+  if (!spendGate.allow(senderId, senderRole)) return
 
   // Permission-reply intercept: if this looks like "yes xxxxx" for a
   // pending permission request, emit the structured event instead of
