@@ -1,6 +1,9 @@
 import { isUserBanned } from "@shared/auth/ban.ts";
 import { isOfficialAgentPublisherGithubId } from "@shared/auth/official-agent-publishers.ts";
-import { communityResponsesUrl } from "@shared/community-endpoint-urls.ts";
+import {
+    communityResponsesUrl,
+    validateCommunityEndpointUrl,
+} from "@shared/community-endpoint-urls.ts";
 import {
     type CommunityEndpointRuntime,
     communityEndpointPrices,
@@ -110,6 +113,15 @@ async function queryCommunityModelRegistryEntries(
         if (!row.ownerGithubUsername || isUserBanned(row)) return [];
         const baseUrl = row.baseUrl;
         if (!baseUrl || !row.upstreamModel) return [];
+        // A destination inside the platform's own zones turns a proxy hop into
+        // a request the platform issues to itself; registration refuses these,
+        // and a row that predates that rule (or bypassed it) is dropped here
+        // rather than served.
+        try {
+            validateCommunityEndpointUrl(baseUrl);
+        } catch {
+            return [];
+        }
         const modelId = communityModelId(row.ownerGithubUsername, row.name);
         let proxyState: ReturnType<typeof resolveEffectiveProxyListing> | null =
             null;

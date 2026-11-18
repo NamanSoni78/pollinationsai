@@ -12,6 +12,11 @@ export function validateCommunityEndpointUrl(value: string): string {
     if (isBlockedHostname(url.hostname)) {
         throw new Error("Endpoint URL cannot target a private host");
     }
+    if (isPlatformZoneHostname(url.hostname)) {
+        throw new Error(
+            "Endpoint URL cannot target the platform's own zone",
+        );
+    }
     if (url.hash) {
         throw new Error("Endpoint URL cannot include a fragment");
     }
@@ -102,6 +107,19 @@ function communityOpenAIEndpointUrl(baseUrl: string, suffix: string): string {
     const url = new URL(communityOpenAIBaseUrl(validated));
     url.pathname = `${url.pathname.replace(/\/+$/, "")}${suffix}`;
     return url.toString();
+}
+
+/**
+ * The platform's own zones. A community endpoint pointed here turns every
+ * hop into a request the platform issues to itself — re-entering the public
+ * edge, the auth path and the community leg with the stored bearer — so a
+ * single request loops inside the platform instead of reaching an upstream.
+ * Same host set the OAuth client-id metadata fetch already refuses.
+ */
+export function isPlatformZoneHostname(hostname: string): boolean {
+    return /(^|\.)(pollinations|myceli)\.ai\.?$/.test(
+        hostname.replace(/^\[|\]$/g, "").toLowerCase(),
+    );
 }
 
 export function isBlockedHostname(hostname: string): boolean {

@@ -6573,7 +6573,58 @@ fixtureTest(
 );
 
 fixtureTest(
-    "registers a Pollinations-compatible endpoint through Enter API and uses it through gen",
+    "refuses to register a community endpoint that targets the platform's own zone",
+    async () => {
+        const ownerGithubUsername = `owner-${crypto.randomUUID().slice(0, 8)}`;
+        const modelName = `platform-zone-${crypto.randomUUID().slice(0, 8)}`;
+        const ownerUserId = await createTestUser({
+            githubId: nextAllowedGithubId(),
+            githubUsername: ownerGithubUsername,
+        });
+
+        const enterApi = await createEnterCommunityApi();
+        for (const url of [
+            "https://gen.pollinations.ai/v1/chat/completions",
+            "https://api.pollinations.ai/v1",
+            "https://mcp.pollinations.ai/mcp/composio",
+            "https://app.myceli.ai/v1",
+        ]) {
+            const registerResponse = await fetchEnterApi(
+                enterApi,
+                new Request("http://localhost:3000/api/community-endpoints", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: await sessionAuthorization(ownerUserId),
+                    },
+                    body: JSON.stringify({
+                        name: `${modelName}-${url.length}`,
+                        title: "Platform zone",
+                        description: "Points at the platform itself",
+                        api: "chat_completions",
+                        url,
+                        upstreamModel: "openai",
+                        bearerToken: "Bearer sk_platform_zone",
+                        visibility: "public",
+                        promptTextPrice: 0.00001,
+                        completionTextPrice: 0.00001,
+                    }),
+                }),
+            );
+            expect(registerResponse.status).toBe(400);
+            await expect(registerResponse.json()).resolves.toMatchObject({
+                error: {
+                    message: expect.stringContaining(
+                        "Endpoint URL cannot target the platform's own zone",
+                    ),
+                },
+            });
+        }
+    },
+);
+
+fixtureTest(
+    "registers an upstream-compatible endpoint through Enter API and uses it through gen",
     async ({ apiKey }) => {
         const ownerGithubUsername = `owner-${crypto.randomUUID().slice(0, 8)}`;
         const modelName = `pollinations-${crypto.randomUUID().slice(0, 8)}`;
@@ -6630,7 +6681,7 @@ fixtureTest(
                 }
 
                 await expectCommunityChatRequest(input, init, {
-                    customHost: "https://gen.pollinations.ai/v1",
+                    customHost: "https://upstream.example.com/v1",
                     bearerToken: "sk_pollinations_upstream",
                     upstreamModel: "openai",
                     body: {
@@ -6680,7 +6731,7 @@ fixtureTest(
                     title: "Pollinations Upstream",
                     description: "Pollinations upstream through community API",
                     api: "chat_completions",
-                    url: "https://gen.pollinations.ai/v1/chat/completions",
+                    url: "https://upstream.example.com/v1/chat/completions",
                     upstreamModel: "openai",
                     bearerToken: "Bearer sk_pollinations_upstream",
                     visibility: "public",
@@ -6704,7 +6755,7 @@ fixtureTest(
         expect(registered).toMatchObject({
             modelId: communityModelId(ownerGithubUsername, modelName),
             api: "chat_completions",
-            url: "https://gen.pollinations.ai/v1/chat/completions",
+            url: "https://upstream.example.com/v1/chat/completions",
             upstreamModel: "openai",
             visibility: "private",
             promptTextPrice: 0.00001,
@@ -11217,3 +11268,98 @@ fixtureTest(
         ).toBe("catalog client ok");
     },
 );
+
+describe("community self-origin destination policy", () => {
+    it("refuses platform zones as endpoint destinations", () => {
+        for (const blocked of [
+            "https://gen.pollinations.ai/v1",
+            "https://api.pollinations.ai/v1",
+            "https://mcp.pollinations.ai/mcp/composio",
+            "https://enter.pollinations.ai/api",
+            "https://image.pollinations.ai/x",
+            "https://media.pollinations.ai/y",
+            "https://pollinations.ai/",
+            "https://app.myceli.ai/z",
+            "https://myceli.ai/",
+            // A trailing dot is the DNS root spelling of the same host.
+            "https://gen.pollinations.ai./v1",
+        ]) {
+            expect(() => validateCommunityEndpointUrl(blocked)).toThrow(
+                "Endpoint URL cannot target the platform",
+            );
+        }
+        for (const open of [
+            "https://api.example.com/v1",
+            "https://pollinations.ai.attacker.example/v1",
+            "https://evil.pollinations.ai.attacker.com/v1",
+            "https://notpollinations.ai/v1",
+            "https://myceli.example.com/v1",
+            // The reserved placeholder hosts agents store, never a real target.
+            "https://agent-runtime.invalid/api/agent-runtime/v1",
+        ]) {
+            expect(() => validateCommunityEndpointUrl(open)).not.toThrow();
+        }
+    });
+
+    it("drops a proxy pointed at the platform instead of fetching it", async () => {
+        const suffix = crypto.randomUUID().slice(0, 8);
+        const ownerGithubUsername = `self-origin-owner-${suffix}`;
+        const modelName = `self-origin-${suffix}`;
+        const modelId = communityModelId(ownerGithubUsername, modelName);
+        const ownerUserId = await createTestUser({
+            githubId: nextAllowedGithubId(),
+            githubUsername: ownerGithubUsername,
+        });
+        const ownerKey = await createTestApiKey({ userId: ownerUserId });
+        await insertCommunityEndpoints({
+            id: `endpoint-${crypto.randomUUID()}`,
+            ownerUserId,
+            type: "proxy",
+            visibility: "private",
+            api: "chat_completions",
+            name: modelName,
+            baseUrl: "https://gen.pollinations.ai/v1",
+            // Self-referential: the nested hop resolves the same private
+            // model, which is what turns one request into a loop.
+            upstreamModel: modelId,
+            bearerTokenCiphertext: await encryptSecret(
+                ownerKey.key,
+                env.BETTER_AUTH_SECRET,
+            ),
+            promptTextPrice: 0.2 / 1_000_000,
+            completionTextPrice: 0.2 / 1_000_000,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        });
+        await resetGenerationModelRegistryCache(env);
+
+        const LOOP_URL = "https://gen.pollinations.ai/v1/chat/completions";
+
+        // Registration refuses platform zones, and a row that predates that
+        // rule (or bypassed it) is dropped from the registry instead of being
+        // served, so no hop can issue a platform-to-platform fetch with the
+        // stored bearer.
+        const entries = await getCommunityModelRegistryEntries(env);
+        expect(
+            entries.filter(
+                (row) => row.communityEndpoint.ownerUserId === ownerUserId,
+            ),
+        ).toHaveLength(0);
+
+        const response = await fetchGen(LOOP_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${ownerKey.key}`,
+            },
+            body: JSON.stringify({
+                model: modelId,
+                stream: true,
+                messages: [{ role: "user", content: "spin" }],
+            }),
+        });
+
+        expect(response.status).toBe(400);
+        expect(await response.text()).toContain("Invalid model or alias");
+    });
+});
