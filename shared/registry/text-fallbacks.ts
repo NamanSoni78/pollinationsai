@@ -676,7 +676,11 @@ export const TEXT_FALLBACKS = {
             provider: "openrouter",
             addedDate: new Date("2026-11-16").getTime(),
             cost: {
+                // Image input bills at the input rate with the credit fee,
+                // like the route's other lines (OpenRouter meters image
+                // tokens on this model, so the served sheet must price them).
                 promptTextTokens: perMillion(0.035) * 1.055,
+                promptImageTokens: perMillion(0.035) * 1.055,
                 promptCachedTokens: perMillion(0.0015) * 1.055,
                 completionTextTokens: perMillion(0.1405) * 1.055,
             },
