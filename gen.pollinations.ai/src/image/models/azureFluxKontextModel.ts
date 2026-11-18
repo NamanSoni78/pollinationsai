@@ -22,7 +22,11 @@ import {
     firstContentPolicyMessage,
 } from "../utils/contentModeration.ts";
 import { logGptImageError } from "../utils/gptImageLogger.ts";
-import { base64ToBuffer, downloadUserImage } from "../utils/imageDownload.ts";
+import {
+    base64ToBuffer,
+    downloadUserImage,
+    downloadUserImages,
+} from "../utils/imageDownload.ts";
 
 const logError = debug("pollinations:error");
 const logCloudflare = debug("pollinations:cloudflare");
@@ -465,28 +469,25 @@ export async function callAzureFlux2(
         requestBody.guidance = safeParams.guidance_scale;
     }
 
-    const inputImages = await Promise.all(
-        safeParams.image.map(async (imageUrl) => {
-            const { buffer } = await downloadUserImage(imageUrl);
-            const imageSafetyResult = await analyzeImageSafety(buffer);
-            if (!imageSafetyResult.safe) {
-                const error = UpstreamError.fromProvider(400, {
-                    message: `Input image contains unsafe content: ${imageSafetyResult.formattedViolations}`,
-                });
-                await logGptImageError(
-                    prompt,
-                    safeParams,
-                    userInfo,
-                    error,
-                    imageSafetyResult,
-                );
-                throw error;
-            }
-            return buffer;
-        }),
-    );
+    const inputImages = await downloadUserImages(safeParams.image);
+    for (const { buffer } of inputImages) {
+        const imageSafetyResult = await analyzeImageSafety(buffer);
+        if (!imageSafetyResult.safe) {
+            const error = UpstreamError.fromProvider(400, {
+                message: `Input image contains unsafe content: ${imageSafetyResult.formattedViolations}`,
+            });
+            await logGptImageError(
+                prompt,
+                safeParams,
+                userInfo,
+                error,
+                imageSafetyResult,
+            );
+            throw error;
+        }
+    }
 
-    for (const [index, buffer] of inputImages.entries()) {
+    for (const [index, { buffer }] of inputImages.entries()) {
         const field = index === 0 ? "input_image" : `input_image_${index + 1}`;
         requestBody[field] = buffer.toString("base64");
     }

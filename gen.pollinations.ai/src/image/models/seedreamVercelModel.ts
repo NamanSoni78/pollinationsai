@@ -5,7 +5,7 @@ import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import {
     base64ToBuffer,
-    downloadUserImage,
+    downloadUserImages,
     readImageDimensions,
 } from "../utils/imageDownload.ts";
 import { resolveSeedreamAspectRatio } from "./seedreamReplicateModel.ts";
@@ -14,9 +14,7 @@ export async function callSeedream5ProVercelAPI(
     prompt: string,
     params: ImageParams,
 ): Promise<ImageGenerationResult> {
-    const images = await Promise.all(
-        params.image.map((url) => downloadUserImage(url)),
-    );
+    const images = await downloadUserImages(params.image);
     const ratio = resolveSeedreamAspectRatio(params, images.length > 0);
     let [width, height] = ratio.split(":").map(Number);
     if (ratio === "match_input_image") {
