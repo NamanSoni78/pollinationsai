@@ -3921,6 +3921,10 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(0.5),
             promptCachedTokens: perMillion(0.05),
             completionTextTokens: perMillion(1.5),
+            // Gen inlines remote images for this deployment (it cannot fetch
+            // URLs), and Azure reports the image tokens as an inclusive
+            // prompt_tokens_details detail, so they land on this line.
+            promptImageTokens: perMillion(0.5),
         },
         title: "Mistral Large 3",
         description:
