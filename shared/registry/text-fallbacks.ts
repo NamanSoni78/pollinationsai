@@ -263,6 +263,7 @@ export const TEXT_FALLBACKS = {
             addedDate: new Date("2026-11-16").getTime(),
             cost: {
                 promptTextTokens: perMillion(1.5),
+                promptImageTokens: perMillion(1.5),
                 promptCachedTokens: perMillion(0.075),
                 promptCacheWriteTokens: perMillion(1.875),
                 completionTextTokens: perMillion(4.5),
@@ -389,6 +390,7 @@ export const TEXT_FALLBACKS = {
             // Callers keep the Novita quote.
             cost: {
                 promptTextTokens: perMillion(0.14),
+                promptImageTokens: perMillion(0.14),
                 promptCachedTokens: perMillion(0.0028),
                 completionTextTokens: perMillion(0.28),
             },
@@ -401,6 +403,7 @@ export const TEXT_FALLBACKS = {
             // DeepInfra current discounted rates verified 2026-10-24. Callers keep the Novita quote.
             cost: {
                 promptTextTokens: perMillion(0.387),
+                promptImageTokens: perMillion(0.387),
                 promptCachedTokens: perMillion(0.00324),
                 completionTextTokens: perMillion(0.783),
             },
@@ -410,6 +413,7 @@ export const TEXT_FALLBACKS = {
         "deepseek/deepseek-v4-flash:deepinfra": {
             supportedParameters: CHAT_PARAMETERS.deepinfraReasoning,
             provider: "deepinfra",
+            priceMultiplier: 1,
             addedDate: new Date("2026-09-01").getTime(),
             cost: {
                 // DeepInfra standard-tier rates (2026-09-21).
@@ -429,10 +433,12 @@ export const TEXT_FALLBACKS = {
         "deepseek/deepseek-v4.1-flash:fireworks": {
             supportedParameters: CHAT_PARAMETERS.fireworksReasoning,
             provider: "fireworks",
+            priceMultiplier: 1,
             addedDate: new Date("2026-10-12").getTime(),
             cost: {
                 // Fireworks Standard rates (2026-10-12).
                 promptTextTokens: perMillion(0.3),
+                promptImageTokens: perMillion(0.3),
                 promptCachedTokens: perMillion(0.006),
                 completionTextTokens: perMillion(1.2),
             },
@@ -443,9 +449,11 @@ export const TEXT_FALLBACKS = {
         "deepseek/deepseek-v4.1-flash-1017:fireworks": {
             supportedParameters: CHAT_PARAMETERS.fireworksReasoning,
             provider: "fireworks",
+            priceMultiplier: 1,
             addedDate: new Date("2026-11-16").getTime(),
             cost: {
                 promptTextTokens: perMillion(0.3),
+                promptImageTokens: perMillion(0.3),
                 promptCachedTokens: perMillion(0.006),
                 completionTextTokens: perMillion(1.2),
             },
@@ -628,6 +636,7 @@ export const TEXT_FALLBACKS = {
         "meta/llama-3.3-70b-instruct:deepinfra": {
             supportedParameters: CHAT_PARAMETERS.deepinfra,
             provider: "deepinfra",
+            priceMultiplier: 1,
             addedDate: new Date("2026-09-01").getTime(),
             cost: {
                 promptTextTokens: perMillion(0.1),
@@ -639,7 +648,7 @@ export const TEXT_FALLBACKS = {
         "mistralai/mistral-large-3:aws": {
             supportedParameters: CHAT_PARAMETERS.mistralLarge,
             provider: "aws",
-            // Bedrock US Standard reports image input in the prompt total.
+            priceMultiplier: 1,
             cost: {
                 promptTextTokens: perMillion(0.5),
                 completionTextTokens: perMillion(1.5),
@@ -650,12 +659,14 @@ export const TEXT_FALLBACKS = {
         "moonshotai/kimi-k3.1-pro:vercel": {
             supportedParameters: CHAT_PARAMETERS.vercelKimiK31,
             provider: "vercel",
+            priceMultiplier: 1,
             addedDate: new Date("2026-11-06").getTime(),
             // Vercel AI Gateway list rates (2026-11-03), no gateway fee; cache
             // writes bill at the input rate (Moonshot 5-minute TTL).
             // https://ai-gateway.vercel.sh/v1/models/moonshotai/kimi-k3.1-pro/endpoints
             cost: {
                 promptTextTokens: perMillion(2),
+                promptImageTokens: perMillion(2),
                 promptCachedTokens: perMillion(0.2),
                 promptCacheWriteTokens: perMillion(2),
                 completionTextTokens: perMillion(10),
@@ -752,6 +763,7 @@ export const TEXT_FALLBACKS = {
         "x-ai/grok-4.20:openrouter:xai-zdr": {
             supportedParameters: CHAT_PARAMETERS.openRouterGrok420,
             provider: "openrouter",
+            priceMultiplier: 1,
             addedDate: new Date("2026-09-01").getTime(),
             cost: {
                 promptTextTokens: perMillion(1.25) * 1.055,
@@ -937,6 +949,7 @@ export const TEXT_FALLBACKS = {
         "nvidia/nemotron-3.5-lightning:deepinfra": {
             supportedParameters: CHAT_PARAMETERS.deepinfraNemotron,
             provider: "deepinfra",
+            priceMultiplier: 1,
             addedDate: new Date("2026-11-09").getTime(),
             cost: {
                 // DeepInfra BF16 rates (2026-10-24): $0.06/$0.03/$0.16 per million.
@@ -964,6 +977,7 @@ export const TEXT_FALLBACKS = {
         "nvidia/nemotron-3-ultra:deepinfra": {
             supportedParameters: CHAT_PARAMETERS.deepinfraNemotron,
             provider: "deepinfra",
+            priceMultiplier: 1,
             addedDate: new Date("2026-11-09").getTime(),
             // DeepInfra NVFP4 standard-tier rates (2026-10-24).
             cost: {
