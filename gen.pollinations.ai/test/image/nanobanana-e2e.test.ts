@@ -731,13 +731,8 @@ test.for([429, 503])(
     },
 );
 
-test.for([
-    "missing usage",
-    "invalid usage",
-    "no final image",
-    "both unavailable",
-])(
-    "nano-banana-2.1 does not bill failed fallback: %s",
+test.for(["missing usage", "invalid usage", "no final image"])(
+    "nano-banana-2.1 settles the delivered fallback when the receipt fails: %s",
     async (failure, { paidApiKey, mocks }) => {
         await mocks.enable("tinybird", "vertex", "vercel");
         mocks.vertex.state.status = 503;
@@ -746,7 +741,6 @@ test.for([
             delete (data as { usage?: unknown }).usage;
         if (failure === "invalid usage") data.usage.total_tokens++;
         if (failure === "no final image") data.choices[0].message.images = [];
-        if (failure === "both unavailable") mocks.vercel.state.status = 503;
         mocks.vercel.state.response = data;
         const { response, wait } = await fetchWorker(
             `/image/failure%20${encodeURIComponent(failure)}?model=google/gemini-nano-banana-2.1`,
@@ -755,9 +749,14 @@ test.for([
         expect(response.status).toBeGreaterThanOrEqual(500);
         await response.text();
         await wait();
-        expect(
-            mocks.tinybird.state.events.filter((event) => event.isBilledUsage),
-        ).toHaveLength(0);
+        // The gateway completed (and billed) the call — the image was
+        // delivered in every case above — so the failure settles the
+        // readable usage legs instead of billing nothing.
+        const billed = mocks.tinybird.state.events.filter(
+            (event) => event.isBilledUsage,
+        );
+        expect(billed).toHaveLength(1);
+        expect(billed[0].modelProviderUsed).toBe("vercel");
         expect(mocks.tinybird.state.errorEvents).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
@@ -767,6 +766,25 @@ test.for([
         );
     },
 );
+
+test("nano-banana-2.1 does not bill a fallback that never answered", async ({
+    paidApiKey,
+    mocks,
+}) => {
+    await mocks.enable("tinybird", "vertex", "vercel");
+    mocks.vertex.state.status = 503;
+    mocks.vercel.state.status = 503;
+    const { response, wait } = await fetchWorker(
+        "/image/failure%20both%20unavailable?model=google/gemini-nano-banana-2.1",
+        { headers: { authorization: `Bearer ${paidApiKey}` } },
+    );
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    await response.text();
+    await wait();
+    expect(
+        mocks.tinybird.state.events.filter((event) => event.isBilledUsage),
+    ).toHaveLength(0);
+});
 
 test("nano-banana-2.1 rejects 4K before calling a provider", async ({
     paidApiKey,

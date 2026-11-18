@@ -212,6 +212,9 @@ function isTokenCount(value: unknown): value is number {
 
 function invalidOpenRouterImageUsage(
     usage: OpenRouterImageUsage | undefined,
+    // OpenRouter already billed the delivered image; the settle mirrors the
+    // success path's usage so tracking still charges the caller.
+    billedUsage?: Usage,
 ): never {
     logError(
         "OpenRouter returned invalid image billing usage:",
@@ -221,6 +224,7 @@ function invalidOpenRouterImageUsage(
         message: "OpenRouter returned invalid image billing usage",
         responseBody: JSON.stringify(usage),
         requestUrl: new URL(OPENROUTER_IMAGE_URL),
+        ...(billedUsage ? { billedUsage } : {}),
     });
 }
 
@@ -497,7 +501,8 @@ export async function callOpenRouterSeedreamFlashAPI(
         !Number.isFinite(providerCost) ||
         providerCost <= 0
     ) {
-        invalidOpenRouterImageUsage(data.usage);
+        // The image is in hand, so OpenRouter billed the generation.
+        invalidOpenRouterImageUsage(data.usage, { completionImageTokens: 1 });
     }
 
     logOps("Seedream 5.0 Flash generation complete", {
@@ -575,7 +580,12 @@ async function callOpenRouterAlibabaQwenImage(
     }
     const providerCost = data.usage?.cost;
     if (typeof providerCost !== "number" || !(providerCost > 0)) {
-        invalidOpenRouterImageUsage(data.usage);
+        invalidOpenRouterImageUsage(data.usage, {
+            ...(route.meterReferences && references.length > 0
+                ? { promptImageTokens: references.length }
+                : {}),
+            completionImageTokens: 1,
+        });
     }
 
     return {
@@ -734,6 +744,37 @@ export async function callOpenRouterGrokImagineImage2API(
     };
 }
 
+/** FLUX.2 Max reference-image usage: fractional megapixels, mirroring the success path. */
+function flux2MaxReferenceUsage(
+    downloadedImages: { buffer: Buffer; mimeType: string }[],
+): Usage {
+    const usage: Usage = {};
+    addUsage(
+        usage,
+        "promptImageTokens",
+        downloadedImages.reduce((megapixels, { buffer, mimeType }) => {
+            const input = readImageDimensions(buffer, mimeType);
+            return input
+                ? megapixels + (input.width * input.height) / 1_000_000
+                : megapixels;
+        }, 0),
+    );
+    return usage;
+}
+
+/** FLUX.2 Max output usage: delivered megapixels, requested bounds as fallback. */
+function flux2MaxOutputUsage(
+    safeParams: ImageParams,
+    delivered: Buffer,
+): number {
+    const output = readImageDimensions(delivered, detectMimeType(delivered));
+    return (
+        (output
+            ? output.width * output.height
+            : safeParams.width * safeParams.height) / 1_000_000
+    );
+}
+
 export async function callOpenRouterFlux2MaxAPI(
     prompt: string,
     safeParams: ImageParams,
@@ -780,7 +821,16 @@ export async function callOpenRouterFlux2MaxAPI(
 
     const providerCost = data.usage?.cost;
     if (typeof providerCost !== "number" || !(providerCost > 0)) {
-        invalidOpenRouterImageUsage(data.usage);
+        invalidOpenRouterImageUsage(data.usage, {
+            // Reference megapixels are charged like on the Replicate primary;
+            // OpenRouter delivered the image, so bill the delivered output
+            // megapixels (requested bounds when the buffer is unreadable).
+            ...flux2MaxReferenceUsage(downloadedImages),
+            completionImageTokens: flux2MaxOutputUsage(
+                safeParams,
+                base64ToBuffer(encodedImage),
+            ),
+        });
     }
     // OpenRouter only takes an aspect ratio and picks the pixels itself, so the
     // caller is charged for the image it returns, not the size it requested.
@@ -789,6 +839,11 @@ export async function callOpenRouterFlux2MaxAPI(
     if (!output) {
         throw UpstreamError.fromProvider(502, {
             message: "OpenRouter FLUX.2 Max returned an image of unknown size",
+            billedUsage: {
+                ...flux2MaxReferenceUsage(downloadedImages),
+                completionImageTokens:
+                    (safeParams.width * safeParams.height) / 1_000_000,
+            },
         });
     }
     // Reference megapixels are charged like on the Replicate primary.
@@ -877,7 +932,7 @@ export async function callOpenRouterFlux3API(
         !Number.isFinite(providerCost) ||
         providerCost <= 0
     ) {
-        invalidOpenRouterImageUsage(data.usage);
+        invalidOpenRouterImageUsage(data.usage, { completionImageTokens: 1 });
     }
 
     logOps("FLUX.3 Image generation complete", {
@@ -953,7 +1008,27 @@ export async function callOpenRouterGeminiImageAPI(
     if (!encodedImage) {
         throw buildOpenRouterNoImageError(data);
     }
-    const usage = mapOpenRouterGeminiImageUsage(data.usage);
+    let usage: Usage;
+    try {
+        usage = mapOpenRouterGeminiImageUsage(data.usage);
+    } catch (error) {
+        // The image was delivered, so OpenRouter billed the generation;
+        // settle the readable legs of the reported usage.
+        if (!(error instanceof UpstreamError)) throw error;
+        const reported = data.usage;
+        const settle: Usage = {};
+        if (isTokenCount(reported?.prompt_tokens) && reported.prompt_tokens > 0)
+            settle.promptTextTokens = reported.prompt_tokens;
+        if (
+            isTokenCount(reported?.completion_tokens) &&
+            reported.completion_tokens > 0
+        )
+            settle.completionTextTokens = reported.completion_tokens;
+        throw Object.assign(
+            error,
+            Object.keys(settle).length ? { billedUsage: settle } : {},
+        );
+    }
     const imageBuffer = base64ToBuffer(encodedImage);
 
     let finalImageBuffer = imageBuffer;
@@ -1049,7 +1124,19 @@ export async function callOpenRouterMaiImageAPI(
         !isTokenCount(completionImageTokens) ||
         completionImageTokens === 0
     ) {
-        invalidOpenRouterImageUsage(usage);
+        // The image was delivered, so OpenRouter billed the generation;
+        // settle every readable leg of the reported usage.
+        const settle: Usage = {};
+        if (isTokenCount(usage?.prompt_tokens) && usage.prompt_tokens > 0)
+            settle[
+                references.length > 0 ? "promptImageTokens" : "promptTextTokens"
+            ] = usage.prompt_tokens;
+        if (isTokenCount(completionImageTokens) && completionImageTokens > 0)
+            settle.completionImageTokens = completionImageTokens;
+        invalidOpenRouterImageUsage(
+            usage,
+            Object.keys(settle).length ? settle : undefined,
+        );
     }
     logOps("MAI Image generation complete", {
         references: references.length,
@@ -1170,6 +1257,9 @@ export async function callOpenRouterRecraftVectorAPI(
             message: `OpenRouter image API returned unsupported media type: ${generatedImage.media_type || "missing"}`,
             responseBody: JSON.stringify(data),
             requestUrl: new URL(OPENROUTER_IMAGE_URL),
+            // The vector was delivered, so OpenRouter billed the fixed
+            // per-image fee.
+            billedUsage: { completionImageTokens: 1 },
         });
     }
 

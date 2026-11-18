@@ -3,6 +3,7 @@ import {
     ensureUpstreamOk,
     UpstreamError,
 } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import debug from "debug";
 import type {
     AuthResult,
@@ -22,7 +23,12 @@ import {
     firstContentPolicyMessage,
 } from "../utils/contentModeration.ts";
 import { logGptImageError } from "../utils/gptImageLogger.ts";
-import { base64ToBuffer, downloadUserImage } from "../utils/imageDownload.ts";
+import {
+    base64ToBuffer,
+    detectMimeType,
+    downloadUserImage,
+    readImageDimensions,
+} from "../utils/imageDownload.ts";
 
 const logError = debug("pollinations:error");
 const logCloudflare = debug("pollinations:cloudflare");
@@ -538,12 +544,33 @@ export async function callAzureFlux2(
         promptImageTokens === undefined ||
         completionImageTokens === undefined
     ) {
+        // The image was already delivered above, so Azure rendered and billed
+        // it. Without the receipt the billable megapixels are still bounded
+        // by the request: the output is exactly what was asked for, and each
+        // reference is capped by the FLUX.2 4 MP resize ceiling.
+        const settle: Usage = {
+            completionImageTokens: Math.max(
+                1,
+                Math.ceil((safeParams.width * safeParams.height) / 1_000_000),
+            ),
+        };
+        const inputMp = inputImages.reduce((total, buffer) => {
+            const size = readImageDimensions(buffer, detectMimeType(buffer));
+            return size
+                ? total +
+                      Math.min(size.width * size.height, 4_000_000) / 1_000_000
+                : total;
+        }, 0);
+        if (inputMp > 0) {
+            settle.promptImageTokens = Math.ceil(inputMp);
+        }
         throw new UpstreamError(502, {
             message: `Azure ${config.title} returned no billing metadata`,
             requestUrl: new URL(endpoint),
             upstreamStatus: response.status,
             responseBody: JSON.stringify(data),
             upstreamHeaders: collectUpstreamHeaders(response.headers),
+            billedUsage: settle,
         });
     }
 

@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import type { ImageParams } from "../params.ts";
 import {
@@ -115,15 +116,34 @@ export async function callAlibabaImage(
         throw UpstreamError.fromProvider(502, {
             message: "Alibaba returned no image",
         });
+    // The image URL is in hand, so the task SUCCEEDED and DashScope billed
+    // it; if a receipt leg is unusable the guard still settles the flat
+    // request quantity (one output image, plus the billed references).
+    const guardSettle = (outputCount?: number): Usage => ({
+        ...(route.billsInputImages
+            ? {
+                  promptImageTokens:
+                      typeof result.usage?.input_image_count === "number" &&
+                      Number.isFinite(result.usage.input_image_count) &&
+                      result.usage.input_image_count > 0
+                          ? result.usage.input_image_count
+                          : images.length,
+              }
+            : {}),
+        completionImageTokens: outputCount ?? 1,
+    });
     const outputCount = requireAlibabaUsage(
         result.usage?.[route.countKey],
         "output image count",
+        false,
+        guardSettle(),
     );
     const inputCount = route.billsInputImages
         ? requireAlibabaUsage(
               result.usage?.input_image_count,
               "input image count",
               true,
+              guardSettle(outputCount),
           )
         : 0;
     const image = await fetchUpstream(url, {

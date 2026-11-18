@@ -1,4 +1,5 @@
 import { UpstreamError } from "@shared/error.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { getImageEnv } from "../env.ts";
 import { sleep } from "../util.ts";
 import { fetchUpstream } from "./fetchUpstream.ts";
@@ -103,15 +104,21 @@ export function requireAlibabaUsage(
     value: number | undefined,
     label: string,
     allowZero = false,
+    // A SUCCEEDED task is already billed by DashScope; when the reported
+    // quantity is unusable the caller still settles what it knows.
+    billedUsage?: Usage,
 ): number {
     if (
         typeof value !== "number" ||
         !Number.isFinite(value) ||
         (allowZero ? value < 0 : value <= 0)
     ) {
-        throw UpstreamError.fromProvider(502, {
-            message: `Alibaba returned invalid ${label} usage`,
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: `Alibaba returned invalid ${label} usage`,
+            }),
+            billedUsage ? { billedUsage } : {},
+        );
     }
     return value;
 }
