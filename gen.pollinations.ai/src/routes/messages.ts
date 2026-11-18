@@ -5,6 +5,7 @@ import { describeRoute, resolver, validator } from "hono-openapi";
 import { z } from "zod";
 import type { Env } from "../env.ts";
 import { requestedModelIds } from "../middleware/model.ts";
+import { edgeRateLimit } from "../middleware/rate-limit-edge.ts";
 import { getGenerationModelRegistry } from "../model-registry.ts";
 import {
     type CreateMessageRequest,
@@ -82,14 +83,20 @@ async function upstreamErrorMessage(response: Response): Promise<string> {
  * deduplication, tracking and billing are exactly those of chat.
  */
 export function createMessagesRoutes(dispatch: Dispatch) {
-    const app = new Hono<Env>().onError((error) =>
-        errorResponse(
-            error instanceof HTTPException ? error.status : 500,
-            error instanceof HTTPException
-                ? error.message || "Request failed"
-                : "Internal server error",
-        ),
-    );
+    const app = new Hono<Env>()
+        .onError((error) =>
+            errorResponse(
+                error instanceof HTTPException ? error.status : 500,
+                error instanceof HTTPException
+                    ? error.message || "Request failed"
+                    : "Internal server error",
+            ),
+        )
+        // This route is mounted before proxyRoutes, so its catch-all edge
+        // limiter never runs here; without one of its own, every request
+        // costs a full 32 MiB body read, parse and zod validation before
+        // the dispatched chat request's limiter can refuse it.
+        .use("*", edgeRateLimit);
     return app.post(
         "/v1/messages",
         describeRoute({

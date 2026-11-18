@@ -25,6 +25,7 @@ import { generateSpecs } from "hono-openapi";
 import { stringify as yamlStringify } from "yaml";
 import type { Env } from "@/env.ts";
 import { acceptsMarkdown } from "@/middleware/agent-discovery.ts";
+import { edgeRateLimit } from "@/middleware/rate-limit-edge.ts";
 import BRAND_LOCKUP_SVG from "../../../packages/ui/src/brand/lockup-horizontal.svg?raw";
 import LOGO_WHITE_SVG from "../../../packages/ui/src/brand/lockup-horizontal-white.svg?raw";
 import { authenticateDocsRequest } from "../docs-client/request-auth.ts";
@@ -1100,11 +1101,11 @@ export async function buildMergedOpenApiSpec(
     c: Context<Env>,
     genApp: Hono<Env>,
 ): Promise<OpenApiSchema> {
-    const [generationSchema, enterSchema, mediaSchema] = await Promise.all([
+    const [generationSchema, upstreamSchemas] = await Promise.all([
         getGenerationSchema(genApp),
-        fetchEnterSchema(c),
-        fetchMediaSchema(c).catch(() => undefined),
+        getCachedUpstreamSchemas(c),
     ]);
+    const [enterSchema, mediaSchema] = upstreamSchemas;
     return {
         ...injectSamples(
             mergeSchemas(generationSchema, enterSchema, mediaSchema),
@@ -1117,6 +1118,50 @@ export async function buildMergedOpenApiSpec(
             media: hasPublicOperations(mediaSchema),
         },
     };
+}
+
+/** The enter and media schema halves are fetched through service bindings
+ * and external fetches on demand; without a cache, every unauthenticated
+ * /openapi.json request amplifies into three worker invocations (this one,
+ * enter's full spec regeneration and media's). Refresh them at most this
+ * often per isolate in production; other environments (dev, test, staging)
+ * keep fresh fetches so schema changes and per-test bindings are seen. */
+const UPSTREAM_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let upstreamSchemaCache:
+    | {
+          fetchedAt: number;
+          promise: Promise<[OpenApiSchema, OpenApiSchema | undefined]>;
+      }
+    | undefined;
+
+function getCachedUpstreamSchemas(
+    c: Context<Env>,
+): Promise<[OpenApiSchema, OpenApiSchema | undefined]> {
+    if (c.env.ENVIRONMENT !== "production") {
+        return Promise.all([
+            fetchEnterSchema(c),
+            fetchMediaSchema(c).catch(() => undefined),
+        ]);
+    }
+    const now = Date.now();
+    if (
+        !upstreamSchemaCache ||
+        now - upstreamSchemaCache.fetchedAt > UPSTREAM_SCHEMA_CACHE_TTL_MS
+    ) {
+        upstreamSchemaCache = {
+            fetchedAt: now,
+            promise: Promise.all([
+                fetchEnterSchema(c),
+                fetchMediaSchema(c).catch(() => undefined),
+            ]),
+        };
+        // A failed refresh must not pin a rejected promise for the TTL.
+        upstreamSchemaCache.promise.catch(() => {
+            upstreamSchemaCache = undefined;
+        });
+    }
+    return upstreamSchemaCache.promise;
 }
 
 const SCALAR_CDN =
@@ -1223,6 +1268,9 @@ export function createDocsRoutes(genApp: Hono<Env>): Hono<Env> {
         })
         .get("/polli-skill.md", (c) => c.text(CLI_SKILL))
         .get("/polli-tasks.md", (c) => c.text(CLI_TASKS))
+        // Regenerating the merged spec is CPU-heavy and fans out to enter
+        // and media; keep floods off the control plane.
+        .use("/open-api/generate-schema", edgeRateLimit)
         .get("/open-api/generate-schema", async (c) => {
             const merged = await buildMergedOpenApiSpec(c, genApp);
             if (c.req.query("format") === "yaml") {

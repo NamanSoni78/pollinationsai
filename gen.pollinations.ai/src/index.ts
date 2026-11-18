@@ -305,6 +305,9 @@ app.use("*", cors(PERMISSIVE_CORS_OPTIONS))
     // Conventional, discoverable alias for the merged OpenAPI spec. JSON-only;
     // the ?format=yaml passthrough stays on /docs/open-api/generate-schema.
     // Must be registered before the "/" proxy catch-all or it gets shadowed.
+    // Merging regenerates the spec and fans out to enter and media, so it
+    // shares the edge limiter like every other generation surface.
+    .use("/openapi.json", edgeRateLimit)
     .get("/openapi.json", async (c) => {
         const merged = await buildMergedOpenApiSpec(c, app);
         return c.json(merged);
