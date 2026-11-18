@@ -13,7 +13,7 @@ import {
     notInArray,
     sql,
 } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/d1";
+import { type DrizzleD1Database, drizzle } from "drizzle-orm/d1";
 import { Hono } from "hono";
 import { describeRoute, resolver } from "hono-openapi";
 import { z } from "zod";
@@ -188,6 +188,22 @@ const STANDINGS_PODIUM = 3;
 const STANDINGS_ABOVE = 2;
 const STANDINGS_BELOW = 1;
 
+// Standings serves the month's rewards aggregate from KV for one minute. The
+// race stays close to live while a burst of requests — the edge limiter
+// allows 600 per 10s per IP — collapses to at most one D1 scan per minute
+// instead of holding D1 with concurrent full-table aggregates.
+const STANDINGS_CACHE_KEY_PREFIX = "quests:standings:v1";
+const STANDINGS_CACHE_TTL = 60;
+
+// The identity standings ranks by: the lower-cased GitHub login.
+const standingsLogin = sql<string>`lower(${schema.user.githubUsername})`;
+
+type StandingsAggregateRow = {
+    githubLogin: string;
+    totalPollen: number;
+    yesterdayPollen: number;
+};
+
 export const questStandingRowSchema = z.object({
     rank: z.number().int().positive(),
     githubLogin: z.string(),
@@ -217,31 +233,18 @@ export type QuestStandingsResponse = z.infer<
 >;
 
 /**
- * This calendar month's (UTC) Quest Pollen race, cut down to what one viewer
- * needs: the podium plus the rows just above and below them. Every quest
- * reward counts. Supporters are earners of a top-up quest at any time.
- * Movement compares each rank with the same race replayed up to the start of
- * today (UTC), so it comes straight from the reward ledger.
+ * The month's race in one aggregate: every counted reward since the month
+ * start grouped by login, with each login's total as of the start of today
+ * for movement. This is the query standings shares through KV.
  */
-export async function buildQuestStandings(
-    env: CloudflareBindings,
-    viewerGithubLogin: string | null,
-    now = new Date(),
-): Promise<QuestStandingsResponse> {
-    const monthStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-    );
-    const monthEnd = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-    );
-    const todayStart = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-    );
-    const db = drizzle(env.DB);
-    const githubLogin = sql<string>`lower(${schema.user.githubUsername})`;
-    const rows = await db
+export function questStandingsAggregateQuery(
+    db: DrizzleD1Database,
+    monthStart: Date,
+    todayStart: Date,
+) {
+    return db
         .select({
-            githubLogin,
+            githubLogin: standingsLogin,
             totalPollen: sql<number>`sum(${rewardsTable.pollenAmount})`.mapWith(
                 Number,
             ),
@@ -259,7 +262,101 @@ export async function buildQuestStandings(
                 LEADERBOARD_USER,
             ),
         )
-        .groupBy(githubLogin);
+        .groupBy(standingsLogin);
+}
+
+/**
+ * The month's per-login race, shared by every viewer through KV for a
+ * minute. Both of the aggregate's time boundaries — month start and start of
+ * today — are day-granular, so they can ride in the cached value: the key
+ * pins the UTC day, so a cached entry never serves an aggregate built across
+ * a midnight or month rollover.
+ */
+async function loadStandingsAggregate(
+    env: CloudflareBindings,
+    db: DrizzleD1Database,
+    monthStart: Date,
+    todayStart: Date,
+): Promise<StandingsAggregateRow[]> {
+    const cacheKey = `${STANDINGS_CACHE_KEY_PREFIX}:${todayStart.toISOString().slice(0, 10)}`;
+    const cached = await env.KV.get<StandingsAggregateRow[]>(cacheKey, "json");
+    if (cached) return cached;
+    const rows = await questStandingsAggregateQuery(db, monthStart, todayStart);
+    await env.KV.put(cacheKey, JSON.stringify(rows), {
+        expirationTtl: STANDINGS_CACHE_TTL,
+    });
+    return rows;
+}
+
+/**
+ * The signed-in viewer's own place, read per request even when the board
+ * comes from the cache: their month total comes from a user-scoped query
+ * (not the full aggregate), and their rank is that fresh total positioned
+ * in the up-to-a-minute-old ranking with the board's ordering — Pollen
+ * descending, then login ascending.
+ */
+async function viewerStanding(
+    db: DrizzleD1Database,
+    viewer: string,
+    monthStart: Date,
+    ranking: { githubLogin: string; totalPollen: number }[],
+) {
+    const row = await db
+        .select({
+            totalPollen:
+                sql<number>`coalesce(sum(${rewardsTable.pollenAmount}), 0)`.mapWith(
+                    Number,
+                ),
+        })
+        .from(rewardsTable)
+        .innerJoin(schema.user, eq(rewardsTable.userId, schema.user.id))
+        .where(
+            and(
+                gte(rewardsTable.earnedAt, monthStart),
+                isNotNull(schema.user.githubUsername),
+                LEADERBOARD_USER,
+                eq(standingsLogin, viewer),
+            ),
+        )
+        .get();
+    const totalPollen = roundPollenLedgerAmount(row?.totalPollen ?? 0);
+    const ahead = ranking.filter(
+        (entry) =>
+            entry.totalPollen > totalPollen ||
+            (entry.totalPollen === totalPollen &&
+                entry.githubLogin.localeCompare(viewer) < 0),
+    ).length;
+    return {
+        githubLogin: viewer,
+        rank: totalPollen > 0 ? ahead + 1 : null,
+        totalPollen,
+    };
+}
+
+/**
+ * This calendar month's (UTC) Quest Pollen race, cut down to what one viewer
+ * needs: the podium plus the rows just above and below them. Every quest
+ * reward counts. Supporters are earners of a top-up quest at any time.
+ * Movement compares each rank with the same race replayed up to the start of
+ * today (UTC), so it comes straight from the reward ledger. The board is the
+ * shared (at most a minute old) aggregate; each viewer's own place is fresh.
+ */
+export async function buildQuestStandings(
+    env: CloudflareBindings,
+    viewerGithubLogin: string | null,
+    now = new Date(),
+): Promise<QuestStandingsResponse> {
+    const monthStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+    );
+    const monthEnd = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
+    const todayStart = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const db = drizzle(env.DB);
+    const rows = await loadStandingsAggregate(env, db, monthStart, todayStart);
 
     const rankBy = (pollen: (row: (typeof rows)[number]) => number) =>
         rows
@@ -298,7 +395,7 @@ export async function buildQuestStandings(
             ? []
             : (
                   await db
-                      .selectDistinct({ githubLogin })
+                      .selectDistinct({ githubLogin: standingsLogin })
                       .from(rewardsTable)
                       .innerJoin(
                           schema.user,
@@ -308,7 +405,7 @@ export async function buildQuestStandings(
                           and(
                               inArray(rewardsTable.questId, TOP_UP_QUEST_IDS),
                               inArray(
-                                  githubLogin,
+                                  standingsLogin,
                                   shown.map((row) => row.githubLogin),
                               ),
                           ),
@@ -329,11 +426,7 @@ export async function buildQuestStandings(
             };
         }),
         you: viewer
-            ? {
-                  githubLogin: viewer,
-                  rank: viewerIndex >= 0 ? viewerIndex + 1 : null,
-                  totalPollen: ranking[viewerIndex]?.totalPollen ?? 0,
-              }
+            ? await viewerStanding(db, viewer, monthStart, ranking)
             : null,
     };
 }

@@ -518,4 +518,6 @@ export const rewards = sqliteTable("rewards", {
   claimedAt: integer("claimed_at", { mode: "timestamp" }),
 }, (table) => [
   index("idx_rewards_user_id").on(table.userId),
+  // Monthly quest standings aggregate rewards earned since the month start.
+  index("idx_rewards_earned_at").on(table.earnedAt),
 ]);
