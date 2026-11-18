@@ -928,14 +928,14 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "deepseek/deepseek-v4-pro": {
     "cost": {
-      "completionTextTokens": 0.00000355113,
-      "promptCachedTokens": 0.000000118371,
-      "promptTextTokens": 0.00000118371,
+      "completionTextTokens": 0.00000298776,
+      "promptCachedTokens": 0.00000012449,
+      "promptTextTokens": 0.00000149388,
     },
     "price": {
-      "completionTextTokens": 0.00000355113,
-      "promptCachedTokens": 0.000000118371,
-      "promptTextTokens": 0.00000118371,
+      "completionTextTokens": 0.00000298776,
+      "promptCachedTokens": 0.00000012449,
+      "promptTextTokens": 0.00000149388,
     },
   },
   "deepseek/deepseek-v4-pro:openrouter:streamlake": {
@@ -2772,18 +2772,18 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "moonshotai/kimi-k2.7-code": {
     "cost": {
-      "completionTextTokens": 0.0000036925,
-      "promptCacheWriteTokens": 0.000000633,
-      "promptCachedTokens": 0.0000001688,
-      "promptImageTokens": 0.000000633,
-      "promptTextTokens": 0.000000633,
+      "completionTextTokens": 0.00000395625,
+      "promptCacheWriteTokens": 0.0000008571875,
+      "promptCachedTokens": 0.00000017935,
+      "promptImageTokens": 0.0000008571875,
+      "promptTextTokens": 0.0000008571875,
     },
     "price": {
-      "completionTextTokens": 0.0000036925,
-      "promptCacheWriteTokens": 0.000000633,
-      "promptCachedTokens": 0.0000001688,
-      "promptImageTokens": 0.000000633,
-      "promptTextTokens": 0.000000633,
+      "completionTextTokens": 0.00000395625,
+      "promptCacheWriteTokens": 0.0000008571875,
+      "promptCachedTokens": 0.00000017935,
+      "promptImageTokens": 0.0000008571875,
+      "promptTextTokens": 0.0000008571875,
     },
   },
   "moonshotai/kimi-k2.7-code:openrouter:streamlake": {
@@ -5311,26 +5311,28 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "xiaomi/mimo-v2.5": {
     "cost": {
-      "completionTextTokens": 0.0000002954,
-      "promptCachedTokens": 0.000000002954,
-      "promptTextTokens": 0.0000001477,
+      "completionTextTokens": 0.00000211,
+      "promptCachedTokens": 0.0000000844,
+      "promptImageTokens": 0.000000422,
+      "promptTextTokens": 0.000000422,
     },
     "price": {
-      "completionTextTokens": 0.0000002954,
-      "promptCachedTokens": 0.000000002954,
-      "promptTextTokens": 0.0000001477,
+      "completionTextTokens": 0.00000211,
+      "promptCachedTokens": 0.0000000844,
+      "promptImageTokens": 0.000000422,
+      "promptTextTokens": 0.000000422,
     },
   },
   "xiaomi/mimo-v2.5-pro": {
     "cost": {
-      "completionTextTokens": 0.00000091785,
-      "promptCachedTokens": 0.000000003798,
-      "promptTextTokens": 0.000000458925,
+      "completionTextTokens": 0.000001899,
+      "promptCachedTokens": 0.00000010128,
+      "promptTextTokens": 0.0000005064,
     },
     "price": {
-      "completionTextTokens": 0.00000091785,
-      "promptCachedTokens": 0.000000003798,
-      "promptTextTokens": 0.000000458925,
+      "completionTextTokens": 0.000001899,
+      "promptCachedTokens": 0.00000010128,
+      "promptTextTokens": 0.0000005064,
     },
   },
   "xiaomi/mimo-v2.6-flash": {

@@ -1072,7 +1072,9 @@ export const TEXT_FALLBACKS = {
             },
             billing: {
                 ...openRouterGeminiBilling({
-                    searchCostPerThousandRequests: 7 * 1.055,
+                    // The routed ai-studio endpoint bills web_search $0.014
+                    // per request (2026-11-18); the sheet had $7/1K — half.
+                    searchCostPerThousandRequests: 14 * 1.055,
                     storageCostPerMillionTokenHours: 2.25 * 1.055,
                 }),
                 resolveTotalCost: reportedTextCost(1.055),

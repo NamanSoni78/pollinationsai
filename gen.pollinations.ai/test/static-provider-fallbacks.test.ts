@@ -1468,7 +1468,10 @@ describe("static provider fallbacks", () => {
             },
         });
         expect(billing.cost.totalCost).toBeCloseTo(0.00113729, 12);
-        expect(billing.price.totalPrice).toBeCloseTo(0.00201231, 8);
+        // The caller's quote follows the re-costed alibaba/fp8 primary sheet
+        // (1.416/0.118/2.832 per 1M + fee): 1000 prompt + 1000 cached +
+        // 100 completion + 100 reasoning tokens.
+        expect(billing.price.totalPrice).toBeCloseTo(0.00221592, 8);
     });
 
     it("keeps the Azure gpt-5.4-mini quote when OpenAI serves it", () => {
