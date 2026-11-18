@@ -921,9 +921,9 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "promptTextTokens": 0.00000006,
     },
     "price": {
-      "completionTextTokens": 0.000000135,
-      "promptCachedTokens": 0.00000001125,
-      "promptTextTokens": 0.000000045,
+      "completionTextTokens": 0.00000018,
+      "promptCachedTokens": 0.000000015,
+      "promptTextTokens": 0.00000006,
     },
   },
   "deepseek/deepseek-v4-pro": {
@@ -982,24 +982,28 @@ exports[`effective cost and price per model — snapshot 1`] = `
     "cost": {
       "completionTextTokens": 0.0000012,
       "promptCachedTokens": 0.000000006,
+      "promptImageTokens": 0.0000003,
       "promptTextTokens": 0.0000003,
     },
     "price": {
-      "completionTextTokens": 0.0000006,
-      "promptCachedTokens": 0.000000003,
-      "promptTextTokens": 0.00000015,
+      "completionTextTokens": 0.0000012,
+      "promptCachedTokens": 0.000000006,
+      "promptImageTokens": 0.0000003,
+      "promptTextTokens": 0.0000003,
     },
   },
   "deepseek/deepseek-v4.1-flash:fireworks": {
     "cost": {
       "completionTextTokens": 0.0000012,
       "promptCachedTokens": 0.000000006,
+      "promptImageTokens": 0.0000003,
       "promptTextTokens": 0.0000003,
     },
     "price": {
-      "completionTextTokens": 0.0000006,
-      "promptCachedTokens": 0.000000003,
-      "promptTextTokens": 0.00000015,
+      "completionTextTokens": 0.0000012,
+      "promptCachedTokens": 0.000000006,
+      "promptImageTokens": 0.0000003,
+      "promptTextTokens": 0.0000003,
     },
   },
   "elevenlabs/eleven-flash-v2.5": {
@@ -2139,10 +2143,12 @@ exports[`effective cost and price per model — snapshot 1`] = `
   "liquid/d1.2": {
     "cost": {
       "completionTextTokens": 0,
+      "promptCachedTokens": 0.00000002,
       "promptTextTokens": 0.00000002,
     },
     "price": {
       "completionTextTokens": 0,
+      "promptCachedTokens": 0.00000002,
       "promptTextTokens": 0.00000002,
     },
   },
@@ -2194,8 +2200,8 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "promptTextTokens": 0.0000001,
     },
     "price": {
-      "completionTextTokens": 0.00000024,
-      "promptTextTokens": 0.000000075,
+      "completionTextTokens": 0.00000032,
+      "promptTextTokens": 0.0000001,
     },
   },
   "meta/llama-4-maverick": {
@@ -2666,8 +2672,8 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "promptTextTokens": 0.0000005,
     },
     "price": {
-      "completionTextTokens": 0.000001125,
-      "promptTextTokens": 0.000000375,
+      "completionTextTokens": 0.0000015,
+      "promptTextTokens": 0.0000005,
     },
   },
   "mistralai/mistral-large-4": {
@@ -2851,13 +2857,15 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "completionTextTokens": 0.00001,
       "promptCacheWriteTokens": 0.000002,
       "promptCachedTokens": 0.0000002,
+      "promptImageTokens": 0.000002,
       "promptTextTokens": 0.000002,
     },
     "price": {
-      "completionTextTokens": 0.0000075,
-      "promptCacheWriteTokens": 0.0000015,
-      "promptCachedTokens": 0.00000015,
-      "promptTextTokens": 0.0000015,
+      "completionTextTokens": 0.00001,
+      "promptCacheWriteTokens": 0.000002,
+      "promptCachedTokens": 0.0000002,
+      "promptImageTokens": 0.000002,
+      "promptTextTokens": 0.000002,
     },
   },
   "moonshotai/kimi-k3:deepinfra": {
@@ -2935,9 +2943,9 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "promptTextTokens": 0.0000005,
     },
     "price": {
-      "completionTextTokens": 0.00000165,
-      "promptCachedTokens": 0.000000075,
-      "promptTextTokens": 0.000000375,
+      "completionTextTokens": 0.0000022,
+      "promptCachedTokens": 0.0000001,
+      "promptTextTokens": 0.0000005,
     },
   },
   "nvidia/nemotron-3.5-lightning": {
@@ -2959,9 +2967,9 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "promptTextTokens": 0.00000006,
     },
     "price": {
-      "completionTextTokens": 0.00000012,
-      "promptCachedTokens": 0.0000000225,
-      "promptTextTokens": 0.000000045,
+      "completionTextTokens": 0.00000016,
+      "promptCachedTokens": 0.00000003,
+      "promptTextTokens": 0.00000006,
     },
   },
   "nvidia/nemotron-3.5-super-vl": {
@@ -4714,12 +4722,14 @@ exports[`effective cost and price per model — snapshot 1`] = `
       "completionTextTokens": 0.0000045,
       "promptCacheWriteTokens": 0.000001875,
       "promptCachedTokens": 0.000000075,
+      "promptImageTokens": 0.0000015,
       "promptTextTokens": 0.0000015,
     },
     "price": {
       "completionTextTokens": 0.0000045,
       "promptCacheWriteTokens": 0.000001875,
       "promptCachedTokens": 0.000000075,
+      "promptImageTokens": 0.0000015,
       "promptTextTokens": 0.0000015,
     },
   },
@@ -5021,10 +5031,10 @@ exports[`effective cost and price per model — snapshot 1`] = `
       },
     },
     "price": {
-      "completionTextTokens": 0.000001978125,
-      "promptCachedTokens": 0.00000015825,
-      "promptImageTokens": 0.0000009890625,
-      "promptTextTokens": 0.0000009890625,
+      "completionTextTokens": 0.0000026375,
+      "promptCachedTokens": 0.000000211,
+      "promptImageTokens": 0.00000131875,
+      "promptTextTokens": 0.00000131875,
     },
   },
   "x-ai/grok-4.3": {
@@ -5351,11 +5361,13 @@ exports[`effective cost and price per model — snapshot 1`] = `
     "cost": {
       "completionTextTokens": 0.00000028,
       "promptCachedTokens": 0.0000000028,
+      "promptImageTokens": 0.00000014,
       "promptTextTokens": 0.00000014,
     },
     "price": {
       "completionTextTokens": 0.00000028,
       "promptCachedTokens": 0.0000000028,
+      "promptImageTokens": 0.00000014,
       "promptTextTokens": 0.00000014,
     },
   },
@@ -5377,11 +5389,13 @@ exports[`effective cost and price per model — snapshot 1`] = `
     "cost": {
       "completionTextTokens": 0.000000783,
       "promptCachedTokens": 0.00000000324,
+      "promptImageTokens": 0.000000387,
       "promptTextTokens": 0.000000387,
     },
     "price": {
       "completionTextTokens": 0.000000783,
       "promptCachedTokens": 0.00000000324,
+      "promptImageTokens": 0.000000387,
       "promptTextTokens": 0.000000387,
     },
   },

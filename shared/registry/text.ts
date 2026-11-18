@@ -2014,7 +2014,11 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 1,
         paidOnly: true,
         cost: {
+            // Liquid publishes the same $0.02/M ordinary and cached input
+            // price through Vercel, without a gateway fee (2026-10-24; the
+            // d1 sheet pins the same pair).
             promptTextTokens: perMillion(0.02),
+            promptCachedTokens: perMillion(0.02),
             completionTextTokens: perMillion(0),
         },
         title: "d1.2",
