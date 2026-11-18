@@ -1,8 +1,19 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { IMMUTABLE_CACHE_CONTROL } from "@shared/http/cache-control.ts";
 import { refreshR2ObjectTtl } from "@shared/r2-storage.ts";
+import { readResponseBytes } from "@shared/response-bytes.ts";
 
 const DEFAULT_MAX_SIZE = 100 * 1024 * 1024;
+
+/**
+ * Cap for a single cached generation artifact written through `put`.
+ * The sonilo audio and 3D mesh download legs already use the same 64 MiB
+ * ceiling; without it a runaway provider or community endpoint body is
+ * buffered whole inside the shared media isolate before R2 ever sees it.
+ * Kept unexported: workerd requires every export of an entrypoint module
+ * to be a handler, and gen's test harness binds this module as a service.
+ */
+const MAX_GENERATION_MEDIA_BYTES = 64 * 1024 * 1024;
 
 // R2 rejects a put with more than 8,192 bytes of object metadata, so every
 // upload path stores at most 253 characters of the filename. Counting code
@@ -203,7 +214,14 @@ export class MediaUpload extends WorkerEntrypoint<MediaStorageEnv> {
     async put(id: string, response: Response): Promise<void> {
         if (!/^[a-f0-9]{64}$/.test(id))
             throw new Error("Invalid generation ID");
-        const body = await response.arrayBuffer();
+        const body = await readResponseBytes(
+            response,
+            MAX_GENERATION_MEDIA_BYTES,
+            (total) =>
+                new Error(
+                    `Refusing to cache generated media over 64 MiB (got ${total} bytes)`,
+                ),
+        );
         if (!body.byteLength)
             throw new Error("Refusing to store empty generated media");
         const metadata: Record<string, string> = {
