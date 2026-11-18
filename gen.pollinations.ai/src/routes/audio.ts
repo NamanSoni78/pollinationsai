@@ -3519,6 +3519,10 @@ export async function generateStableAudio3Large(opts: {
                         `Stable Audio 3 Large polling failed: ${pollResponse.status}`,
                     upstreamStatus: pollResponse.status,
                     responseBody: errorText,
+                    // Stability charged the flat fee at submit; the caller
+                    // settles it even though polling failed (issue-25
+                    // billedUsage pattern).
+                    billedUsage: createAudioTokenUsage(1),
                 });
             }
             continue;
@@ -3546,6 +3550,11 @@ export async function generateStableAudio3Large(opts: {
 
     throw new UpstreamError(504 as ContentfulStatusCode, {
         message: "Stable Audio 3 Large generation timed out",
+        // Stability charges the flat 26-credit generation fee at submit, so
+        // an abandoned poll must still settle the caller's charge
+        // (issue-25 billedUsage pattern) instead of returning an unbilled
+        // 504 while the platform eats the cost.
+        billedUsage: createAudioTokenUsage(1),
     });
 }
 
