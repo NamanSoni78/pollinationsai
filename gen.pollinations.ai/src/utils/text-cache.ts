@@ -61,6 +61,64 @@ function isStreamingErrorResponse(
     });
 }
 
+/**
+ * A moderation refusal that the provider did not bill must never become a
+ * cache entry. The billing side treats a choice finishing with
+ * finish_reason=content_filter and no usage as a rejection (finishReasonError
+ * in middleware/track.ts returns the content-policy status), so caching the
+ * 200 body would freeze the refusal as an immutable, TTL-refreshing HIT:
+ * every later caller of the same request gets the refusal free, and retries
+ * can never recover even though moderation is nondeterministic. Filtered
+ * completions WITH usage remain billable and stay cacheable, mirroring the
+ * billing-side rule ("filtered completions with valid usage remain billable").
+ */
+function isUnbilledContentFilterResponse(
+    response: Response,
+    body: Uint8Array,
+): boolean {
+    const text = new TextDecoder().decode(body);
+    const isSse = response.headers
+        .get("content-type")
+        ?.includes("text/event-stream");
+    const payloads = isSse
+        ? text
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice("data:".length).trim())
+              .filter((payload) => payload && payload !== "[DONE]")
+        : [text];
+    const events: unknown[] = [];
+    for (const payload of payloads) {
+        try {
+            events.push(JSON.parse(payload));
+        } catch {
+            // Non-JSON frames are not refusals.
+        }
+    }
+    // Usage is request-scoped (the final SSE chunk carries it), so a usage
+    // object on any event makes the filtered completion billable.
+    const hasUsage = events.some(
+        (event) =>
+            event &&
+            typeof event === "object" &&
+            "usage" in event &&
+            (event as { usage?: unknown }).usage,
+    );
+    if (hasUsage) return false;
+    return events.some((event) => {
+        if (!event || typeof event !== "object") return false;
+        const choices = (event as { choices?: unknown }).choices;
+        if (!Array.isArray(choices)) return false;
+        return choices.some(
+            (choice) =>
+                choice &&
+                typeof choice === "object" &&
+                (choice as { finish_reason?: unknown }).finish_reason ===
+                    "content_filter",
+        );
+    });
+}
+
 function hasActiveSafety(value: unknown): boolean {
     return (
         parseSafeFeatures(value as string | boolean | undefined | null).size > 0
@@ -300,7 +358,13 @@ export function createCaptureStream<TEnv extends TextCacheEnv>(
                         offset += chunk.byteLength;
                     }
 
-                    if (isStreamingErrorResponse(response, completeResponse)) {
+                    if (
+                        isStreamingErrorResponse(response, completeResponse) ||
+                        isUnbilledContentFilterResponse(
+                            response,
+                            completeResponse,
+                        )
+                    ) {
                         resolveWrite();
                         return;
                     }
