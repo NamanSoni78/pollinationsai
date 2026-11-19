@@ -1,0 +1,16 @@
+{
+    "name": "agent-ground",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Agent Ground parent web dashboard (no-build static UI) + composer server + demo",
+    "type": "module",
+    "scripts": {
+        "start": "node server.mjs",
+        "demo": "node demo/orchestrator.mjs",
+        "demo:live": "node demo/orchestrator.mjs --live",
+        "test": "node --test test/*.test.js"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}

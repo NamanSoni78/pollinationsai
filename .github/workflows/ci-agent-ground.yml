@@ -1,0 +1,66 @@
+name: CI / Agent Ground
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/agent-ground/**"
+      - "packages/pollinations-byop-proxy/**"
+      - "packages/agent-ground-mcp/**"
+      - "packages/harness-sdk/**"
+      - "packages/closed-loop-warden/**"
+      - "packages/mcp-publish/**"
+      - ".github/workflows/ci-agent-ground.yml"
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test Agent Ground packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Zero-dep core tests
+        run: |
+          for pkg in pollinations-byop-proxy closed-loop-warden; do
+            echo "== $pkg =="
+            npm test --prefix "packages/$pkg"
+          done
+
+      - name: MCP adapter deps
+        run: |
+          for pkg in agent-ground-mcp mcp-publish harness-sdk; do
+            npm install --no-audit --no-fund --prefix "packages/$pkg"
+          done
+
+      - name: Full package tests
+        run: |
+          for pkg in agent-ground-mcp mcp-publish harness-sdk; do
+            echo "== $pkg =="
+            npm test --prefix "packages/$pkg"
+          done
+
+      - name: End-to-end demo test (offline, scripted)
+        run: npm test --prefix apps/agent-ground
+
+  format:
+    name: Biome check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      - name: Install Biome
+        run: npm install --no-audit --no-fund
+      - name: Biome check
+        run: npx @biomejs/biome check apps/agent-ground packages/pollinations-byop-proxy packages/agent-ground-mcp packages/harness-sdk packages/closed-loop-warden packages/mcp-publish

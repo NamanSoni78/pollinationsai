@@ -1,0 +1,26 @@
+// smoke: minimal end-to-end check for the Pollen Pulse build (REQ-1).
+// Exits 0 when the site scaffold is complete and coherent.
+import { existsSync, readFileSync } from "node:fs";
+
+const required = ["web/index.html", "web/styles.css", "web/app.js", "web/api-client.js", "README.md"];
+for (const file of required) {
+    if (!existsSync(new URL(`./${file}`, import.meta.url))) {
+        console.error(`smoke: missing ${file}`);
+        process.exit(1);
+    }
+}
+const html = readFileSync(new URL("./web/index.html", import.meta.url), "utf8");
+if (!html.includes("pollen-meter")) {
+    console.error("smoke: web/index.html is missing the pollen-meter element");
+    process.exit(1);
+}
+if (!html.includes('rel="stylesheet"')) {
+    console.error("smoke: web/index.html does not load styles.css");
+    process.exit(1);
+}
+const app = readFileSync(new URL("./web/app.js", import.meta.url), "utf8");
+if (!app.includes("fetchSession")) {
+    console.error("smoke: web/app.js does not use the API client");
+    process.exit(1);
+}
+console.log("smoke ok: pollen-meter present, styles loaded, api client wired, app logic present");

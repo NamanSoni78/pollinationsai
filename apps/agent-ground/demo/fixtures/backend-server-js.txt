@@ -1,0 +1,30 @@
+// Pollen Pulse session API (mock server for local runs).
+// The real billing path runs through the BYOP metering proxy; this mock
+// mirrors the openapi-spec artifact so the frontend can develop against it.
+import { createServer } from "node:http";
+
+const state = {
+    identity: { username: "NamanSoni78", email: "NamanSoni78@users.noreply.github.com" },
+    budget: { maxPollen: 5, spent: 0, pct: 0, phase: "normal" },
+};
+
+export const server = createServer((req, res) => {
+    const url = new URL(req.url, "http://pollen-pulse");
+    if (req.method === "GET" && url.pathname === "/api/session") {
+        const auth = req.headers.authorization ?? "";
+        if (!auth.startsWith("Bearer ")) {
+            res.writeHead(401, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "unauthorized", code: 401 }));
+            return;
+        }
+        res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": state.corsOrigin ?? "*" });
+        res.end(JSON.stringify({ identity: state.identity, budget: state.budget }));
+        return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "not_found", code: 404 }));
+});
+
+if (process.argv[1]?.endsWith("server.js")) {
+    server.listen(8790, "127.0.0.1", () => console.log("pollen pulse api on http://127.0.0.1:8790"));
+}

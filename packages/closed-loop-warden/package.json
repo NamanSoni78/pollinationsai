@@ -1,0 +1,17 @@
+{
+    "name": "pollinations-closed-loop-warden",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Agent Ground closed-loop FSM daemon and zero-history adversarial Warden gate",
+    "type": "module",
+    "main": "src/index.js",
+    "exports": {
+        ".": "./src/index.js"
+    },
+    "scripts": {
+        "test": "node --test test/*.test.js"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}

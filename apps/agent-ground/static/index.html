@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Agent Ground — parent dashboard for the multi-agent autonomous VM platform on Pollinations AI (BYOP)." />
+    <title>Agent Ground — Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script defer src="https://cdn.jsdelivr.net/npm/@pollinations/ui@0.1.0-alpha.20/dist/connect.js"></script>
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+        <div class="site-header__inner">
+            <h1 class="brand"><span class="brand__mark" aria-hidden="true">AG</span> Agent Ground</h1>
+
+            <div class="identity" id="identity-chip" title="Connect with Pollinations to start">
+                <span class="identity__avatar" id="identity-avatar" aria-hidden="true">?</span>
+                <span class="identity__name" id="identity-name">Not signed in</span>
+            </div>
+
+            <polli-connect budget="10" permissions="profile,usage"></polli-connect>
+
+            <div class="budget">
+                <div class="budget__top">
+                    <span class="phase phase--normal" id="budget-phase">Phase: normal</span>
+                    <span class="budget__nums" id="budget-nums">— / — Pollen spent</span>
+                    <button class="btn btn--small" id="topup-btn" type="button">Top-Up</button>
+                </div>
+                <div class="meter" id="budget-meter" role="progressbar" aria-label="Pollen budget used, thresholds at 75% and 90%" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div class="meter__fill" id="budget-fill"></div>
+                    <span class="meter__tick meter__tick--75" aria-hidden="true"></span>
+                    <span class="meter__tick meter__tick--90" aria-hidden="true"></span>
+                </div>
+            </div>
+
+            <p class="conn conn--retry" id="conn" role="status">Connecting…</p>
+            <p class="note" id="action-note" role="status" hidden></p>
+        </div>
+    </header>
+
+    <main id="main" class="layout">
+        <div class="col col--left">
+            <section class="panel" aria-labelledby="agents-heading">
+                <div class="panel__head">
+                    <h2 id="agents-heading">Agents</h2>
+                    <span class="panel__count" id="agents-count">0</span>
+                </div>
+                <div class="cards" id="agents-grid"></div>
+                <p class="empty" id="agents-empty">No agents yet — the demo spawns two on start.</p>
+            </section>
+
+            <section class="panel" aria-labelledby="blackboard-heading">
+                <div class="panel__head">
+                    <h2 id="blackboard-heading">Blackboard</h2>
+                    <span class="panel__count" id="artifacts-count">0</span>
+                </div>
+                <div class="table-wrap" id="blackboard-wrap">
+                    <table class="table" id="blackboard-table">
+                        <caption class="sr-only">Artifacts published by agents</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col">Key</th>
+                                <th scope="col">Version</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Publisher</th>
+                                <th scope="col">Changelog</th>
+                                <th scope="col">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="blackboard-body"></tbody>
+                    </table>
+                </div>
+                <p class="empty" id="blackboard-empty">No artifacts published yet.</p>
+            </section>
+        </div>
+
+        <div class="col col--right">
+            <section class="panel" aria-labelledby="watercooler-heading">
+                <div class="panel__head">
+                    <h2 id="watercooler-heading">Watercooler</h2>
+                    <span class="panel__count" id="watercooler-count">0</span>
+                </div>
+                <ul class="feed" id="watercooler-feed" aria-live="off"></ul>
+                <p class="empty" id="watercooler-empty">No chatter yet — broadcasts from agents land here live.</p>
+            </section>
+
+            <section class="panel" aria-labelledby="closeloop-heading">
+                <div class="panel__head">
+                    <h2 id="closeloop-heading">Close the Loop</h2>
+                </div>
+                <p class="cl-copy">Freeze a contract from a short interview, let the agents run autonomously, then an adversarial Warden re-verifies every requirement from zero history. No human input mid-loop.</p>
+                <button class="btn btn--primary" id="closeloop-btn" type="button">Close the Loop</button>
+
+                <form class="cl-form" id="closeloop-form" hidden>
+                    <div class="field">
+                        <label for="cl-goal">Project goal</label>
+                        <input id="cl-goal" name="project_goal" type="text" autocomplete="off" placeholder="e.g. a markdown notes site with live preview" required />
+                    </div>
+                    <div class="field">
+                        <label for="cl-features">Required features <span class="field__hint">(one per line — each becomes a verified requirement)</span></label>
+                        <textarea id="cl-features" name="required_features" rows="4" placeholder="Create and edit notes&#10;Live markdown preview&#10;Notes persist across reloads" required></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="cl-edge">Edge cases</label>
+                        <textarea id="cl-edge" name="edge_cases" rows="2" placeholder="Empty note body, very long titles, rapid re-saves"></textarea>
+                    </div>
+                    <div class="field">
+                        <label for="cl-target">Deploy target</label>
+                        <select id="cl-target" name="deploy_target">
+                            <option value="cloudflare_pages" selected>Cloudflare Pages</option>
+                            <option value="cloudflare_workers">Cloudflare Workers</option>
+                            <option value="edgeone_pages">EdgeOne Pages</option>
+                            <option value="none">None — local only</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="cl-constraints">Constraints</label>
+                        <input id="cl-constraints" name="constraints" type="text" autocomplete="off" placeholder="e.g. static site, no server runtime, under 50 MB" />
+                    </div>
+                    <div class="form-actions">
+                        <button class="btn btn--primary" id="closeloop-submit" type="submit">Start the loop</button>
+                        <button class="btn" id="closeloop-cancel" type="button">Cancel</button>
+                    </div>
+                </form>
+                <p class="cl-status" id="closeloop-status" role="status"></p>
+            </section>
+
+            <section class="panel" aria-labelledby="warden-heading">
+                <div class="panel__head">
+                    <h2 id="warden-heading">Warden Verdicts</h2>
+                </div>
+                <div id="warden-body"></div>
+                <p class="empty" id="warden-empty">No verdicts yet — the Warden audits once a loop submits evidence.</p>
+            </section>
+
+            <section class="panel" aria-labelledby="deployments-heading">
+                <div class="panel__head">
+                    <h2 id="deployments-heading">Deployments</h2>
+                </div>
+                <ul class="deployments" id="deployments-list"></ul>
+                <p class="empty" id="deployments-empty">No deployments yet — published URLs and "deployed" broadcasts land here.</p>
+            </section>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>Agent Ground parent dashboard — static UI, no build step. Hub REST + WebSocket on port 8877 (AGENT_GROUND_PORT).</p>
+    </footer>
+
+    <noscript><p class="noscript">This dashboard needs JavaScript to talk to the Agent Ground hub.</p></noscript>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>

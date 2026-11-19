@@ -1,0 +1,17 @@
+{
+    "name": "pollinations-harness-sdk",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Agent Ground child VM harness SDK: 6-layer context, skills, RAG, git, sleep, doom-loop, router, OpenCode config, agent runtime",
+    "type": "module",
+    "scripts": {
+        "test": "node --test test/*.test.js"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/server": "^2.0.0",
+        "zod": "^4.2.0"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}

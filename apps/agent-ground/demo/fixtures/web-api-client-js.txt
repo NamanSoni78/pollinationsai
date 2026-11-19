@@ -1,0 +1,14 @@
+// Pollen Pulse API client: consumes the backend's session API (openapi-spec).
+const BASE = typeof import.meta.env?.VITE_API_BASE === "string" ? import.meta.env.VITE_API_BASE : "/api";
+
+/** Fetch the session payload; on 401 return the documented error shape. */
+export async function fetchSession() {
+    const response = await fetch(`${BASE}/session`);
+    if (response.status === 401) {
+        return { error: "unauthorized", code: 401 };
+    }
+    if (!response.ok) {
+        throw new Error(`session API failed: HTTP ${response.status}`);
+    }
+    return response.json();
+}

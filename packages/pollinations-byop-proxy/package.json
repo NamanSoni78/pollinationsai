@@ -1,0 +1,14 @@
+{
+    "name": "pollinations-byop-proxy",
+    "version": "0.1.0",
+    "private": true,
+    "description": "BYOP identity + Pollen metering proxy with a hard budget cutoff for Agent Ground",
+    "type": "module",
+    "main": "src/index.js",
+    "scripts": {
+        "test": "node --test test/*.test.js"
+    },
+    "engines": {
+        "node": ">=20.0.0"
+    }
+}

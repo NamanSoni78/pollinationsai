@@ -1,0 +1,20 @@
+// Pollen Pulse app logic. Consumes the session API through api-client.js.
+import { fetchSession } from "./api-client.js";
+
+const meter = document.getElementById("pollen-meter");
+const phaseLabel = document.getElementById("budget-phase");
+const userLabel = document.getElementById("session-user");
+const balanceLabel = document.getElementById("session-balance");
+
+async function refresh() {
+    const session = await fetchSession();
+    meter.querySelector(".meter-fill").style.width = `${session.budget.pct}%`;
+    meter.setAttribute("aria-valuenow", String(session.budget.pct));
+    phaseLabel.textContent = session.budget.phase;
+    userLabel.textContent = session.identity?.username ?? "unknown";
+    balanceLabel.textContent = `${session.budget.spent} / ${session.budget.maxPollen} Pollen`;
+}
+
+// TODO: hook up live pollen meter updates from the ground event stream
+refresh();
+setInterval(refresh, 3000);

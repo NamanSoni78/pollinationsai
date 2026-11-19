@@ -1,0 +1,67 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Pollen Pulse Session API",
+        "version": "1.0.0",
+        "description": "Session and budget API consumed by the Pollen Pulse dashboard. Owner: agent-backend-01."
+    },
+    "servers": [{ "url": "/api" }],
+    "x-cors": {
+        "enabled": false,
+        "note": "v1: no CORS; frontend is served same-origin. A negotiate_change request from agent-frontend-01 is pending."
+    },
+    "paths": {
+        "/session": {
+            "get": {
+                "summary": "Current session, identity and pollen budget",
+                "responses": {
+                    "200": {
+                        "description": "Session payload",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["identity", "budget"],
+                                    "properties": {
+                                        "identity": {
+                                            "type": "object",
+                                            "properties": {
+                                                "username": { "type": "string" },
+                                                "email": { "type": "string" }
+                                            }
+                                        },
+                                        "budget": {
+                                            "type": "object",
+                                            "required": ["maxPollen", "spent", "pct", "phase"],
+                                            "properties": {
+                                                "maxPollen": { "type": "number" },
+                                                "spent": { "type": "number" },
+                                                "pct": { "type": "number" },
+                                                "phase": { "type": "string", "enum": ["normal", "conservation", "wrapup", "cutoff", "paused"] }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Missing or revoked Pollinations key",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": ["error", "code"],
+                                    "properties": {
+                                        "error": { "type": "string", "const": "unauthorized" },
+                                        "code": { "type": "integer", "const": 401 }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
