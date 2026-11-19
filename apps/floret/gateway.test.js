@@ -161,3 +161,97 @@ test("private snapshot strips storage internals and credentials", async () => {
         404,
     );
 });
+
+// Mirrors the account's Cloudflare rate-limit binding (200 per 10 s) with
+// plain per-key counting so the gateway's cap behavior is testable offline.
+function makeLimiter(limit) {
+    const counts = new Map();
+    const limiter = {
+        counts,
+        total: 0,
+        async limit({ key }) {
+            limiter.total++;
+            const count = (counts.get(key) || 0) + 1;
+            counts.set(key, count);
+            return { success: count <= limit };
+        },
+    };
+    return limiter;
+}
+
+test("chat floods from one client IP are capped before the enter auth read", async () => {
+    const { calls, env, gateway } = setup();
+    const limiter = makeLimiter(200);
+    env.IP_RATE_LIMITER = limiter;
+    const statuses = [];
+    let throttled;
+    for (let i = 0; i < 201; i++) {
+        throttled = await gateway(
+            new Request("https://floret.test/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer sk_junk${i}`,
+                    "CF-Connecting-IP": "203.0.113.10",
+                },
+            }),
+            env,
+        );
+        statuses.push(throttled.status);
+    }
+    // The first 200 requests pay exactly one auth read each; the 201st is
+    // refused before the Enter D1 read and before the container.
+    assert.equal(calls.auth, 200);
+    assert.equal(calls.agent, 200);
+    assert.equal(statuses[199], 200);
+    assert.equal(statuses[200], 429);
+    assert.equal(throttled.headers.get("Retry-After"), "10");
+});
+
+test("anonymous container-forwarded floods from one client IP are capped", async () => {
+    const { calls, env, gateway } = setup();
+    const limiter = makeLimiter(200);
+    env.IP_RATE_LIMITER = limiter;
+    let throttled;
+    for (let i = 0; i < 201; i++) {
+        throttled = await gateway(
+            new Request("https://floret.test/health", {
+                headers: { "CF-Connecting-IP": "198.51.100.7" },
+            }),
+            env,
+        );
+    }
+    assert.equal(calls.agent, 200);
+    assert.equal(calls.auth, 0);
+    assert.equal(throttled.status, 429);
+    assert.equal(throttled.headers.get("Retry-After"), "10");
+});
+
+test("each client IP has its own budget and unset IPs are not throttled", async () => {
+    const { calls, env, gateway } = setup();
+    const limiter = makeLimiter(200);
+    env.IP_RATE_LIMITER = limiter;
+    const chat = (ip) =>
+        gateway(
+            new Request("https://floret.test/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                    Authorization: "Bearer sk_test",
+                    ...(ip ? { "CF-Connecting-IP": ip } : {}),
+                },
+            }),
+            env,
+        );
+    for (let i = 0; i < 100; i++) {
+        await chat("203.0.113.10");
+        await chat("198.51.100.7");
+    }
+    assert.equal(limiter.counts.get("203.0.113.10"), 100);
+    assert.equal(limiter.counts.get("198.51.100.7"), 100);
+    assert.equal(calls.auth, 200);
+    // Internal callers (service bindings) carry no client IP header; the
+    // limiter is not consulted for them, mirroring the sibling worker.
+    const before = limiter.total;
+    assert.equal((await chat(null)).status, 200);
+    assert.equal(limiter.total, before);
+    assert.equal(calls.auth, 201);
+});
