@@ -12,6 +12,13 @@ import { requireModelAttemptAccess } from "../utils/generation-access.ts";
 export const STEM_VARIATIONS = ["two_stems_v1", "six_stems_v1"] as const;
 export type StemVariation = (typeof STEM_VARIATIONS)[number];
 
+/**
+ * Upstream deadline for the ElevenLabs stem-separation fetch — the speech
+ * fleet's 300 s convention: generous for a legal separation, while a silent
+ * model server can no longer pin the request indefinitely.
+ */
+const STEM_UPSTREAM_TIMEOUT_MS = 300_000;
+
 // MP3 metadata duration includes encoder delay and padding. ElevenLabs meters
 // decoded samples instead. Read the gapless Xing/LAME extension when present.
 function mp3DecodedSeconds(
@@ -141,6 +148,7 @@ export async function handleStemSeparation(c: Context<Env>): Promise<Response> {
             body.set("stem_variation_id", variation);
             const response = await ensureUpstreamOk(
                 await fetch(endpoint, {
+                    signal: AbortSignal.timeout(STEM_UPSTREAM_TIMEOUT_MS),
                     method: "POST",
                     headers: {
                         "xi-api-key": c.env.ELEVENLABS_API_KEY,
