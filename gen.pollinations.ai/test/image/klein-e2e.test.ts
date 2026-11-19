@@ -18,6 +18,11 @@ import { withInlineGenerationCoordinator } from "../helpers/inline-generation-co
 const model = "black-forest-labs/flux.2-klein-4b";
 const png =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+// The same PNG with its 12-byte IEND trailer cut off: a body the backend
+// could emit if the stream is interrupted mid-send.
+const truncatedPng = Buffer.from(png, "base64")
+    .subarray(0, -12)
+    .toString("base64");
 const invalidReference =
     "Invalid reference image: Image too small: 63×52. Both dimensions must be at least 64px";
 
@@ -87,6 +92,76 @@ test.for([
         expect(await getUserBalance(drizzle(env.DB), userId)).toEqual(before);
     },
 );
+
+test("Klein rejects a truncated image without charging or caching", async () => {
+    const { key, userId } = await createTestApiKey({
+        user: { packBalance: 100 },
+    });
+    const mocks = createFetchMock({ tinybird: createMockTinybird() });
+    await mocks.enable("tinybird");
+    const backend = vi.fn(async () =>
+        Response.json([{ image: truncatedPng }]),
+    );
+    const bindings = withInlineGenerationCoordinator({
+        ...env,
+        KLEIN_VPC: { fetch: backend } as unknown as Fetcher,
+    });
+    const before = await getUserBalance(drizzle(env.DB), userId);
+    const url = `https://gen.pollinations.ai/image/klein-${crypto.randomUUID()}?model=${model}&seed=42`;
+    for (const _attempt of [1, 2]) {
+        const ctx = createExecutionContext();
+        const response = await worker.fetch(
+            new Request(url, {
+                headers: { authorization: `Bearer ${key}` },
+            }),
+            bindings,
+            ctx,
+        );
+        const body = await response.text();
+        expect(response.status, body).toBe(502);
+        expect(body).toContain("invalid or incomplete image");
+        await waitOnExecutionContext(ctx);
+    }
+    // No cache entry was recorded: both attempts reached the backend.
+    expect(backend).toHaveBeenCalledTimes(2);
+    expect(
+        mocks.tinybird.state.events.filter((event) => event.isBilledUsage),
+    ).toHaveLength(0);
+    expect(await getUserBalance(drizzle(env.DB), userId)).toEqual(before);
+});
+
+test("Klein rejects a body that is not an image at all", async () => {
+    const { key, userId } = await createTestApiKey({
+        user: { packBalance: 100 },
+    });
+    const mocks = createFetchMock({ tinybird: createMockTinybird() });
+    await mocks.enable("tinybird");
+    const backend = vi.fn(async () =>
+        Response.json([
+            { image: Buffer.from("not an image at all").toString("base64") },
+        ]),
+    );
+    const bindings = withInlineGenerationCoordinator({
+        ...env,
+        KLEIN_VPC: { fetch: backend } as unknown as Fetcher,
+    });
+    const before = await getUserBalance(drizzle(env.DB), userId);
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+        new Request(
+            `https://gen.pollinations.ai/image/klein-${crypto.randomUUID()}?model=${model}`,
+            { headers: { authorization: `Bearer ${key}` } },
+        ),
+        bindings,
+        ctx,
+    );
+    expect(response.status).toBe(502);
+    await waitOnExecutionContext(ctx);
+    expect(
+        mocks.tinybird.state.events.filter((event) => event.isBilledUsage),
+    ).toHaveLength(0);
+    expect(await getUserBalance(drizzle(env.DB), userId)).toEqual(before);
+});
 
 test.each([
     undefined,

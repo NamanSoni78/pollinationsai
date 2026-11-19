@@ -1,10 +1,15 @@
+import { detectImageMimeType } from "@shared/image-mime.ts";
 import { UpstreamError } from "@shared/error.ts";
 import debug from "debug";
 import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import { getImageEnv } from "../env.ts";
 import type { ImageParams } from "../params.ts";
 import { fetchUpstream } from "../utils/fetchUpstream.ts";
-import { base64ToBuffer, downloadUserImage } from "../utils/imageDownload.ts";
+import {
+    base64ToBuffer,
+    downloadUserImage,
+    readImageDimensions,
+} from "../utils/imageDownload.ts";
 
 const logOps = debug("pollinations:flux-klein:ops");
 const logError = debug("pollinations:flux-klein:error");
@@ -28,6 +33,52 @@ const getKleinGenerateUrl = (): string => {
     }
     return `${url}/generate`;
 };
+
+/**
+ * The PNG trailer is always the IEND chunk: a zero-length chunk, the type
+ * bytes, then the fixed CRC. A body cut before it is incomplete.
+ */
+function isCompletePng(buffer: Uint8Array): boolean {
+    return (
+        buffer.length >= 12 &&
+        buffer[buffer.length - 12] === 0 &&
+        buffer[buffer.length - 11] === 0 &&
+        buffer[buffer.length - 10] === 0 &&
+        buffer[buffer.length - 9] === 0 &&
+        String.fromCharCode(
+            buffer[buffer.length - 8],
+            buffer[buffer.length - 7],
+            buffer[buffer.length - 6],
+            buffer[buffer.length - 5],
+        ) === "IEND"
+    );
+}
+
+/**
+ * A 200 from the Klein box must carry a complete, decodable image before it
+ * is cached and billed. The worker answers PNG today and its sibling pools
+ * answer JPEG, so the completeness check is format-aware: a JPEG must end in
+ * its EOI marker and a PNG in its IEND chunk. A body cut mid-stream used to
+ * flow through as a successful generation — the gap #18202 closed for the
+ * three self-hosted pools, with the same fix shape applied here.
+ */
+function assertCompleteKleinImage(
+    buffer: Uint8Array,
+    requestUrl: string,
+): asserts buffer {
+    const mimeType = detectImageMimeType(buffer);
+    const endsCleanly =
+        mimeType === "image/jpeg"
+            ? buffer[buffer.length - 2] === 0xff &&
+              buffer[buffer.length - 1] === 0xd9
+            : mimeType === "image/png" && isCompletePng(buffer);
+    if (!mimeType || !endsCleanly || !readImageDimensions(buffer, mimeType)) {
+        throw UpstreamError.fromProvider(502, {
+            message: "Klein API returned an invalid or incomplete image",
+            requestUrl: new URL(requestUrl),
+        });
+    }
+}
 
 /**
  * Calls the self-hosted Flux Klein 4B API. Production uses the Vast VPC binding.
@@ -94,6 +145,7 @@ export const callFluxKleinAPI = async (
         }
 
         const imageBuffer = base64ToBuffer(item.image);
+        assertCompleteKleinImage(imageBuffer, kleinUrl);
         logOps(
             "Klein generation complete, buffer size:",
             imageBuffer.length,
