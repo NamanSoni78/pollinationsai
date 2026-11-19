@@ -1360,3 +1360,31 @@ Baseline: upstream `30a8939fd` at round 37's close; this session found `c6badca1
 - No new branches (zero findings — no `solution118-*` claim; index 118 stays available for the next round with a gate-passing finding). Upstream PR creation not applicable (no new fix PRs; the standing 403 token limitation from rounds 26-37 unchanged).
 - `issues_mds`: append-only on round 37's head `e3a6c52c` — this round adds this WORKLOG section + SYNC_LOG row + AGENT_PROGRESS wave 38 only (no new issue files, no history rewrite, no remote branch changes; the only remote writes are the two PR review comments on #130/#82).
 - Live probes: **$0** — all evidence public (OpenRouter endpoints API, DeepInfra/Alibaba/AWS public pricing and docs pages) or offline; the bounty key was not used.
+
+
+## Round 39 — 2026-11-19 (MCP AuthZ/Identity Isolation, Community Endpoints & Transcription Postpaid Settlement Sweep)
+
+- **Base audited:** `upstream/main` @ `8fc4c212a4d55b8a32d8578b3ed313712d6cf0af` (`chore: update app metrics (#20310)`); `fork/main` fast-forwarded and verified identical (`8fc4c21`, 0/0 both sides).
+- **Focus areas:** MCP-apps interaction points (`gen.pollinations.ai/src/routes/mcp.ts`, `apps/computer-mcp`, `apps/composio-mcp`), community endpoint authorization (`enter.pollinations.ai/src/routes/community-endpoints.ts`, `agents.ts`, `oauth.ts`), and deferred billing/usage transcription settlement & deadline candidates.
+
+### Verified & Delivered Issues (3 new — Issues 118–120)
+
+| # | Severity | Issue | Fix Branch | Fork PR | Verification (Offline, $0 Live) |
+|---|---|---|---|---|---|
+| 118 | High | Agent runs on `/mcp/:serverId` leak caller `x-pollinations-user-github` header, letting third-party agents forge git commits as the caller in `pollinations/collective-memory` | `solution118-mcp-agent-github-identity-isolation` (`351dc17`) | [#133](https://github.com/NamanSoni78/pollinationsai/pull/133) | RED on `8fc4c21` (`:583231+octocat` vs `:null`) → GREEN **35/35** (`mcp-proxy.test.ts`), `tsc --noEmit` clean |
+| 119 | High | `/mcp/:serverId` omits BYOP `redirectOrigin` (`canGrantKeysByLink`) and `permissions.models` checks, exposing victim Composio integrations, personal `computer-mcp` DO, and unrestricted Pollen spend | `solution119-mcp-api-key-scope-and-origin-enforcement` (`5d94448`) | [#134](https://github.com/NamanSoni78/pollinationsai/pull/134) | RED on `8fc4c21` (6/7 fail returning 200) → GREEN **41/41** (`mcp-proxy.test.ts`), `tsc --noEmit` clean |
+| 120 | Medium–High | Transcription backends (Azure GPT, xAI, ElevenLabs Scribe, MAI Azure/Vercel Gateway) drop `billedUsage`/`providerBilling` on 200 OK JSON/schema failures and omit `AbortSignal.timeout` deadlines | `solution120-transcription-postpaid-settlement-and-deadlines` (`741657c`) | [#135](https://github.com/NamanSoni78/pollinationsai/pull/135) | RED on `8fc4c21` (8/8 fail) → GREEN **146/146** (`azure`, `scribe`, `xai`, `tracking-observability`), `tsc --noEmit` clean |
+
+### Audited-and-Killed / Below-Gate Records (for future dedup)
+- `pk_` publishable keys on `/mcp/:serverId`: **KILLED** — already rejected at `shared/auth/api-key.ts:442` (`401`).
+- `enter.pollinations.ai/src/routes/agents.ts` unauthenticated `POST /api/account/agents/:id/sync` on private code agents: **KILLED / intentional by design** — `enter.pollinations.ai/test/code-agent-sync.test.ts` explicitly inserts default `visibility: "private"` rows and asserts `200` + `429` throttle.
+- `enter.pollinations.ai/src/routes/community-endpoints.ts`: **AUDITED CLEAN** — all routes enforce `requireAccountPermission(c, "keys")` and `requireOwnedEndpoint` / `enforcePublishingAccess`. Minor non-security note: updating `bearerToken` while a `pendingPayload` is queued does not refresh `queued.bearerTokenCiphertext`.
+- `shared/registry/text-fallbacks.ts:708-717` (`google/gemma-4-26b-a4b-it:deepinfra` missing `promptCachedTokens`): **HELD BELOW GATE** — matches round 38 finding (DeepInfra publishes no direct cached rate).
+- `enter.pollinations.ai/src/routes/oauth.ts:74,110-142` (keyless `POST /api/oauth/code` missing server-side `parseAuthorizeRedirectUrl`): **HELD BELOW GATE** — matches round 38 finding (session-authenticated; client `authorize.tsx` validates scheme).
+- `gen.pollinations.ai/src/routes/audio.ts:4439` (Whisper OVH/DeepInfra leg): lacks `AbortSignal.timeout`, though JSON parse is already guarded and billing precedes response formatting (noted as low-severity availability residual).
+
+### Sync
+- `fork/main` fast-forwarded to `upstream/main` `8fc4c212a4d55b8a32d8578b3ed313712d6cf0af` (0/0 verified).
+- Pushed 3 independent fix branches off `8fc4c21` (`solution118-*`, `solution119-*`, `solution120-*`) with fork PRs #133, #134, #135 (upstream PR creation remains 403 due to fine-grained PAT scope).
+- `issues_mds`: append-only on round 38's head `3b3b4004`; added `issues/issue118-*.md`, `issues/issue119-*.md`, `issues/issue120-*.md`, Round 39 WORKLOG section, SYNC_LOG row, and Wave 39 AGENT_PROGRESS table.
+- Live probes: **$0** — all verification 100% offline via Vitest/Miniflare.
