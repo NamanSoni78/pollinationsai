@@ -17,6 +17,7 @@ import { toUpstreamError } from "../model3d/modelUtils.ts";
 export const SONILO_MODEL = "sonilo/sonilo-1.1-sfx";
 const ENDPOINT = "sonilo/v1.1/video-to-sound-effects";
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+const OUTPUT_DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /**
  * Sonilo returns sound effects timed to the whole `reference_video` as one
@@ -75,6 +76,7 @@ export async function generateSoniloSfx(opts: {
     }
     const audio = await fetchUpstream(data.audio.url, {
         errorLabel: `Failed to download ${SONILO_MODEL} output`,
+        signal: AbortSignal.timeout(OUTPUT_DOWNLOAD_TIMEOUT_MS),
     });
     const bytes = await readResponseBytes(audio, MAX_OUTPUT_BYTES, (total) =>
         UpstreamError.fromProvider(502, {

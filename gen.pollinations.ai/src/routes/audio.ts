@@ -68,6 +68,7 @@ import {
     withModelFallbackResponse,
 } from "../fallback.ts";
 import { falBillableUnits } from "../image/utils/falBillableUnits.ts";
+import { fetchUpstream } from "../image/utils/fetchUpstream.ts";
 import { requireModelAttemptAccess } from "../utils/generation-access.ts";
 import { transcribeWithAssemblyAi } from "./assemblyai-transcription.ts";
 import type { SimpleAudioQuery } from "./generation-handlers.ts";
@@ -80,6 +81,22 @@ import {
     UNDIARIZED_TRANSCRIPTION_RESPONSE_FORMATS,
 } from "./transcription-response.ts";
 import { generateZonosSpeech } from "./zonos-speech.ts";
+
+/**
+ * Deadline and byte ceiling for downloading generated audio artifacts from
+ * provider-returned URLs (fal CDN, DashScope OSS, Stability results). Without
+ * them a misissued or oversized artifact — or one hiding behind a redirect —
+ * buffers unboundedly in the isolate and pins the request with no deadline.
+ */
+const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 60_000;
+const MAX_AUDIO_ARTIFACT_BYTES = 64 * 1024 * 1024;
+
+function artifactTooLarge(model: string): (total: number) => Error {
+    return (total) =>
+        UpstreamError.fromProvider(502, {
+            message: `${model} output is too large: ${total} bytes (max ${MAX_AUDIO_ARTIFACT_BYTES})`,
+        });
+}
 
 export const CreateSpeechRequestSchema = z
     .object({
@@ -1971,11 +1988,16 @@ export async function generateSoundEffect(opts: {
                 message: "Sound effects returned no audio output",
             });
         }
-        const audio = await ensureUpstreamOk(
-            await fetch(data.audio.url),
-            data.audio.url,
+        const audio = await fetchUpstream(data.audio.url, {
+            errorLabel: "Failed to download sound-effects output",
+            signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS),
+        });
+        const bytes = await readResponseBytes(
+            audio,
+            MAX_AUDIO_ARTIFACT_BYTES,
+            artifactTooLarge("Sound effects"),
         );
-        return new Response(await audio.arrayBuffer(), {
+        return new Response(bytes, {
             headers: {
                 "Content-Type": "audio/mpeg",
                 ...buildUsageHeaders(
@@ -2446,11 +2468,15 @@ export async function generateQwenTts(opts: {
         });
     }
 
-    const audioResponse = await ensureUpstreamOk(
-        await fetch(audioUrl),
-        audioUrl,
+    const audioResponse = await fetchUpstream(audioUrl, {
+        errorLabel: "Failed to download Qwen TTS output",
+        signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS),
+    });
+    const audioBuffer = await readResponseBytes(
+        audioResponse,
+        MAX_AUDIO_ARTIFACT_BYTES,
+        artifactTooLarge("Qwen TTS"),
     );
-    const audioBuffer = await audioResponse.arrayBuffer();
 
     const usageHeaders = {
         ...buildUsageHeaders(
@@ -3362,11 +3388,15 @@ export async function generateStableAudio3Medium(opts: {
         });
     }
 
-    const fileResponse = await ensureUpstreamOk(
-        await fetch(audioUrl),
-        audioUrl,
+    const fileResponse = await fetchUpstream(audioUrl, {
+        errorLabel: "Failed to download Stable Audio 3 Medium output",
+        signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS),
+    });
+    const audioBuffer = await readResponseBytes(
+        fileResponse,
+        MAX_AUDIO_ARTIFACT_BYTES,
+        artifactTooLarge("Stable Audio 3 Medium"),
     );
-    const audioBuffer = await fileResponse.arrayBuffer();
     // fal SA3 Medium defaults to MP3 output, but its CDN serves the file as
     // application/octet-stream — only trust the header when it's a real audio/*
     // type, otherwise label it audio/mpeg so clients play it correctly.
@@ -3509,6 +3539,7 @@ export async function generateStableAudio3Large(opts: {
                 Authorization: `Bearer ${apiKey}`,
                 Accept: "*/*",
             },
+            signal: AbortSignal.timeout(ARTIFACT_DOWNLOAD_TIMEOUT_MS),
         });
 
         if (pollResponse.status === 202) {
@@ -3530,7 +3561,11 @@ export async function generateStableAudio3Large(opts: {
             continue;
         }
 
-        const audioBuffer = await pollResponse.arrayBuffer();
+        const audioBuffer = await readResponseBytes(
+            pollResponse,
+            MAX_AUDIO_ARTIFACT_BYTES,
+            artifactTooLarge("Stable Audio 3"),
+        );
         const usageHeaders = buildUsageHeaders("stability-ai/stable-audio-3", {
             completionAudioTokens: 1,
         });
