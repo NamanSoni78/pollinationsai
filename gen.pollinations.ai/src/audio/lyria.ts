@@ -1,11 +1,22 @@
 import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
 import { AUDIO_SERVICES } from "@shared/registry/audio.ts";
 import { buildUsageHeaders } from "@shared/registry/usage-headers.ts";
+import { readResponseText } from "@shared/response-bytes.ts";
 import { falBillableUnits } from "../image/utils/falBillableUnits.ts";
 import { runFalJobResponse } from "../model3d/models/falClient.ts";
 import { toUpstreamError } from "../model3d/modelUtils.ts";
 
 type LyriaModel = "google/lyria-3.5" | "google/lyria-3.5:fal";
+
+/**
+ * The direct Google leg returns the synthesized song inline as base64
+ * inside JSON; read it through the same 64 MiB convention the audio fleet
+ * applies to inline-audio responses (a legal single song is a few MB).
+ */
+const LYRIA_INLINE_JSON_MAX_BYTES = 64 * 1024 * 1024;
+/** A silent Google endpoint must not pin the request (the fleet's 120 s
+ * synthesis deadline). */
+const LYRIA_UPSTREAM_TIMEOUT_MS = 120_000;
 
 export async function generateLyria35(opts: {
     model: LyriaModel;
@@ -69,6 +80,7 @@ export async function generateLyria35(opts: {
             "https://generativelanguage.googleapis.com/v1beta/interactions";
         const response = await ensureUpstreamOk(
             await fetch(endpoint, {
+                signal: AbortSignal.timeout(LYRIA_UPSTREAM_TIMEOUT_MS),
                 method: "POST",
                 headers: {
                     "x-goog-api-key": opts.geminiApiKey,
@@ -81,7 +93,25 @@ export async function generateLyria35(opts: {
             }),
             endpoint,
         );
-        const data = (await response.json()) as {
+        // Inline audio inside JSON: cap the read and never surface a
+        // malformed body as a raw SyntaxError.
+        const bodyText = await readResponseText(
+            response,
+            LYRIA_INLINE_JSON_MAX_BYTES,
+            (total) =>
+                new UpstreamError(502, {
+                    message: `Lyria response is too large: ${total} bytes (max ${LYRIA_INLINE_JSON_MAX_BYTES})`,
+                }),
+        );
+        let parsedJson: unknown;
+        try {
+            parsedJson = JSON.parse(bodyText);
+        } catch {
+            throw new UpstreamError(502, {
+                message: "Lyria returned invalid JSON.",
+            });
+        }
+        const data = parsedJson as {
             status?: string;
             steps?: Array<{
                 content?: Array<{
@@ -102,6 +132,12 @@ export async function generateLyria35(opts: {
         if (data.status !== "completed" || !audio?.data) {
             throw new UpstreamError(502, {
                 message: "Lyria returned no completed MP3 audio output",
+                // Google charges one song per completed interaction; settle
+                // it whenever the provider reported completion, even if the
+                // audio block is missing or malformed.
+                ...(data.status === "completed"
+                    ? { billedUsage: { completionAudioTokens: 1 } }
+                    : {}),
             });
         }
         bytes = Uint8Array.from(atob(audio.data), (char) =>

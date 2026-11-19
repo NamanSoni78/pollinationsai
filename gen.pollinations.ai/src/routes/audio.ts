@@ -23,7 +23,7 @@ import {
     createCompletionAudioSecondsUsage,
     PROVIDER_BILLING_HEADERS,
 } from "@shared/registry/usage-headers.ts";
-import { readResponseBytes } from "@shared/response-bytes.ts";
+import { readResponseBytes, readResponseText } from "@shared/response-bytes.ts";
 import { SafeSchema } from "@shared/schemas/safety.ts";
 import { validateUserMediaUrl } from "@shared/user-media-url.ts";
 import {
@@ -240,6 +240,21 @@ type GenerateMusicOptions = {
 
 const MAX_REFERENCE_AUDIO_SIZE = 20 * 1024 * 1024;
 const REFERENCE_AUDIO_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Inline-audio-in-JSON TTS responses (MAI speech gateway, Gemini TTS direct,
+ * Lyria direct): the 10,000-character input cap bounds a legal body to
+ * roughly 54 MB of base64, so the sonilo 64 MiB output convention covers
+ * every legal synthesis with headroom while bounding a runaway provider
+ * response.
+ */
+const TTS_INLINE_JSON_MAX_BYTES = 64 * 1024 * 1024;
+/**
+ * Upstream deadline for first-party synthesis fetches — the same 120 s
+ * convention the transcription fleet applies (a stalled model server must
+ * not pin the request past the platform's own patience).
+ */
+const SYNTHESIS_UPSTREAM_TIMEOUT_MS = 120_000;
 
 const AUDIO_EXTENSION_BY_TYPE: Record<string, string> = {
     "audio/aac": "aac",
@@ -2616,8 +2631,11 @@ export async function generateMaiSpeech(opts: {
                 })[ch] ?? ch,
         );
     const ssml = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${resolvedVoice.slice(0, 5)}"><voice name="${escapeXml(resolvedVoice)}">${escapeXml(text)}</voice></speak>`;
+    // A silent model server must not pin the request; the transcription
+    // fleet uses the same 120 s deadline.
     const response = await ensureUpstreamOk(
         await fetch(url, {
+            signal: AbortSignal.timeout(SYNTHESIS_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: gateway
                 ? {
@@ -2650,12 +2668,39 @@ export async function generateMaiSpeech(opts: {
     let characters = text.length;
     let providerCost: number | undefined;
     if (gateway) {
+        // The gateway returns the synthesized audio inline as base64 inside
+        // JSON. Read it through the shared byte cap, and never let a
+        // malformed or runaway body crash the route after the provider has
+        // already billed the input: every failure path settles the input
+        // characters.
+        const fail = (message: string) =>
+            new UpstreamError(502, {
+                message,
+                // The provider already synthesized and billed this input.
+                billedUsage: createAudioTokenUsage(characters),
+            });
+        const bodyText = await readResponseText(
+            response,
+            TTS_INLINE_JSON_MAX_BYTES,
+            (total) =>
+                fail(
+                    `MAI speech response is too large: ${total} bytes (max ${TTS_INLINE_JSON_MAX_BYTES})`,
+                ),
+        );
+        let parsedJson: unknown;
+        try {
+            parsedJson = JSON.parse(bodyText);
+        } catch {
+            throw fail("MAI speech returned invalid JSON.");
+        }
         const parsed = z
             .object({
                 audio: z.string().min(1),
                 providerMetadata: z.object({
                     gateway: z.object({
-                        cost: z.coerce.number().finite().positive(),
+                        // A legitimate zero (a free read) must not discard a
+                        // successful synthesis the provider already billed.
+                        cost: z.coerce.number().finite().nonnegative(),
                     }),
                 }),
                 usage: z
@@ -2665,11 +2710,8 @@ export async function generateMaiSpeech(opts: {
                     .passthrough()
                     .optional(),
             })
-            .safeParse(await response.json());
-        if (!parsed.success)
-            throw new UpstreamError(502, {
-                message: "MAI speech returned invalid audio.",
-            });
+            .safeParse(parsedJson);
+        if (!parsed.success) throw fail("MAI speech returned invalid audio.");
         audio = Uint8Array.from(atob(parsed.data.audio), (ch) =>
             ch.charCodeAt(0),
         );
@@ -2859,6 +2901,7 @@ export async function generateGeminiSpeech(opts: {
     }
     const response = await ensureUpstreamOk(
         await fetch(GEMINI_TTS_ENDPOINT, {
+            signal: AbortSignal.timeout(SYNTHESIS_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: {
                 "x-goog-api-key": apiKey,
@@ -2898,8 +2941,26 @@ export async function generateGeminiSpeech(opts: {
         }),
         GEMINI_TTS_ENDPOINT,
     );
+    // Inline audio inside JSON: read through the shared byte cap and never
+    // let a malformed body surface as a raw SyntaxError.
+    const geminiBody = await readResponseText(
+        response,
+        TTS_INLINE_JSON_MAX_BYTES,
+        (total) =>
+            new UpstreamError(502, {
+                message: `Gemini TTS response is too large: ${total} bytes (max ${TTS_INLINE_JSON_MAX_BYTES})`,
+            }),
+    );
+    let geminiJson: unknown;
+    try {
+        geminiJson = JSON.parse(geminiBody);
+    } catch {
+        throw new UpstreamError(502, {
+            message: "Gemini TTS returned invalid JSON.",
+        });
+    }
     const { bytes, usage } = parseGeminiSpeechResponse(
-        await response.json(),
+        geminiJson,
         responseFormat,
     );
     log.info("Gemini TTS success: model={model}, usage={usage}", {
