@@ -108,22 +108,63 @@ export async function callVercelSearch(
     const encoder = new TextEncoder();
     let lastUsage: Record<string, unknown> | undefined;
     let sentMetadata = false;
+    let usageErrorSent = false;
     let emit: (event: string) => void;
+    // A usage/charge failure inside the transform must not tear the caller's
+    // already-200'd stream: emit the same in-band error frame every sibling
+    // layer emits (chat/usage.ts) and let the terminal gate see it.
+    const emitUsageError = (message: string) => {
+        if (usageErrorSent) return;
+        usageErrorSent = true;
+        emit(
+            JSON.stringify({
+                error: {
+                    message,
+                    type: "upstream_error",
+                    code: "usage_missing",
+                },
+            }),
+        );
+    };
     const parser = createParser({
         onEvent(event) {
             if (event.data.trim() === "[DONE]") {
-                requireUsage({ usage: lastUsage });
+                try {
+                    requireUsage({ usage: lastUsage });
+                } catch (error) {
+                    emitUsageError(
+                        error instanceof Error
+                            ? error.message
+                            : "Vercel search omitted its terminal usage",
+                    );
+                    return;
+                }
                 emit("[DONE]");
                 return;
             }
-            const chunk = JSON.parse(event.data) as ChatCompletion;
+            let chunk: ChatCompletion;
+            try {
+                chunk = JSON.parse(event.data) as ChatCompletion;
+            } catch {
+                // Non-JSON keepalive or comment payloads carry nothing; pass
+                // them through unchanged (chat/public.ts convention).
+                emit(event.data);
+                return;
+            }
             if (!sentMetadata && chunk.choices?.[0]?.delta) {
                 chunk.choices[0].delta.provider_metadata = metadata;
                 sentMetadata = true;
             }
             if (chunk.usage) {
                 if ("prompt_tokens" in chunk.usage) {
-                    requireChatCompletionUsage(chunk);
+                    try {
+                        requireChatCompletionUsage(chunk);
+                    } catch {
+                        // Invalid usage shape mid-stream: pass the frame
+                        // through; the terminal usage gate decides.
+                        emit(JSON.stringify(chunk));
+                        return;
+                    }
                     lastUsage = chunk.usage;
                 } else if (lastUsage)
                     lastUsage = { ...lastUsage, ...chunk.usage };
@@ -147,7 +188,17 @@ export async function callVercelSearch(
                     controller.enqueue(encoder.encode(`data: ${data}\n\n`));
                 parser.feed(`${decoder.decode()}\n\n`);
                 parser.reset({ consume: true });
-                requireUsage({ usage: lastUsage });
+                try {
+                    requireUsage({ usage: lastUsage });
+                } catch (error) {
+                    // Torn stream without terminal usage: the in-band error
+                    // frame instead of a throw that aborts mid-answer.
+                    emitUsageError(
+                        error instanceof Error
+                            ? error.message
+                            : "Vercel search ended without terminal usage",
+                    );
+                }
             },
         }),
     );
