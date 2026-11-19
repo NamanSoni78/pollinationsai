@@ -62,10 +62,10 @@ export const embeddingTools = [
                     z.string(),
                     z.array(z.string()).max(32),
                     contentPartSchema,
-                    z.array(contentPartSchema),
+                    z.array(contentPartSchema).max(32),
                 ])
                 .describe(
-                    "Text, up to 32 strings, or text/image/audio/video content parts",
+                    "Text, up to 32 strings, or up to 32 text/image/audio/video content parts",
                 ),
             model: z
                 .string()

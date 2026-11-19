@@ -183,10 +183,10 @@ const messageSchema = z.object({
             "Message role: system (set behavior), user (your input), assistant (AI response), tool (tool result)",
         ),
     content: z
-        .union([z.string(), z.array(z.any())])
+        .union([z.string(), z.array(z.any()).max(100)])
         .nullish()
         .describe(
-            "Message content. String for text, or array for multimodal (images, audio, video). May be null or omitted for assistant tool calls",
+            "Message content. String for text, or array for multimodal (images, audio, video; up to 100 parts). May be null or omitted for assistant tool calls",
         ),
     name: z
         .string()

@@ -145,9 +145,11 @@ const imageParamsSchema = {
         .describe("Image quality"),
     user: z.string().optional().describe("End-user identifier"),
     image: z
-        .union([z.string(), z.array(z.string())])
+        .union([z.string(), z.array(z.string()).max(20)])
         .optional()
-        .describe("HTTP(S) image URL or URLs to edit or use as references"),
+        .describe(
+            "HTTP(S) image URL or URLs to edit or use as references (up to 20)",
+        ),
     safe: z
         .union([z.string(), z.boolean()])
         .optional()
@@ -179,9 +181,11 @@ const videoParamsSchema = {
         .optional()
         .describe("Generate audio where the model supports it"),
     image: z
-        .union([z.string(), z.array(z.string())])
+        .union([z.string(), z.array(z.string()).max(20)])
         .optional()
-        .describe("Reference image URL or URLs for image-to-video generation"),
+        .describe(
+            "Reference image URL or URLs for image-to-video generation (up to 20)",
+        ),
     seed: z.number().int().optional().describe("Random seed"),
     safe: z
         .union([z.string(), z.boolean()])

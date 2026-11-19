@@ -66,7 +66,10 @@ export const CreateEmbeddingRequestSchema = z
                 z.string().min(1),
                 z.array(z.string().min(1)).min(1).max(MAX_EMBEDDING_BATCH_SIZE),
                 ContentPartSchema,
-                z.array(ContentPartSchema).min(1),
+                z
+                    .array(ContentPartSchema)
+                    .min(1)
+                    .max(MAX_EMBEDDING_BATCH_SIZE),
             ])
             .meta({
                 description: `Input text or content parts to embed. Supports strings, arrays of strings (max ${MAX_EMBEDDING_BATCH_SIZE} inputs), or multimodal content parts (text, image_url, input_audio, video_url). Gemini supports every listed modality; Cohere Embed v4 supports text and one image per input.`,

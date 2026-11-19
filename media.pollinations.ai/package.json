@@ -21,7 +21,7 @@
     "hono": "^4.6.0",
     "hono-openapi": "^1.2.0",
     "picscrub": "^1.2.0",
-    "zod": "4.5.4"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.4.3",
