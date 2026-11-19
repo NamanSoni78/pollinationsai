@@ -573,7 +573,7 @@ export const portkeyConfig: PortkeyConfigMap = {
     ),
     "minimax/minimax-m2.7": createPinnedOpenRouterConfig(
         "minimax/minimax-m2.7",
-        "novita/fp8",
+        "gmicloud/fp8",
     ),
     "tencent/hy3": createPinnedOpenRouterConfig("tencent/hy3", "novita"),
     "xiaomi/mimo-v2.6-flash": () =>
@@ -1117,7 +1117,7 @@ export const portkeyConfig: PortkeyConfigMap = {
     ),
     "qwen-coder-large-openrouter-streamlake": createPinnedOpenRouterConfig(
         "qwen/qwen3-coder-next",
-        "streamlake",
+        "parasail/bf16",
     ),
 
     // -- OpenRouter (Inception Labs) -----------------------------------------

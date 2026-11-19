@@ -1445,7 +1445,7 @@ describe("resolveModelConfig", () => {
         ["gemma-4-31b", "google/gemma-4-31b-it", "crusoe/bf16"],
         ["mimo-v2.5", "xiaomi/mimo-v2.5", "xiaomi/fp8"],
         ["mimo-v2.5-pro", "xiaomi/mimo-v2.5-pro", "xiaomi/fp8"],
-        ["minimax-m2.7", "minimax/minimax-m2.7", "novita/fp8"],
+        ["minimax-m2.7", "minimax/minimax-m2.7", "gmicloud/fp8"],
     ])(
         "pins %s to %s through %s without fallback",
         (model, route, provider) => {

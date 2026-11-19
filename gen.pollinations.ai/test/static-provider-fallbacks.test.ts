@@ -107,7 +107,7 @@ const OPENROUTER_ROUTES = [
     [
         "qwen/qwen3-coder-next:openrouter:streamlake",
         "qwen/qwen3-coder-next",
-        "streamlake",
+        "parasail/bf16",
     ],
 ] as const;
 

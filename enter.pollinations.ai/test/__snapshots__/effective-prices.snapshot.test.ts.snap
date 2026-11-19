@@ -2594,14 +2594,14 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "minimax/minimax-m2.7": {
     "cost": {
-      "completionTextTokens": 0.0000011394,
-      "promptCachedTokens": 0.00000005697,
-      "promptTextTokens": 0.00000028485,
+      "completionTextTokens": 0.0000008862,
+      "promptCachedTokens": 0.00000004431,
+      "promptTextTokens": 0.00000022155,
     },
     "price": {
-      "completionTextTokens": 0.0000011394,
-      "promptCachedTokens": 0.00000005697,
-      "promptTextTokens": 0.00000028485,
+      "completionTextTokens": 0.0000008862,
+      "promptCachedTokens": 0.00000004431,
+      "promptTextTokens": 0.00000022155,
     },
   },
   "minimax/minimax-m3": {
@@ -4306,14 +4306,14 @@ exports[`effective cost and price per model — snapshot 1`] = `
   },
   "qwen/qwen3-coder-next:openrouter:streamlake": {
     "cost": {
-      "completionTextTokens": 0.0000009495,
-      "promptCachedTokens": 0.00000003798,
-      "promptTextTokens": 0.0000001899,
+      "completionTextTokens": 0.000000844,
+      "promptCachedTokens": 0.00000007385,
+      "promptTextTokens": 0.0000001266,
     },
     "price": {
-      "completionTextTokens": 0.0000009495,
-      "promptCachedTokens": 0.00000003798,
-      "promptTextTokens": 0.0000001899,
+      "completionTextTokens": 0.000000844,
+      "promptCachedTokens": 0.00000007385,
+      "promptTextTokens": 0.0000001266,
     },
   },
   "qwen/qwen3-embedding-8b": {
