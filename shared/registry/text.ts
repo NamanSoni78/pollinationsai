@@ -3889,6 +3889,12 @@ const TEXT_BASE_SERVICES = {
             // https://docs.mistral.ai/inference/pricing
             promptTextTokens: perMillion(0.7),
             promptCachedTokens: perMillion(0.07),
+            // Image input bills at the text rate, the convention of every
+            // priced vision sibling on this provider (mistral-small-4,
+            // verified 2026-09-20). Split-reporting routes (the :vercel
+            // gateway fallback) put image tokens on their own usage line, so
+            // a missing rate here billed them at $0.
+            promptImageTokens: perMillion(0.7),
             completionTextTokens: perMillion(2.1),
         },
         title: "Mistral Large 4",
