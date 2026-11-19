@@ -1,3 +1,4 @@
+import { UpstreamError } from "@shared/error.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { transcribeWithElevenLabs } from "../src/routes/audio.ts";
 
@@ -207,5 +208,56 @@ describe("transcribeWithElevenLabs", () => {
             }),
         ).rejects.toMatchObject({ status: 502 });
         expect(errorLog).toHaveBeenCalledOnce();
+    });
+
+    it("preserves character-cost header billing and passes an AbortSignal when ElevenLabs returns malformed JSON", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce(
+            new Response("{truncated", {
+                status: 200,
+                headers: { "character-cost": "40" },
+            }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const caught = await transcribeWithElevenLabs({
+            modelName: "elevenlabs/scribe-v2",
+            file: new File(["audio"], "audio.mp3", { type: "audio/mpeg" }),
+            apiKey: "test-key",
+            log,
+        }).catch((err: unknown) => err);
+
+        expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(
+            AbortSignal,
+        );
+        expect(caught).toBeInstanceOf(UpstreamError);
+        expect(caught).toMatchObject({
+            status: 502,
+            billedUsage: { promptAudioSeconds: 100 },
+        });
+    });
+
+    it("preserves billedUsage when ElevenLabs omits text after returning audio_duration_secs", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValueOnce(
+                jsonResponse({
+                    audio_duration_secs: 18,
+                    language_code: "en",
+                }),
+            ),
+        );
+
+        const caught = await transcribeWithElevenLabs({
+            modelName: "elevenlabs/scribe-v2",
+            file: new File(["audio"], "audio.mp3", { type: "audio/mpeg" }),
+            apiKey: "test-key",
+            log,
+        }).catch((err: unknown) => err);
+
+        expect(caught).toBeInstanceOf(UpstreamError);
+        expect(caught).toMatchObject({
+            status: 502,
+            billedUsage: { promptAudioSeconds: 18 },
+        });
     });
 });

@@ -18,6 +18,7 @@ import {
     type RequestInputs,
     stringifyRequestInputs,
 } from "./observability/request-inputs.ts";
+import type { PricingInput } from "./registry/cost-variants.ts";
 import type { Usage } from "./registry/registry.ts";
 import { getRoutePath } from "./util.ts";
 
@@ -56,6 +57,11 @@ type UpstreamErrorOptions = {
      * xAI video rejected after generation. Tracking charges it.
      */
     billedUsage?: Usage;
+    /**
+     * Trusted provider billing receipt already charged before a post-response
+     * validation failure (e.g., Vercel AI Gateway cost). Tracking charges it.
+     */
+    providerBilling?: PricingInput["providerBilling"];
 };
 
 /** Public HTTP failure plus original provider diagnostics. Bodies are not redacted or truncated. */
@@ -68,6 +74,7 @@ export class UpstreamError extends HTTPException {
     public readonly upstreamHeaders?: UpstreamHeaders;
     public readonly errorCode?: OverrideErrorCode;
     public readonly billedUsage?: Usage;
+    public readonly providerBilling?: PricingInput["providerBilling"];
 
     constructor(status: ContentfulStatusCode, options?: UpstreamErrorOptions) {
         super(status, options);
@@ -78,6 +85,7 @@ export class UpstreamError extends HTTPException {
         this.upstreamHeaders = options?.upstreamHeaders;
         this.errorCode = options?.errorCode;
         this.billedUsage = options?.billedUsage;
+        this.providerBilling = options?.providerBilling;
     }
 
     /** Keep the provider status for diagnostics and retries; expose gateway failures as 5xx. */

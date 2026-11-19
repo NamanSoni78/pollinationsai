@@ -11,6 +11,8 @@ import {
     buildTranscriptionResponse,
 } from "../routes/transcription-response.ts";
 
+const MAI_TRANSCRIPTION_TIMEOUT_MS = 120_000;
+
 const azureTranscript = z.object({
     durationMilliseconds: z.number().positive(),
     combinedPhrases: z.array(z.object({ text: z.string() })),
@@ -106,18 +108,51 @@ export async function transcribeMai(opts: {
                       mediaType: file.type || "audio/wav",
                   })
                 : form,
+            signal: AbortSignal.timeout(MAI_TRANSCRIPTION_TIMEOUT_MS),
         }),
         url,
     );
-    const body = await response.json();
+    const body: unknown = await response.json().catch(() => null);
     const parsed = gateway
         ? gatewayTranscript.safeParse(body)
         : azureTranscript.safeParse(body);
-    if (!parsed.success)
+    if (!parsed.success) {
+        const record =
+            body && typeof body === "object"
+                ? (body as Record<string, unknown>)
+                : null;
+        const rawDuration = gateway
+            ? record?.durationInSeconds
+            : typeof record?.durationMilliseconds === "number"
+              ? record.durationMilliseconds / 1000
+              : undefined;
+        const billedUsage =
+            typeof rawDuration === "number" &&
+            Number.isFinite(rawDuration) &&
+            rawDuration > 0
+                ? createAudioSecondsUsage(rawDuration)
+                : undefined;
+        const rawGatewayCost = gateway
+            ? (
+                  (record?.providerMetadata as Record<string, unknown> | undefined)
+                      ?.gateway as Record<string, unknown> | undefined
+              )?.cost
+            : undefined;
+        const gatewayCost =
+            rawGatewayCost !== undefined && rawGatewayCost !== null
+                ? Number(rawGatewayCost)
+                : Number.NaN;
+        const providerBilling =
+            Number.isFinite(gatewayCost) && gatewayCost > 0
+                ? { units: gatewayCost, unitCost: 1 }
+                : undefined;
         throw new UpstreamError(502, {
             message:
                 "MAI transcription returned invalid text or duration metering.",
+            ...(billedUsage && { billedUsage }),
+            ...(providerBilling && { providerBilling }),
         });
+    }
     const normalized = gateway
         ? (() => {
               const data = gatewayTranscript.parse(body);
