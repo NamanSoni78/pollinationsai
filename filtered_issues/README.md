@@ -1,6 +1,6 @@
 # filtered_issues — the consolidated, verified bug registry
 
-**What this is:** the 133 raw findings in [`issues/`](../issues/) (AI-agent audit rounds 1–44, issues 1–132 plus a second #49 companion) consolidated into **13 maintainer-ready reports** — duplicates and siblings merged, related bugs chained to show their combined danger, false/overstated claims corrected or dropped, and every report carrying its end-to-end proof plus links to the fix PRs (fork PRs #1–#148).
+**What this is:** the 134 raw findings in [`issues/`](../issues/) (AI-agent audit rounds 1–45, issues 1–133 plus a second #49 companion) consolidated into **13 maintainer-ready reports** — duplicates and siblings merged, related bugs chained to show their combined danger, false/overstated claims corrected or dropped, and every report carrying its end-to-end proof plus links to the fix PRs (fork PRs #1–#149).
 
 **Why:** the raw set is too large and too mixed for review (the maintainers' own feedback). This folder is the filtered view: fewer items, higher quality, each one proven and actionable.
 
@@ -21,7 +21,7 @@
 | F-04 | [Settlement never trusts the provider's receipt (fleet revenue leak)](04-settlement-revenue-leak.md) | High | 2, 3, 25, 53, 60, 66, 72, 81, 82, 88, 90, 91, 92, 95, 96, 99, 104, 113, 120, 123, 124, 130, 131 (+126 cross) | Yes (code-verified) |
 | F-05 | [The overdraft engine: under-reservation + floorless settle](05-overdraft-engine.md) | High | 31, 32, 35, 36, 39, 64, 73, 61, 29 | Yes (no floor — code-verified) |
 | F-06 | [Registry rate-sheet integrity (vision $0, cache rates, promos, dead pins)](06-registry-rate-sheet-integrity.md) | High | 34, 37, 45, 46, 47, 49-mistral, 49-vercel, 52, 62, 70, 80, 122, 128, 129, 132 | Yes (41 unpriced split routes — recounted 2026-11-19; mistral-large-4 fixed on fork PR #148) |
-| F-07 | [Cross-tenant resource exhaustion: memory, time, rate](07-resource-exhaustion.md) | High | 12, 20, 51, 54, 55, 56, 65, 67, 68, 74, 75, 76, 79, 84, 85, 86, 87, 94, 97, 98, 100, 101, 103, 105, 108, 109, 110, 114, 115, 117, 121, 125 | Yes (standings re-probed live 2026-11-19) |
+| F-07 | [Cross-tenant resource exhaustion: memory, time, rate](07-resource-exhaustion.md) | High | 12, 20, 51, 54, 55, 56, 65, 67, 68, 74, 75, 76, 79, 84, 85, 86, 87, 94, 97, 98, 100, 101, 103, 105, 108, 109, 110, 114, 115, 117, 121, 125, 133 | Yes (standings re-probed live 2026-11-19; zod amplification measured 2026-11-20) |
 | F-08 | [The SSRF policy chain: one validator, five ways around it](08-ssrf-url-policy-chain.md) | High | 11, 14, 16, 21, 127 | Yes |
 | F-09 | [Account takeover possible, credential containment broken](09-credential-containment.md) | **Critical** | 9, 30, 38, 33, 13 | Yes (trustedProviders + FK verified) |
 | F-10 | [Money-path ledger integrity: refunds never reverse, payouts re-arm](10-money-path-integrity.md) | High | 23, 116 | Yes (both re-verified in code 2026-11-19) |
@@ -29,7 +29,7 @@
 | F-12 | [Provider errors served as success (protocol/stream integrity)](12-error-completion-stream-integrity.md) | High | 41, 42, 43, 59, 126 | Yes |
 | F-13 | [Appendix: verified low-priority fixes](13-low-priority-verified-fixes.md) | Low-Med | 28, 83, 89, 111, 112 | Yes |
 
-**133 raw findings → 13 reports** (round 43; round 44's two concurrent sessions re-verified on `4f3585e97`: every flagship still live, two new members registered — issue 131 → F-04 (fork PR #146) and issue 132 → F-06 (fork PR #148, renumbered after a same-round index collision)). Every raw issue maps to exactly one report below (cross-listed members are marked).
+**134 raw findings → 13 reports** (round 43; rounds 44–45 re-verified on `4f3585e97`: every flagship still live, three new members registered — issue 131 → F-04 (PR #146), issue 132 → F-06 (PR #148, renumbered after a same-round index collision), issue 133 → F-07 (PR #149, the zod validation-issue amplification found by the round-45 dependency-CVE sweep)). Every raw issue maps to exactly one report below (cross-listed members are marked).
 
 ## Full mapping (issue → report)
 
@@ -70,6 +70,7 @@
 | 33 | F-09 | | 65 | F-07 | | 99 | F-04 | | | |
 | 34 | F-06 | | 66 | F-04 | | 100 | F-07 | | | |
 | | | | | | | | | 131 | F-04 |
+| | | | | | | | | 133 | F-07 |
 
 ## Corrections & exclusions applied (the false-positive filter)
 
@@ -81,7 +82,7 @@
 
 ## Fix-PR index (fork `NamanSoni78/pollinationsai`)
 
-- **All 133 issues have fix PRs except issue 63** (excluded, no PR). PR numbers are offset from issue numbers (see each report's member table for the exact mapping; also `WORKLOG.md` rounds 1–44).
+- **All 134 issues have fix PRs except issue 63** (excluded, no PR). PR numbers are offset from issue numbers (see each report's member table for the exact mapping; also `WORKLOG.md` rounds 1–45).
 - **Merged on the fork (2026-11-17):** PRs **#2, #3, #4, #5, #6** (issues 2–6) — later superseded on fork/main by the standard re-sync to upstream; the PR diffs remain the review surface. (#7–#9 merged unrelated work branches.)
 - **Withdrawn as documented duplicates:** #20 (superseded by #21), #29 (superseded by #26 — issue 22's cap family), #112 (superseded by #107), #124 (superseded by #122).
 - **Orphan PR (no issue md):** #60 — `fix(bots): gate Telegram group members by cooldown…` (solution52-telegram-spend-gate). Thematically adjacent to F-02's bot-spend family; listed here so it is not lost.

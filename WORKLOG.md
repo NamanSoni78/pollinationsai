@@ -1568,3 +1568,31 @@ No code changes, no new branches; upstream untouched. Live-probe spend this roun
 | Full-registry unpriced/zero/absurd-rate scan (421 models) | every zero-cost entry deliberate (stealth/free/receipt-billed); input-side conventions verified across transcription/embeddings/realtime/video |
 
 Live-probe spend this round: **0 pollen** (offline red/green only). Upstream PR creation re-verified **403** (`Resource not accessible by personal access token`) — fork PR #148 is the review surface.
+
+## Round 45 — session 41 (cron 536163, task AutonomousAuditWorkflow): dependency-CVE sweep (issue 133 — zod validation-issue amplification) + in-flight branch recon (2026-11-20)
+
+**Sync:** upstream `main` unchanged at `4f3585e97` (0 fresh commits — only the `codex/playground-record-audio` feature branch moved); `fork/main` verified 0/0; `issues_mds` at round 44's head `89e47bfc` with no concurrent pushes. Fresh-work focus: the one audit dimension never run in rounds 1–44 — a **dependency-vulnerability sweep** of every production workspace — plus reconnaissance of the moving feature branch.
+
+**Method:** 2 parallel subagents (45-A dependency CVE sweep with reachability gating; 45-B codex-branch recon) + main-agent personal verification (OSV advisory pull, standalone `--expose-gc` measurements on the exact pinned zods, red/green on the real schemas). Live probes $0.
+
+### Verified & Delivered Issues (1 new — Issue 133)
+
+| # | Severity | Issue | Fix Branch | Fork PR | Verification (Offline, $0 Live) |
+|---|---|---|---|---|---|
+| 133 | High | **zod GHSA-mrhx-c7xc-m3w5** (HIGH, CWE-770, fixed 4.6.6): pinned 4.5.4 (root workspace) / 4.4.3 (packages/mcp, exa/ffmpeg-mcp) / 4.6.5 (ask-jev) materialize one ~1 KB issue per failing array element — an anonymous 1.53 MiB body of 100k invalid messages allocates +215 MiB (4.5.4, **141×**) / +341 MiB (4.4.3, **223×**) inside the shared gen isolate **before auth/billing middleware**, within every shipped body cap (byte caps don't bound issue count); same mechanism garbage-bearer reachable on the MCP workers. Fix = bump to 4.6.6+ **and** cap the user-facing arrays (measured: each part alone insufficient — 4.5.4 + violated `.max()` still accumulates 200,001 issues; 4.6.6 unconstrained still +171 MiB) | `solution133-zod-issue-amplification` (`996ba6e70`, off `4f3585e97`) | [#149](https://github.com/NamanSoni78/pollinationsai/pull/149) | RED on unpatched main (5 failed / 2 passed: version pin; both message-array cases 100k issues; cap controls) → GREEN **7/7** (`test/text/validation-issue-caps.test.ts`); affected gen suites **96/96**; gen `tsc` clean; media **81/81** + tsc 1 pre-existing only; packages/mcp **54/54** (incl. 5 new cap tests); ffmpeg 14/14; exa green; ask-jev syntax OK; enter tsc = same 2 pre-existing `accountPermissions` errors as main (side-by-side verified); all 5 lockfile diffs zod-only |
+
+### Subagent verdicts
+
+- **45-A (dependency CVE sweep — the never-run dimension):** ~120 direct runtime deps across all production workspaces inventoried, pinned versions read from 30+ lockfiles, every runtime dep queried against OSV/npm-audit with reverse-dependency chains traced to call sites. **1 gate-passing finding → issue 133.** Everything else rejected with evidence: better-auth CRIT/HIGH ×4 (magic-link/OAuth-proxy/device-flow plugins not enabled), seroval 7×CRIT (SSR serializer never invoked in the vite SPAs), hono 3×HIGH (no hono/jwt — jose direct; no credentials-reflect CORS; no serveStatic), undici TLS/cache HIGH (preconditions absent), kysely/mcp-sdk/axios/fast-xml chains (unreachable or dev-time); 22 of 27 root npm-audit hits are build/dev-only. **Recommended follow-ups recorded:** `@modelcontextprotocol/server` 2.0.0 → ≥2.3.0 (GHSA-f897/46jr, the upstream complement to issues 85/94), lockfiles for the 4 apps without them, root `wrangler` → devDependencies.
+- **45-B (codex/playground-record-audio recon):** 62 commits / 54 files ahead of main — a **client-side playground feature** (mic recording → WAV, audio-reference uploads, stem-separation UI, Connect draft persistence). No new server endpoints, no auth changes, no worker code. Family sweep clean: fetch deadline present, client-side byte caps on all upload paths, no user-supplied URL fetching, no new secrets. One below-gate watch item (recorded audio persists in IndexedDB 30 min across the login redirect — session-keyed, auto-swept). **Verdict: nothing to file; standing day-one diff check at merge time.**
+- **Standalone measurements (main agent):** the amplification table above, reproduced on the repo's exact pins (4.4.3: 223×, 4.5.4: 141×, 4.6.6+cap: 1 issue/+0.1 MiB) — the 4.5.4 `.max()`-no-help and 4.6.6-unconstrained-still-accumulates rows are what force the two-part fix.
+
+### Surfaces reviewed this round — controls held (no new issue accepted)
+
+| Surface | Evidence |
+|---|---|
+| All runtime deps of enter/gen/media/shared/packages/*+53 apps (~120 packages, 413-package prod closure) | OSV/npm-audit + call-site reachability; every advisory either unreachable, dev-time, below severity, or issue 133 |
+| better-auth / @better-auth/oauth-provider / hono / undici / seroval / kysely / @aws-sdk / @modelcontextprotocol / axios chains | plugin/config/adapter inventories read; preconditions for every HIGH verified absent (full table in the PR description) |
+| codex/playground-record-audio (62 commits, in flight) | UI/SDK-only atop already-authenticated, rate-limited, priced server endpoints; family sweep clean |
+
+Live-probe spend this round: **0 pollen** (offline measurements + red/green only). Upstream PR creation re-verified **403** — fork PR #149 is the review surface.
