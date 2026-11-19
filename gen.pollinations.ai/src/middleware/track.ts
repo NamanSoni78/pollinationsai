@@ -792,10 +792,19 @@ export async function trackResponse(
     }
     if (!response.ok) {
         // A failure is billed only when the provider charged for it, which the
-        // handler reports on the error (an xAI video rejected after generation).
+        // handler reports on the error (an xAI video rejected after generation,
+        // or a paid generation whose receipt survived the failure).
         const usage =
             error instanceof UpstreamError ? error.billedUsage : undefined;
-        if (!usage || isImplausibleProxyUsage(eventType, candidate, usage)) {
+        const billedProviderBilling =
+            error instanceof UpstreamError
+                ? error.billedProviderBilling
+                : undefined;
+        if (
+            (!usage && !billedProviderBilling) ||
+            (usage !== undefined &&
+                isImplausibleProxyUsage(eventType, candidate, usage))
+        ) {
             return notBilled({
                 modelUsed,
                 ...trackJsonErrorUsage(
@@ -807,6 +816,10 @@ export async function trackResponse(
                 ),
             });
         }
+        // Provider receipts (e.g. Replicate GPU seconds, fal billable units)
+        // settle units x unitCost through the same pricing-input override the
+        // success path uses; token usage stays empty when only the receipt
+        // proves the charge.
         return {
             responseStatus: response.status,
             cacheHit,
@@ -814,15 +827,17 @@ export async function trackResponse(
             fallbackUsed,
             ...calculateUsageBilling({
                 model: resolvedModelRequested,
-                usage,
+                usage: usage ?? {},
                 servedBy:
                     candidate.definition ?? requestTracking.modelDefinition,
                 quotedBy,
-                input: pricingInput,
+                input: billedProviderBilling
+                    ? { ...pricingInput, providerBilling: billedProviderBilling }
+                    : pricingInput,
             }),
             modelUsed,
             modelProviderUsed,
-            usage,
+            usage: usage ?? {},
         };
     }
 
