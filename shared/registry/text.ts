@@ -4060,9 +4060,14 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // Alibaba Model Studio Singapore rates.
+            // Alibaba Model Studio Singapore rates. Explicit context-cache
+            // writes bill at 125% of the input rate — the same sibling
+            // convention as qwen3.8-max (2 -> 2.5), qwen4-max (1.5 -> 1.875)
+            // and qwen3.7-flash (0.1 -> 0.125); hits bill at the per-model
+            // published rate.
             promptTextTokens: perMillion(2),
             promptCachedTokens: perMillion(0.25),
+            promptCacheWriteTokens: perMillion(2.5),
             completionTextTokens: perMillion(6),
         },
         cacheVersion: "2026-11-12-a95b-checkpoint",
