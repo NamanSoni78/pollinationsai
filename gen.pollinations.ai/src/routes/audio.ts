@@ -240,6 +240,13 @@ type GenerateMusicOptions = {
 
 const MAX_REFERENCE_AUDIO_SIZE = 20 * 1024 * 1024;
 const REFERENCE_AUDIO_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Upstream deadline for the remaining first-party transcription fetches
+ * (Vertex, OpenRouter STT, whisper OVH/DeepInfra) — the same 120 s the
+ * Azure/xAI/Scribe/MAI fleet applies; a silent model server must not pin
+ * the request past the platform's own patience.
+ */
+const TRANSCRIPTION_FETCH_TIMEOUT_MS = 120_000;
 
 const AUDIO_EXTENSION_BY_TYPE: Record<string, string> = {
     "audio/aac": "aac",
@@ -1209,6 +1216,7 @@ export async function transcribeWithVertexGemini(opts: {
     const endpoint = `https://aiplatform.googleapis.com/v1beta1/projects/${projectId}/locations/global/publishers/google/models/gemini-3.5-transcribe-preview:generateContent`;
     const response = await ensureUpstreamOk(
         await fetch(endpoint, {
+            signal: AbortSignal.timeout(TRANSCRIPTION_FETCH_TIMEOUT_MS),
             method: "POST",
             headers: {
                 Authorization: `Bearer ${accessToken}`,
@@ -1267,9 +1275,34 @@ export async function transcribeWithVertexGemini(opts: {
         textTokens < 0 ||
         usage?.promptTokenCount !== audioTokens + textTokens
     ) {
+        // Google already transcribed and billed the input: settle the token
+        // receipt whenever the numbers are usable, even when the transcript
+        // body itself failed validation.
+        const billed = {
+            promptAudioTokens:
+                typeof audioTokens === "number" &&
+                Number.isFinite(audioTokens) &&
+                audioTokens > 0
+                    ? audioTokens
+                    : 0,
+            promptTextTokens: textTokens > 0 ? textTokens : 0,
+            completionTextTokens:
+                typeof outputTokens === "number" &&
+                Number.isFinite(outputTokens) &&
+                outputTokens > 0
+                    ? outputTokens
+                    : 0,
+        };
+        const billedUsage =
+            billed.promptAudioTokens ||
+            billed.promptTextTokens ||
+            billed.completionTextTokens
+                ? billed
+                : undefined;
         throw new UpstreamError(502, {
             message:
                 "Vertex transcription response did not include valid token usage.",
+            ...(billedUsage ? { billedUsage } : {}),
         });
     }
     const turns = parts.flatMap((part) =>
@@ -1376,6 +1409,7 @@ export async function transcribeWithOpenRouterGemini(opts: {
 
     const response = await ensureUpstreamOk(
         await fetch(OPENROUTER_STT_ENDPOINT, {
+            signal: AbortSignal.timeout(TRANSCRIPTION_FETCH_TIMEOUT_MS),
             method: "POST",
             headers: {
                 Authorization: `Bearer ${apiKey}`,
@@ -1399,9 +1433,31 @@ export async function transcribeWithOpenRouterGemini(opts: {
         !Number.isInteger(outputTokens) ||
         outputTokens < 0
     ) {
+        // OpenRouter already transcribed and billed the input: settle the
+        // token receipt whenever the numbers are usable, even when the
+        // transcript body itself failed validation.
+        const billed = {
+            promptAudioTokens:
+                typeof inputTokens === "number" &&
+                Number.isInteger(inputTokens) &&
+                inputTokens > 0
+                    ? inputTokens
+                    : 0,
+            completionTextTokens:
+                typeof outputTokens === "number" &&
+                Number.isInteger(outputTokens) &&
+                outputTokens > 0
+                    ? outputTokens
+                    : 0,
+        };
+        const billedUsage =
+            billed.promptAudioTokens || billed.completionTextTokens
+                ? billed
+                : undefined;
         throw new UpstreamError(502 as ContentfulStatusCode, {
             message:
                 "OpenRouter transcription response did not include valid token usage.",
+            ...(billedUsage ? { billedUsage } : {}),
         });
     }
 
@@ -4437,6 +4493,7 @@ export async function handleTranscription(c: AudioContext): Promise<Response> {
             : "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/audio/transcriptions";
         const response = await ensureUpstreamOk(
             await fetch(whisperUrl, {
+                signal: AbortSignal.timeout(TRANSCRIPTION_FETCH_TIMEOUT_MS),
                 method: "POST",
                 headers: { Authorization: `Bearer ${providerApiKey}` },
                 body: whisperFormData,

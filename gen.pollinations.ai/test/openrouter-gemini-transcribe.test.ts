@@ -410,3 +410,111 @@ describe("transcribeWithVertexGemini", () => {
         }
     });
 });
+
+describe("transcription post-paid settlement residuals (issue 123 family)", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.clearAllMocks();
+    });
+
+    async function rejectionOf(promise: Promise<unknown>) {
+        try {
+            await promise;
+        } catch (error) {
+            return error as {
+                status: number;
+                billedUsage?: Record<string, number>;
+            };
+        }
+        throw new Error("expected the call to reject");
+    }
+
+    const vertexUsageMetadata = {
+        promptTokenCount: 91,
+        candidatesTokenCount: 4,
+        promptTokensDetails: [
+            { modality: "AUDIO", tokenCount: 75 },
+            { modality: "TEXT", tokenCount: 16 },
+        ],
+    };
+    const invokeVertex = () =>
+        transcribeWithVertexGemini({
+            file: new File(["audio"], "audio.wav", { type: "audio/wav" }),
+            language: "en",
+            responseFormat: "diarized_json",
+            projectId: "test-project",
+            accessToken: "test-token",
+        });
+
+    it("OpenRouter STT settles the token receipt when the transcript body fails validation", async () => {
+        // Valid usage receipt, but no text: on unpatched main this 502
+        // settles $0 after OpenRouter already billed the input.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValueOnce(
+                Response.json({
+                    usage: { input_tokens: 570, output_tokens: 90 },
+                }),
+            ),
+        );
+        const error = await rejectionOf(transcribe({}));
+        expect(error.status).toBe(502);
+        expect(error.billedUsage).toMatchObject({
+            promptAudioTokens: 570,
+            completionTextTokens: 90,
+        });
+    });
+
+    it("OpenRouter STT settles the output receipt when only the input receipt is missing", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValueOnce(
+                Response.json({ text: "hi", usage: { output_tokens: 90 } }),
+            ),
+        );
+        const error = await rejectionOf(transcribe({}));
+        expect(error.status).toBe(502);
+        expect(error.billedUsage).toMatchObject({
+            promptAudioTokens: 0,
+            completionTextTokens: 90,
+        });
+    });
+
+    it("OpenRouter STT passes an upstream deadline to the fetch", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(Response.json({ text: "hi", usage: {} }));
+        vi.stubGlobal("fetch", fetchMock);
+        await rejectionOf(transcribe({}));
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("Vertex settles the token receipt when the transcript body fails validation", async () => {
+        // Valid token usage, but no candidates parts: on unpatched main this
+        // 502 settles $0 after Google already transcribed the input.
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValueOnce(
+                Response.json({ usageMetadata: vertexUsageMetadata }),
+            ),
+        );
+        const error = await rejectionOf(invokeVertex());
+        expect(error.status).toBe(502);
+        expect(error.billedUsage).toMatchObject({
+            promptAudioTokens: 75,
+            promptTextTokens: 16,
+            completionTextTokens: 4,
+        });
+    });
+
+    it("Vertex passes an upstream deadline to the fetch", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(Response.json({}));
+        vi.stubGlobal("fetch", fetchMock);
+        await rejectionOf(invokeVertex());
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+});
