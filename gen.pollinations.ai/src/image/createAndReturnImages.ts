@@ -1,4 +1,9 @@
-import { ensureUpstreamOk, UpstreamError } from "@shared/error.ts";
+import {
+    ensureUpstreamOk,
+    UpstreamError,
+    withProviderBilling,
+    type ProviderBillingReceipt,
+} from "@shared/error.ts";
 import { detectImageMimeType } from "@shared/image-mime.ts";
 import { HOTSHOT_XL_MODEL } from "@shared/registry/image.ts";
 import debug from "debug";
@@ -558,18 +563,30 @@ async function callFalGPTImage(
         },
     );
     const units = falBillableUnits(response);
-    const result = (await response.json()) as {
-        images?: { url?: string; content_type?: string }[];
-    };
-    const image = result.images?.[0];
-    if (!image?.url) {
-        throw UpstreamError.fromProvider(502, {
-            message: "Fal GPT Image returned no image",
-        });
+    // fal has charged the request once the billable-units receipt is
+    // readable; every downstream failure (unparseable body, missing image,
+    // failed artifact download/decode) must still settle from it.
+    const falReceipt: ProviderBillingReceipt = { units, unitCost: 1 };
+    let buffer: Buffer;
+    let image: { url?: string; content_type?: string } | undefined;
+    try {
+        const result = (await response.json()) as {
+            images?: { url?: string; content_type?: string }[];
+        };
+        image = result.images?.[0];
+        if (!image?.url) {
+            throw UpstreamError.fromProvider(502, {
+                message: "Fal GPT Image returned no image",
+            });
+        }
+        buffer = image.url.startsWith("data:")
+            ? base64ToBuffer(image.url)
+            : Buffer.from(
+                  await (await fetchUpstream(image.url)).arrayBuffer(),
+              );
+    } catch (error) {
+        throw withProviderBilling(error, falReceipt);
     }
-    const buffer = image.url.startsWith("data:")
-        ? base64ToBuffer(image.url)
-        : Buffer.from(await (await fetchUpstream(image.url)).arrayBuffer());
     return {
         buffer,
         mimeType: image.content_type ?? `image/${request.output_format}`,

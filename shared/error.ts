@@ -56,6 +56,20 @@ type UpstreamErrorOptions = {
      * xAI video rejected after generation. Tracking charges it.
      */
     billedUsage?: Usage;
+    /**
+     * Trusted provider receipt for a failed-but-charged generation, such as a
+     * SUCCEEDED Replicate run whose artifact download failed, or a fal 200
+     * whose billable-units header was read before the body failed to parse.
+     * Settles units x unitCost independent of token usage, for models whose
+     * price lives in a providerBilling-keyed billing adjustment.
+     */
+    billedProviderBilling?: ProviderBillingReceipt;
+};
+
+/** A trusted provider receipt: billable units and the per-unit provider cost. */
+export type ProviderBillingReceipt = {
+    units: number;
+    unitCost: number;
 };
 
 /** Public HTTP failure plus original provider diagnostics. Bodies are not redacted or truncated. */
@@ -68,6 +82,7 @@ export class UpstreamError extends HTTPException {
     public readonly upstreamHeaders?: UpstreamHeaders;
     public readonly errorCode?: OverrideErrorCode;
     public readonly billedUsage?: Usage;
+    public readonly billedProviderBilling?: ProviderBillingReceipt;
 
     constructor(status: ContentfulStatusCode, options?: UpstreamErrorOptions) {
         super(status, options);
@@ -78,6 +93,7 @@ export class UpstreamError extends HTTPException {
         this.upstreamHeaders = options?.upstreamHeaders;
         this.errorCode = options?.errorCode;
         this.billedUsage = options?.billedUsage;
+        this.billedProviderBilling = options?.billedProviderBilling;
     }
 
     /** Keep the provider status for diagnostics and retries; expose gateway failures as 5xx. */
@@ -87,6 +103,48 @@ export class UpstreamError extends HTTPException {
             upstreamStatus: status,
         });
     }
+}
+
+/**
+ * Attach a trusted provider receipt to a post-paid failure. A generation whose
+ * paid event already happened (a SUCCEEDED Replicate run, a fal 200 with a
+ * readable billable-units header) must settle even when the response never
+ * completes — pass the receipt from that point on and rethrow through here.
+ * Prediction-phase failures (receipt undefined) pass through untouched: the
+ * provider charged nothing. Raw non-UpstreamError throws (torn body reads,
+ * JSON parse failures) are wrapped as 502s carrying the receipt, because the
+ * platform still owes the provider for the completed run.
+ */
+export function withProviderBilling(
+    error: unknown,
+    receipt: ProviderBillingReceipt | undefined,
+): unknown {
+    if (!receipt) {
+        return error;
+    }
+    if (error instanceof UpstreamError) {
+        if (error.billedProviderBilling || error.billedUsage) {
+            return error;
+        }
+        return new UpstreamError(error.status, {
+            message: error.message,
+            cause: error,
+            requestUrl: error.requestUrl,
+            requestBody: error.requestBody,
+            upstreamStatus: error.upstreamStatus,
+            responseBody: error.responseBody,
+            upstreamHeaders: error.upstreamHeaders,
+            errorCode: error.errorCode,
+            billedProviderBilling: receipt,
+        });
+    }
+    return UpstreamError.fromProvider(502, {
+        message: `Paid generation output read failed: ${
+            error instanceof Error ? error.message : String(error)
+        }`,
+        cause: error,
+        billedProviderBilling: receipt,
+    });
 }
 
 const REDACTED_HEADER_VALUE = "[redacted]";
