@@ -26,6 +26,7 @@ import { generateImageOrVideoResponse } from "@/image/handler.ts";
 import { normalizedJsonBody } from "@/middleware/generation-cache.ts";
 import { applySafetyToInput, withSafetyHeaders } from "@/middleware/safety.ts";
 import { IMAGE_DIMENSIONS_HEADER } from "@/schemas/image.ts";
+import { MAX_IMAGE_SIZE } from "@/userImage.ts";
 import { arrayBufferToBase64 } from "@/util.ts";
 
 // --- Helpers ---
@@ -142,6 +143,12 @@ function collectPassthrough(
     return result;
 }
 
+/**
+ * Cap multipart file count/bytes the way the chat path caps image URLs
+ * (imageUrlToBase64Transform: maxImages + one 20 MiB cumulative budget).
+ */
+const MAX_EDIT_IMAGE_FILES = 8;
+
 /** Parse edits input from multipart or JSON. */
 async function parseEditInput(c: Context): Promise<{
     prompt: string;
@@ -171,13 +178,35 @@ async function parseEditInput(c: Context): Promise<{
             });
 
         const imageUrls: string[] = [];
-        for (const entry of [
+        const files = [
             ...formData.getAll("image"),
             ...formData.getAll("image[]"),
-        ]) {
+        ];
+        // The multipart body is fully buffered by the time this runs, so
+        // these caps gate the copies below: an unbounded file count or an
+        // oversized file would otherwise buffer file + base64 + data-URI
+        // copies of every source before the first downstream size check.
+        if (files.length > MAX_EDIT_IMAGE_FILES) {
+            throw new UpstreamError(400, {
+                message: `Too many image files in request (max ${MAX_EDIT_IMAGE_FILES}).`,
+            });
+        }
+        let totalFileBytes = 0;
+        for (const entry of files) {
             if (typeof entry === "string") {
                 imageUrls.push(entry);
             } else if (entry instanceof File) {
+                if (entry.size > MAX_IMAGE_SIZE) {
+                    throw new UpstreamError(413, {
+                        message: `Image file exceeds the per-file limit (${MAX_IMAGE_SIZE} bytes).`,
+                    });
+                }
+                totalFileBytes += entry.size;
+                if (totalFileBytes > MAX_IMAGE_SIZE) {
+                    throw new UpstreamError(413, {
+                        message: `Too many media bytes in request (max ${MAX_IMAGE_SIZE} bytes).`,
+                    });
+                }
                 const base64 = arrayBufferToBase64(await entry.arrayBuffer());
                 imageUrls.push(
                     `data:${entry.type || "image/png"};base64,${base64}`,
