@@ -6,7 +6,11 @@ const BLOCKED_HOSTNAMES = /^localhost$/i;
 
 function isBlockedUserMediaHost(hostname: string): boolean {
     const host = hostname.replace(/^\[|\]$/g, "");
-    const normalized = host.toLowerCase();
+    // Absolute names keep their trailing root dot ("localhost."), so strip it
+    // before matching — mirroring the community validator — or the blocked
+    // loopback names bypass their own rules. RFC 6761 §6.3: resolvers answer
+    // the absolute form "localhost." with 127.0.0.1.
+    const normalized = host.toLowerCase().replace(/\.$/, "");
     if (
         BLOCKED_HOSTNAMES.test(normalized) ||
         normalized.endsWith(".localhost")
