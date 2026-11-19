@@ -1,6 +1,6 @@
 # filtered_issues — the consolidated, verified bug registry
 
-**What this is:** the 131 raw findings in [`issues/`](../issues/) (AI-agent audit rounds 1–42, issues 1–130 plus a second #49 companion) consolidated into **13 maintainer-ready reports** — duplicates and siblings merged, related bugs chained to show their combined danger, false/overstated claims corrected or dropped, and every report carrying its end-to-end proof plus links to the fix PRs (fork PRs #1–#145).
+**What this is:** the 133 raw findings in [`issues/`](../issues/) (AI-agent audit rounds 1–44, issues 1–132 plus a second #49 companion) consolidated into **13 maintainer-ready reports** — duplicates and siblings merged, related bugs chained to show their combined danger, false/overstated claims corrected or dropped, and every report carrying its end-to-end proof plus links to the fix PRs (fork PRs #1–#148).
 
 **Why:** the raw set is too large and too mixed for review (the maintainers' own feedback). This folder is the filtered view: fewer items, higher quality, each one proven and actionable.
 
@@ -18,9 +18,9 @@
 | F-01 | [Generation cache is public, identity-blind, permanent — and poisonable](01-generation-cache-public-content.md) | **Critical** | 1, 40, 71, 15 | **Yes — re-proven live 2026-11-19** |
 | F-02 | [Platform-key spend abuse: MCP apps + Discord bots](02-mcp-platform-key-abuse.md) | **Critical** | 58, 17, 7, 6, 5, 118, 119, 18, 27 | Yes (code-verified) |
 | F-03 | [Community-publisher attack chain](03-community-publisher-attack-chain.md) | **Critical** | 10, 26, 44, 22, 77, 93, 106, 107, 8, 48, 57, 78 (+4 subsumed) | Yes (clamp + disclosure verified) |
-| F-04 | [Settlement never trusts the provider's receipt (fleet revenue leak)](04-settlement-revenue-leak.md) | High | 2, 3, 25, 53, 60, 66, 72, 81, 82, 88, 90, 91, 92, 95, 96, 99, 104, 113, 120, 123, 124, 130 (+126 cross) | Yes (code-verified) |
+| F-04 | [Settlement never trusts the provider's receipt (fleet revenue leak)](04-settlement-revenue-leak.md) | High | 2, 3, 25, 53, 60, 66, 72, 81, 82, 88, 90, 91, 92, 95, 96, 99, 104, 113, 120, 123, 124, 130, 131 (+126 cross) | Yes (code-verified) |
 | F-05 | [The overdraft engine: under-reservation + floorless settle](05-overdraft-engine.md) | High | 31, 32, 35, 36, 39, 64, 73, 61, 29 | Yes (no floor — code-verified) |
-| F-06 | [Registry rate-sheet integrity (vision $0, cache rates, promos, dead pins)](06-registry-rate-sheet-integrity.md) | High | 34, 37, 45, 46, 47, 49-mistral, 49-vercel, 52, 62, 70, 80, 122, 128, 129 | Yes (18+ routes still unpriced — re-scanned 2026-11-19) |
+| F-06 | [Registry rate-sheet integrity (vision $0, cache rates, promos, dead pins)](06-registry-rate-sheet-integrity.md) | High | 34, 37, 45, 46, 47, 49-mistral, 49-vercel, 52, 62, 70, 80, 122, 128, 129, 132 | Yes (41 unpriced split routes — recounted 2026-11-19; mistral-large-4 fixed on fork PR #148) |
 | F-07 | [Cross-tenant resource exhaustion: memory, time, rate](07-resource-exhaustion.md) | High | 12, 20, 51, 54, 55, 56, 65, 67, 68, 74, 75, 76, 79, 84, 85, 86, 87, 94, 97, 98, 100, 101, 103, 105, 108, 109, 110, 114, 115, 117, 121, 125 | Yes (standings re-probed live 2026-11-19) |
 | F-08 | [The SSRF policy chain: one validator, five ways around it](08-ssrf-url-policy-chain.md) | High | 11, 14, 16, 21, 127 | Yes |
 | F-09 | [Account takeover possible, credential containment broken](09-credential-containment.md) | **Critical** | 9, 30, 38, 33, 13 | Yes (trustedProviders + FK verified) |
@@ -29,7 +29,7 @@
 | F-12 | [Provider errors served as success (protocol/stream integrity)](12-error-completion-stream-integrity.md) | High | 41, 42, 43, 59, 126 | Yes |
 | F-13 | [Appendix: verified low-priority fixes](13-low-priority-verified-fixes.md) | Low-Med | 28, 83, 89, 111, 112 | Yes |
 
-**131 → 13.** Every raw issue maps to exactly one report below (cross-listed members are marked).
+**133 raw findings → 13 reports** (round 43; round 44's two concurrent sessions re-verified on `4f3585e97`: every flagship still live, two new members registered — issue 131 → F-04 (fork PR #146) and issue 132 → F-06 (fork PR #148, renumbered after a same-round index collision)). Every raw issue maps to exactly one report below (cross-listed members are marked).
 
 ## Full mapping (issue → report)
 
@@ -66,9 +66,10 @@
 | 29 | F-05 | | 61 | F-05 | | 95 | F-04 | | 128 | F-06 |
 | 30 | F-09 | | 62 | F-06 | | 96 | F-04 | | 129 | F-06 |
 | 31 | F-05 | | 63 | **excluded** (see below) | | 97 | F-07 | | 130 | F-04 |
-| 32 | F-05 | | 64 | F-05 | | 98 | F-07 | | | |
+| 32 | F-05 | | 64 | F-05 | | 98 | F-07 | | 132 | F-06 |
 | 33 | F-09 | | 65 | F-07 | | 99 | F-04 | | | |
 | 34 | F-06 | | 66 | F-04 | | 100 | F-07 | | | |
+| | | | | | | | | 131 | F-04 |
 
 ## Corrections & exclusions applied (the false-positive filter)
 
@@ -80,7 +81,7 @@
 
 ## Fix-PR index (fork `NamanSoni78/pollinationsai`)
 
-- **All 131 issues have fix PRs except issue 63** (excluded, no PR). PR numbers are offset from issue numbers (see each report's member table for the exact mapping; also `WORKLOG.md` rounds 1–42).
+- **All 133 issues have fix PRs except issue 63** (excluded, no PR). PR numbers are offset from issue numbers (see each report's member table for the exact mapping; also `WORKLOG.md` rounds 1–44).
 - **Merged on the fork (2026-11-17):** PRs **#2, #3, #4, #5, #6** (issues 2–6) — later superseded on fork/main by the standard re-sync to upstream; the PR diffs remain the review surface. (#7–#9 merged unrelated work branches.)
 - **Withdrawn as documented duplicates:** #20 (superseded by #21), #29 (superseded by #26 — issue 22's cap family), #112 (superseded by #107), #124 (superseded by #122).
 - **Orphan PR (no issue md):** #60 — `fix(bots): gate Telegram group members by cooldown…` (solution52-telegram-spend-gate). Thematically adjacent to F-02's bot-spend family; listed here so it is not lost.
@@ -93,4 +94,4 @@
 3. **F-02** (free RCE under the platform key — PRs #67/#21)
 4. **F-03** (community chain — PRs #13/#30 first)
 5. **F-04** (revenue leak — PR #108 first, then the sweeps)
-6. Time-critical singles inside the families: **F-06's PR #143** (flux-3-max promo doubles 2026-11-21) and **PR #144** (minimax-m2.7 hard outage), **F-07's PR #117** (standings D1 scan).
+6. Time-critical singles inside the families: **PR #144** (minimax-m2.7 hard outage) and **F-07's PR #117** (standings D1 scan); **F-06's PR #143** (flux-3-max stale quote rates — settlement is receipt-protected per the round-44 correction, so this is now accuracy, not revenue).
