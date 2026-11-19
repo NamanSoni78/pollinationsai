@@ -749,3 +749,112 @@ test("bills FFmpeg MCP usage when authorized with an ag_ run token", async () =>
         packBalance: 0,
     });
 });
+
+test.for(["composio", "computer"])(
+    "refuses website-authorized BYOP keys on user-scoped %s while allowing local loopback keys",
+    async (serverId) => {
+        const websiteKey = await createTestApiKey({
+            user: { tierBalance: 1, githubId: 583231, githubUsername: "octocat" },
+            metadata: { redirectOrigin: "https://third-party-app.example" },
+        });
+        const refused = await SELF.fetch(
+            `https://gen.pollinations.ai/mcp/${serverId}`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${websiteKey.key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(MCP_REQUEST),
+            },
+        );
+        expect(refused.status).toBe(403);
+        expect(
+            await getUserBalance(drizzle(env.DB), websiteKey.userId),
+        ).toEqual({
+            tierBalance: 1,
+            packBalance: 0,
+        });
+
+        const loopbackKey = await createTestApiKey({
+            user: { tierBalance: 1 },
+            metadata: { redirectOrigin: "http://127.0.0.1:43123" },
+        });
+        const allowed = await SELF.fetch(
+            `https://gen.pollinations.ai/mcp/${serverId}`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${loopbackKey.key}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(MCP_REQUEST),
+            },
+        );
+        expect(allowed.status).toBe(200);
+    },
+);
+
+test.for(["composio", "computer", "exa", "ffmpeg"])(
+    "refuses model-restricted API keys on user-scoped and receipt-billed %s",
+    async (serverId) => {
+        for (const allowedModels of [[], ["openai/gpt-5-nano"]]) {
+            const { key, userId } = await createTestApiKey({
+                user: { tierBalance: 1 },
+                allowedModels,
+            });
+            const response = await SELF.fetch(
+                `https://gen.pollinations.ai/mcp/${serverId}`,
+                {
+                    method: "POST",
+                    headers: {
+                        Authorization: `Bearer ${key}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(MCP_REQUEST),
+                },
+            );
+            expect(response.status).toBe(403);
+            expect(await getUserBalance(drizzle(env.DB), userId)).toEqual({
+                tierBalance: 1,
+                packBalance: 0,
+            });
+        }
+    },
+);
+
+test("allows agent run tokens from a model-scoped key to call permitted MCP tools", async () => {
+    const parent = await createTestApiKey({
+        user: { tierBalance: 1 },
+        allowedModels: ["openai/gpt-5-nano"],
+    });
+    const token = await signAgentRunToken({
+        secret: env.BETTER_AUTH_SECRET,
+        parentApiKeyId: parent.id,
+        parentRequestId: crypto.randomUUID(),
+        agentModelId: "community/owner/agent-one",
+    });
+
+    const computer = await SELF.fetch(
+        "https://gen.pollinations.ai/mcp/computer",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(MCP_REQUEST),
+        },
+    );
+    expect(computer.status).toBe(200);
+
+    const ffmpeg = await SELF.fetch("https://gen.pollinations.ai/mcp/ffmpeg", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(MCP_REQUEST),
+    });
+    expect(ffmpeg.status).toBe(200);
+});

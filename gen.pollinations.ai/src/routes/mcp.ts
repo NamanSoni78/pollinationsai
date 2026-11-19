@@ -1,5 +1,6 @@
 import type { AgentRunClaims } from "@shared/auth/agent-run-token.ts";
 import type { AuthUser } from "@shared/auth/api-key.ts";
+import { canGrantKeysByLink } from "@shared/auth/authorize-config.ts";
 import { payerBucketToMeter } from "@shared/billing/balance.ts";
 import { handleBalanceDeduction } from "@shared/billing/track-helpers.ts";
 import { sendToTinybird } from "@shared/events.ts";
@@ -204,6 +205,29 @@ export const mcpRoutes = new Hono<Env>()
             throw new HTTPException(403, {
                 message: `Agents can't use ${server.name}`,
             });
+        }
+        const apiKey = c.var.auth.apiKey;
+        if (apiKey && !c.var.auth.agentRun) {
+            // Website-authorized BYOP keys must not reach personal account
+            // MCP servers (Composio connected apps, personal Computer workspace).
+            if (
+                server.userScoped &&
+                !canGrantKeysByLink(apiKey.metadata?.redirectOrigin)
+            ) {
+                throw new HTTPException(403, {
+                    message: `Website-authorized API keys can't use ${server.name}.`,
+                });
+            }
+            // Keys scoped to specific models (or zero models) must not bypass
+            // those limits on personal or receipt-billed MCP servers.
+            if (
+                (server.userScoped || server.billing === "usage_receipt") &&
+                apiKey.permissions?.models !== undefined
+            ) {
+                throw new HTTPException(403, {
+                    message: `Model-restricted API keys can't use ${server.name}.`,
+                });
+            }
         }
         // A tool's cost is known only from its receipt, so a tool call needs a
         // spendable balance up front. Initialization and discovery stay free.
