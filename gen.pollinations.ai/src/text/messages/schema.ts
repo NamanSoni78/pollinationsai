@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_MESSAGES_PER_REQUEST } from "@shared/schemas/openai.ts";
 
 // Anthropic Messages API request and response shapes. Objects pass unknown
 // fields through: Claude Code sends new fields with each release, and a field
@@ -169,7 +170,13 @@ export const CreateMessageRequestSchema = z
             .describe(
                 "Maximum generated tokens, including reasoning for reasoning models. Non-streaming requests that exhaust the limit without an answer return 400 invalid_request_error; reported usage, including reasoning tokens, is billed. Increase the limit or reduce thinking effort. Partial answers retain stop_reason max_tokens.",
             ),
-        messages: z.array(MessageSchema).min(1),
+        messages: z
+            .array(MessageSchema)
+            .min(1)
+            .max(MAX_MESSAGES_PER_REQUEST)
+            .describe(
+                "Conversation messages (up to 2000). Larger histories must be truncated client-side; oversized arrays are rejected before validation to bound validator memory.",
+            ),
         system: z.union([z.string(), z.array(TextBlockSchema)]).optional(),
         stream: z.boolean().optional(),
         stop_sequences: z

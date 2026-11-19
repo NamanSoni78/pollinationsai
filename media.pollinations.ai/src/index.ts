@@ -239,10 +239,10 @@ const JsonUploadRequestSchema = z.object({
         .optional()
         .describe("Filename; used for the download Content-Disposition."),
     tags: z
-        .union([z.string(), z.array(z.string())])
+        .union([z.string(), z.array(z.string()).max(32)])
         .optional()
         .describe(
-            "Tags (publish the upload to those tags' public galleries): a comma-separated string or an array of strings.",
+            "Tags (publish the upload to those tags' public galleries): a comma-separated string or an array of strings (up to 32).",
         ),
 });
 const { $schema: _jsonSchemaDialect, ...JsonUploadOpenApiSchema } =

@@ -12,6 +12,15 @@ import { SafeSchema } from "./safety.ts";
 
 const FunctionParametersSchema = z.record(z.string(), z.any());
 
+/**
+ * Upper bound on messages per request across the OpenAI-compatible surfaces.
+ * zod materializes one issue object (~1 KB) per failing element during
+ * validation (GHSA-mrhx-c7xc-m3w5), so an uncapped array lets a small body
+ * allocate hundreds of MB before the handler runs. On zod >= 4.6.6 a
+ * violated .max() short-circuits to a single issue.
+ */
+export const MAX_MESSAGES_PER_REQUEST = 2000;
+
 const FunctionObjectSchema = z.object({
     description: z.string().optional(),
     name: z.string(),
@@ -341,7 +350,13 @@ const ChatOutputTokenLimitSchema = z
 
 export const CreateChatCompletionRequestSchema = z
     .object({
-        messages: z.array(ChatCompletionRequestMessageSchema),
+        messages: z
+            .array(ChatCompletionRequestMessageSchema)
+            .max(MAX_MESSAGES_PER_REQUEST)
+            .meta({
+                description:
+                    "Conversation messages (up to 2000). Larger histories must be truncated client-side; oversized arrays are rejected before validation to bound validator memory.",
+            }),
         model: z.string().min(1).optional().default(DEFAULT_TEXT_MODEL).meta({
             description:
                 "AI model for text generation. See /v1/models for full list. List up to four comma-separated models of the same category to try in order, including repeated models. This replaces configured fallbacks; the model that serves determines the price and whether the paid balance is required. Single-model requests keep their configured fallbacks and original pricing rules.",
@@ -419,7 +434,7 @@ export const CreateChatCompletionRequestSchema = z
                 "Sampling controls are ignored for model families that do not consistently support them, regardless of reasoning mode.",
             ),
         top_p: z.number().min(0).max(1).nullable().optional(),
-        tools: z.array(ChatCompletionToolSchema).optional(),
+        tools: z.array(ChatCompletionToolSchema).max(128).optional(),
         tool_choice: ChatCompletionToolChoiceOptionSchema.optional(),
         parallel_tool_calls: z.boolean().optional(),
         user: z.string().optional(),

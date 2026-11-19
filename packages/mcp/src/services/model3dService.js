@@ -54,9 +54,9 @@ export const model3dTools = [
                 .optional()
                 .describe("3D model. Use listModels with type=3d"),
             image: z
-                .union([z.string(), z.array(z.string())])
+                .union([z.string(), z.array(z.string()).max(20)])
                 .optional()
-                .describe("Reference image URL or URLs"),
+                .describe("Reference image URL or URLs (up to 20)"),
             resolution: z.enum(["low", "medium", "high"]).optional(),
             seed: z.number().int().optional(),
             safe: z.union([z.string(), z.boolean()]).optional(),
