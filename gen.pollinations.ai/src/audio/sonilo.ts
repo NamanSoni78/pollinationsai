@@ -67,7 +67,20 @@ export async function generateSoniloSfx(opts: {
         throw toUpstreamError(error);
     }
     const units = falBillableUnits(response);
-    const data = (await response.json()) as { audio?: { url?: string } };
+    let data: { audio?: { url?: string } };
+    try {
+        data = (await response.json()) as { audio?: { url?: string } };
+    } catch {
+        // fal completed and billed this job (the units receipt above);
+        // settle it instead of escaping a raw SyntaxError after the paid
+        // event.
+        throw Object.assign(
+            new UpstreamError(502, {
+                message: `${SONILO_MODEL} returned a malformed result body`,
+            }),
+            { billedUsage: createCompletionAudioSecondsUsage(units) },
+        );
+    }
     if (!data.audio?.url) {
         throw new UpstreamError(502, {
             message: "Sonilo returned no audio output",

@@ -117,6 +117,47 @@ describe("Sonilo 1.1 SFX", () => {
         await assertion;
     });
 
+    it("returns a clean 502 with the billed units when the result body is malformed", async () => {
+        vi.useFakeTimers();
+        vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+            const href = String(url);
+            if (href.startsWith("https://api.fal.ai/v1/models/pricing"))
+                return Response.json({
+                    prices: [
+                        {
+                            endpoint_id: "sonilo/v1.1/video-to-sound-effects",
+                            unit_price: 0.009,
+                            currency: "USD",
+                        },
+                    ],
+                });
+            if (href === "https://queue.fal.run/sonilo/v1.1/video-to-sound-effects")
+                return Response.json({
+                    status_url: "https://queue.fal.run/status",
+                    response_url: "https://queue.fal.run/result",
+                });
+            if (href === "https://queue.fal.run/status")
+                return Response.json({ status: "COMPLETED" });
+            if (href === "https://queue.fal.run/result")
+                // fal completed and billed this job (12 billable seconds);
+                // the result body is not JSON.
+                return new Response("<html>proxy error</html>", {
+                    headers: {
+                        "content-type": "application/json",
+                        "x-fal-billable-units": "12",
+                    },
+                });
+            throw new Error(`unexpected fetch: ${href}`);
+        });
+        const pending = generateSoniloSfx(options);
+        const assertion = expect(pending).rejects.toMatchObject({
+            status: 502,
+            billedUsage: { completionAudioSeconds: 12 },
+        });
+        await vi.advanceTimersByTimeAsync(5000);
+        await assertion;
+    });
+
     it.each([
         { referenceVideo: undefined },
         { referenceVideo: "http://127.0.0.1/clip.mp4" },
