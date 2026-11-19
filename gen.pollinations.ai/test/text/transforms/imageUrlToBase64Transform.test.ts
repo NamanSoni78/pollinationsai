@@ -282,6 +282,46 @@ describe("imageUrlToBase64Transform", () => {
         },
     );
 
+    it("caps Amazon Nova 2 at the provider's documented 5 inline images", async () => {
+        // AWS Nova 2 Developer Guide, multimodal-input limits table: images
+        // embedded in the request are capped at 25 MB total and 5 objects.
+        // The registry copied Claude-on-Bedrock's 20, so every 6-20 image
+        // request downloads all sources and then deterministically 400s at AWS.
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockImplementation(
+                async () =>
+                    new Response(PNG_BYTES, {
+                        headers: { "content-type": "image/png" },
+                    }),
+            );
+        const model = "amazon/nova-2-lite-v1";
+        const { options } = resolveModelConfig([], { model });
+        const urls = (count: number) =>
+            imageMessage(
+                Array.from(
+                    { length: count },
+                    (_, index) => `https://example.com/${index}.png`,
+                ),
+            );
+
+        const result = await transform(urls(5), options);
+        const content = result.messages[0].content as {
+            image_url: { url: string };
+        }[];
+        expect(content).toHaveLength(5);
+        for (const part of content) {
+            expect(part.image_url.url).toMatch(/^data:image\/png;base64,/);
+        }
+
+        fetchMock.mockClear();
+        await expect(transform(urls(6), options)).rejects.toMatchObject({
+            status: 400,
+            errorCode: "image_too_large",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(5);
+    });
+
     it.each([401, 403, 404, 429, 500])(
         "returns 400 failed_to_download_image when the image host answers %i",
         async (upstreamStatus) => {
