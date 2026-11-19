@@ -4546,11 +4546,13 @@ exports[`effective cost and price per model — snapshot 1`] = `
   "qwen/qwen3.8-2.4t-a95b": {
     "cost": {
       "completionTextTokens": 0.000006,
+      "promptCacheWriteTokens": 0.0000025,
       "promptCachedTokens": 0.00000025,
       "promptTextTokens": 0.000002,
     },
     "price": {
       "completionTextTokens": 0.000006,
+      "promptCacheWriteTokens": 0.0000025,
       "promptCachedTokens": 0.00000025,
       "promptTextTokens": 0.000002,
     },
