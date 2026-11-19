@@ -1492,3 +1492,25 @@ Baseline: upstream `c6badca138` at session start (the round-38/39-covered HEAD; 
 - Pushed 5 fix branches off `8fc4c21` (`solution126-*` … `solution130-*`) with fork PRs #141/#142/#143/#144/#145 (upstream PR creation re-verified 403 per the standing fine-grained PAT limitation — `pull_requests:read` only).
 - `issues_mds`: append-only on round 41's head `8fab76fbb2`; added `issues/issue126-*.md` … `issues/issue130-*.md`, this Round 42 WORKLOG section, the SYNC_LOG row, and the Wave 42 AGENT_PROGRESS table.
 - Live probes: **$0** — all five findings verified 100% offline (Vitest RED-on-unpatched → GREEN), plus non-destructive public pricing fetches (fal.ai page, OpenRouter endpoints API) for the two registry issues.
+
+## Round 43 — consolidation: filtered_issues (2026-11-19)
+
+**Task:** the raw 131-issue registry was too large and too mixed for upstream review (maintainer feedback: filter for quality, merge similar bugs, build chains, prove everything, reference the fix PRs). This round delivers `filtered_issues/` — **13 maintainer-ready reports consolidating all 131 issues** (131 → 13), each with end-to-end proof, the combined-impact chain, per-member verification labels, and the complete fork-PR map.
+
+Method: 5 parallel deep-read passes over every issue file (root cause / verification type / proof strength / PR / family relations) → family clustering → proof-level gate (live > integration > unit red/green > code-path-only, the last kept only where family-proven and labeled) → **re-verification on current upstream `main` @ `4e662050`** (code inspection of every flagship claim + fresh live probes with the bounty key, ≈0.06 pollen total):
+
+| Live re-probe (2026-11-19) | Result |
+|---|---|
+| Cache keyless replay (issue 1) | **Still live**: keyed MISS `x-cache-key b69fc3a25b7b66e9` → keyless byte-identical replay `200 HIT` identical key; control 401; HIT unbilled |
+| EXIF public channel (issue 15) | **Still live**: anonymous immutable `media.pollinations.ai` object carries full prompt in EXIF UserComment |
+| Vision $0 billing (issues 46/49) | **Corrected**: kimi-k3 / gpt-5.6-sol / muse-spark-open primaries *fold* image tokens into prompt_tokens and bill at the text rate (no undercharge on those routes); kimi-k3.1-pro now rated upstream; 18 split-provider routes still unpriced (fresh scan) — F-06 carries the corrected list |
+| Quests standings DoS (issue 103) | **Still live**: anonymous TTFB 0.83–0.99 s (uncached D1 full scan, 4,192 participants) vs 0.05–0.27 s cached sibling |
+| upstreamHost disclosure (issues 8/48) | **Still live**: error bodies leak `bedrock-runtime.us-east-1.amazonaws.com` and `portkey.myceli.ai` |
+
+Code-verified still-live on `4e662050`: cache-before-auth mount order; EXIF writer uncapped; refund webhooks analytics-only; x402 FK without ON DELETE; `atomicAdjustApiKeyBalance` no floor; `isImplausibleProxyUsage` generate.text-only; composio name-based billing; MCP GitHub header ungated on agent runs + no origin/scope checks; quest payout records quest-id only (merged_pr in check-list but never in the earned set); media JSON path post-decode only.
+
+Deliverables on `issues_mds`:
+- `filtered_issues/README.md` — methodology, the 13-report index, **full 131-issue → report mapping table**, corrections & exclusions (issue 63 excluded as unproven; issue 4 subsumed; the 46/49-mistral vision-primary correction), fork-PR state summary (merged #2–#6 on 2026-11-17, withdrawn #20/#29/#112/#124, orphan #60)
+- `filtered_issues/01–13*.md` — F-01 cache/public content (Critical, re-proven live), F-02 MCP platform-key abuse incl. Discord bots (Critical), F-03 community-publisher attack chain (Critical), F-04 settlement revenue leak (23 members), F-05 overdraft engine, F-06 registry rate-sheet integrity (corrected exposure), F-07 resource exhaustion (32 members: memory/time/rate), F-08 SSRF policy chain, F-09 credential containment (Critical), F-10 money-path ledger, F-11 secrets & privileged agents, F-12 error-completion/stream integrity, F-13 low-priority appendix
+
+No code changes, no new branches; upstream untouched. Live-probe spend this round: ≈0.058 pollen (balance 1.97499171 → ≈1.917).
