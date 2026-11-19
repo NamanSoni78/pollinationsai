@@ -6,6 +6,11 @@ import type { BillingRules, ModelDefinition } from "./registry";
 
 export const DEFAULT_IMAGE_MODEL = "tongyi-mai/z-image-turbo" as const;
 const FLUX3_LAUNCH_DISCOUNT_END = Date.parse("2026-10-08T15:00:00Z");
+// fal.ai's page (fetched 2026-11-19): FLUX 3 Max is 50% off until November 21
+// ($0.085/s at 720p; list $0.17/s). The 2026-10-20 75%-off promo ended
+// 2026-11-07; read rates at request time so warm workers also quote the
+// cutover. 1080p: list $0.29/s, promo at the same 50%.
+const FLUX3_MAX_PROMO_END = Date.parse("2026-11-21T23:59:59Z");
 
 // The fal fallback reports its complete USD charge, without token counts.
 const GPT_IMAGE_26_BILLING: BillingRules = {
@@ -2101,13 +2106,23 @@ const IMAGE_BASE_SERVICES = {
         addedDate: new Date("2026-10-20").getTime(),
         priceMultiplier: 1,
         paidOnly: true,
-        // fal.ai FLUX 3 Max promotional per-second rates (2026-10-20), 75% off
-        // through 2026-11-07. List after the promotion: $0.17/s at 720p and
-        // $0.29/s at 1080p (follow-up PR). fal's page lists no separate audio rate.
-        cost: { completionVideoSeconds: 0.0425 },
+        // https://fal.ai/flux-3-max (fetched 2026-11-19): 50% off until
+        // November 21 — $0.085/s at 720p, list $0.17/s (1080p list $0.29/s,
+        // promo at the same 50%). Read rates at request time so warm workers
+        // also quote the cutover; settlement bills these against fal's
+        // reported billable seconds. fal's page lists no separate audio rate.
+        cost: {
+            get completionVideoSeconds() {
+                return Date.now() < FLUX3_MAX_PROMO_END ? 0.085 : 0.17;
+            },
+        },
         ...defineCostVariants(
             {
-                "1080p": { completionVideoSeconds: 0.0725 },
+                "1080p": {
+                    get completionVideoSeconds() {
+                        return Date.now() < FLUX3_MAX_PROMO_END ? 0.145 : 0.29;
+                    },
+                },
             },
             matchResolution("1080p"),
             {
