@@ -51,7 +51,9 @@ function requestForMcp(
             MCP_USER_ID_HEADER,
             agentRun ? `${user.id}:agent:${agentRun.agentModelId}` : user.id,
         );
-        if (user.githubId && user.githubUsername) {
+        // Agent runs must not inherit the human caller's GitHub identity
+        // (computer-mcp uses it to attribute commits to collective-memory).
+        if (!agentRun && user.githubId && user.githubUsername) {
             headers.set(
                 MCP_USER_GITHUB_HEADER,
                 `${user.githubId}+${user.githubUsername}`,
