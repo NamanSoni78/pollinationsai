@@ -266,6 +266,180 @@ async function creditCheckoutSessionOnce({
     }
 }
 
+type RefundReversalSource = {
+    /** Where the money-back came from: a completed refund or a lost dispute. */
+    reason: "refund" | "dispute";
+    /** Stripe object id the reversal is keyed on (refund or dispute id). */
+    reversalId: string;
+    paymentIntentId: string;
+    amountCents: number;
+};
+
+/**
+ * Resolve the checkout session a money-back event belongs to, and how much
+ * of its credited Pollen remains to reverse.
+ *
+ * Pack purchases are Checkout sessions credited once by
+ * `creditCheckoutSessionOnce`; a refund or lost dispute removes the USD
+ * from Stripe while that credit stays. The session is found through the
+ * PaymentIntent the event carries, so anything that is not a pack checkout
+ * (subscriptions, invoices) simply has nothing to reverse. A partial refund
+ * scales the reversal to its share of what the buyer actually paid, and the
+ * running total is clamped so several partial refunds cannot over-reverse.
+ */
+async function resolveRefundReversal(
+    env: CloudflareBindings,
+    stripe: Stripe,
+    source: RefundReversalSource,
+): Promise<
+    | {
+          session: Stripe.Checkout.Session;
+          userId: string;
+          pollenToReverse: number;
+      }
+    | null
+> {
+    const sessions = await stripe.checkout.sessions.list({
+        payment_intent: source.paymentIntentId,
+        limit: 1,
+    });
+    const session = sessions.data[0];
+    if (!session) return null;
+    const userId = readUserIdFromMetadata(session.metadata);
+    if (!userId) return null;
+
+    const credit = await env.DB.prepare(
+        "SELECT pollen_credited FROM stripe_checkout_credits WHERE session_id = ?",
+    )
+        .bind(session.id)
+        .first<{ pollen_credited: number }>();
+    if (!credit) return null;
+
+    const reversed = await env.DB.prepare(
+        "SELECT COALESCE(SUM(pollen_reversed), 0) AS already_reversed FROM stripe_refund_reversals WHERE session_id = ?",
+    )
+        .bind(session.id)
+        .first<{ already_reversed: number }>();
+    const remaining =
+        credit.pollen_credited - (reversed?.already_reversed ?? 0);
+    if (remaining <= 0) return null;
+
+    const sessionTotal = session.amount_total ?? 0;
+    const share =
+        source.amountCents > 0 &&
+        sessionTotal > 0 &&
+        source.amountCents < sessionTotal
+            ? source.amountCents / sessionTotal
+            : 1;
+    const scaled = Number(
+        (credit.pollen_credited * share).toFixed(POLLEN_BILLING_PRECISION),
+    );
+    return {
+        session,
+        userId,
+        pollenToReverse: Math.min(scaled, remaining),
+    };
+}
+
+async function reverseCheckoutSessionOnce({
+    env,
+    event,
+    session,
+    userId,
+    pollenToReverse,
+    source,
+}: {
+    env: CloudflareBindings;
+    event: Stripe.Event;
+    session: Stripe.Checkout.Session;
+    userId: string;
+    pollenToReverse: number;
+    source: RefundReversalSource;
+}): Promise<{ reversed: boolean }> {
+    const createdAt = Date.now();
+
+    try {
+        const [, updateResult] = await env.DB.batch([
+            env.DB.prepare(
+                `INSERT INTO stripe_refund_reversals (
+                    reversal_id,
+                    event_id,
+                    event_type,
+                    session_id,
+                    user_id,
+                    pollen_reversed,
+                    reason,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).bind(
+                source.reversalId,
+                event.id,
+                event.type,
+                session.id,
+                userId,
+                pollenToReverse,
+                source.reason,
+                createdAt,
+            ),
+            env.DB.prepare(
+                `UPDATE user
+                SET pack_balance = ROUND(
+                    COALESCE(pack_balance, 0) - ?,
+                    ${POLLEN_BILLING_PRECISION}
+                ),
+                low_balance_notified_at = NULL
+                WHERE id = ?`,
+            ).bind(pollenToReverse, userId),
+        ]);
+
+        if ((updateResult.meta.changes ?? 0) !== 1) {
+            throw new Error(
+                `Stripe refund reversal failed to update user ${userId} for session ${session.id}`,
+            );
+        }
+
+        return { reversed: true };
+    } catch (error) {
+        if (isUniqueConstraintError(error)) {
+            return { reversed: false };
+        }
+        throw error;
+    }
+}
+
+/**
+ * Reverse credited Pollen for a completed refund or a lost dispute.
+ *
+ * Errors propagate so Stripe retries the webhook: a reversal lost to a
+ * transient failure must not be lost forever. Not-a-pack-checkout events
+ * resolve to null and reverse nothing.
+ */
+async function reverseRefundedPollen({
+    env,
+    stripe,
+    event,
+    source,
+}: {
+    env: CloudflareBindings;
+    stripe: Stripe;
+    event: Stripe.Event;
+    source: RefundReversalSource;
+}): Promise<void> {
+    const resolved = await resolveRefundReversal(env, stripe, source);
+    if (!resolved || resolved.pollenToReverse <= 0) return;
+    const { reversed } = await reverseCheckoutSessionOnce({
+        env,
+        event,
+        ...resolved,
+        source,
+    });
+    if (reversed) {
+        console.log(
+            `Stripe: Reversed ${resolved.pollenToReverse} pollen from user ${resolved.userId} (${source.reason} ${source.reversalId}, session ${resolved.session.id})`,
+        );
+    }
+}
+
 async function sendStripeEventToTinybird(
     env: CloudflareBindings,
     data: StripeEventData,
@@ -843,6 +1017,25 @@ export const stripeWebhooksRoutes = new Hono<Env>()
             case "refund.failed": {
                 const refund = event.data.object as Stripe.Refund;
                 console.log(`Refund ${event.type}: ${refund.id}`);
+                // A completed refund moves real money out while the credited
+                // Pollen stays: reverse it (idempotently, per refund id) so a
+                // buyer cannot keep spend after a Stripe money-back.
+                if (
+                    refund.status === "succeeded" &&
+                    typeof refund.payment_intent === "string"
+                ) {
+                    await reverseRefundedPollen({
+                        env: c.env,
+                        stripe,
+                        event,
+                        source: {
+                            reason: "refund",
+                            reversalId: refund.id,
+                            paymentIntentId: refund.payment_intent,
+                            amountCents: refund.amount ?? 0,
+                        },
+                    });
+                }
                 c.executionCtx.waitUntil(
                     sendStripeEventToTinybird(c.env, {
                         eventType: event.type,
@@ -854,6 +1047,73 @@ export const stripeWebhooksRoutes = new Hono<Env>()
                         currency: refund.currency || "usd",
                         paymentStatus: refund.status || "unknown",
                         paymentMethod: "refund",
+                        customerEmail: "",
+                        livemode: event.livemode,
+                        payload: event,
+                    }).catch((err) =>
+                        console.error("TinyBird Stripe send failed:", err),
+                    ),
+                );
+                break;
+            }
+
+            case "charge.dispute.created": {
+                const dispute = event.data.object as Stripe.Dispute;
+                console.log(`Dispute created: ${dispute.id}`);
+                c.executionCtx.waitUntil(
+                    sendStripeEventToTinybird(c.env, {
+                        eventType: event.type,
+                        eventId: event.id,
+                        sessionId: dispute.charge?.toString() || dispute.id,
+                        userId: "",
+                        amountCents: dispute.amount ?? 0,
+                        currency: dispute.currency || "usd",
+                        paymentStatus: dispute.status || "needs_response",
+                        paymentMethod: "dispute",
+                        customerEmail: "",
+                        livemode: event.livemode,
+                        payload: event,
+                    }).catch((err) =>
+                        console.error("TinyBird Stripe send failed:", err),
+                    ),
+                );
+                break;
+            }
+
+            case "charge.dispute.closed": {
+                const dispute = event.data.object as Stripe.Dispute;
+                console.log(
+                    `Dispute closed: ${dispute.id} (${dispute.status})`,
+                );
+                // Only a lost dispute is a permanent money-back: the funds
+                // are gone and the credited Pollen goes with them. A won
+                // dispute returns the money and the credit stays.
+                if (
+                    dispute.status === "lost" &&
+                    typeof dispute.payment_intent === "string"
+                ) {
+                    await reverseRefundedPollen({
+                        env: c.env,
+                        stripe,
+                        event,
+                        source: {
+                            reason: "dispute",
+                            reversalId: dispute.id,
+                            paymentIntentId: dispute.payment_intent,
+                            amountCents: dispute.amount ?? 0,
+                        },
+                    });
+                }
+                c.executionCtx.waitUntil(
+                    sendStripeEventToTinybird(c.env, {
+                        eventType: event.type,
+                        eventId: event.id,
+                        sessionId: dispute.charge?.toString() || dispute.id,
+                        userId: "",
+                        amountCents: dispute.amount ?? 0,
+                        currency: dispute.currency || "usd",
+                        paymentStatus: dispute.status || "unknown",
+                        paymentMethod: "dispute",
                         customerEmail: "",
                         livemode: event.livemode,
                         payload: event,
