@@ -240,6 +240,14 @@ type GenerateMusicOptions = {
 
 const MAX_REFERENCE_AUDIO_SIZE = 20 * 1024 * 1024;
 const REFERENCE_AUDIO_FETCH_TIMEOUT_MS = 30_000;
+/**
+ * Upstream deadline for the first-party ElevenLabs speech/music legs — the
+ * community endpoints' documented 300 s budget: generous enough for a
+ * streaming synthesis of a full legal input (10k chars ≈ 833 s of audio at
+ * 3x realtime), while a silent model server can no longer pin the request
+ * indefinitely.
+ */
+const SPEECH_UPSTREAM_TIMEOUT_MS = 300_000;
 
 const AUDIO_EXTENSION_BY_TYPE: Record<string, string> = {
     "audio/aac": "aac",
@@ -491,6 +499,7 @@ export async function generateElevenLabsSpeech(opts: {
     };
 
     const rawResponse = await fetch(elevenLabsUrl, {
+        signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
         method: "POST",
         headers: {
             "xi-api-key": apiKey,
@@ -557,6 +566,7 @@ export async function generateElevenLabsSpeechWithTimestamps(opts: {
 
     const response = await ensureElevenLabsVoiceOk(
         await fetch(endpoint, {
+            signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: {
                 "xi-api-key": apiKey,
@@ -643,6 +653,7 @@ export async function generateElevenLabsDialogue(opts: {
 
     const response = await ensureElevenLabsVoiceOk(
         await fetch(endpoint, {
+            signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: {
                 "xi-api-key": apiKey,
@@ -758,6 +769,7 @@ export async function changeVoiceWithElevenLabs(opts: {
 
     const response = await ensureElevenLabsVoiceOk(
         await fetch(endpoint, {
+            signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: {
                 "xi-api-key": apiKey,
@@ -820,6 +832,7 @@ export async function isolateVoiceWithElevenLabs(opts: {
 
     const response = await ensureUpstreamOk(
         await fetch(endpoint, {
+            signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
             method: "POST",
             headers: {
                 "xi-api-key": apiKey,
@@ -1699,6 +1712,7 @@ async function uploadMusicReference(opts: {
     });
 
     const rawResponse = await fetch(uploadUrl, {
+        signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
         method: "POST",
         headers: { "xi-api-key": opts.apiKey },
         body: formData,
@@ -1835,6 +1849,7 @@ export async function generateMusic(
     }
 
     const rawResponse = await fetch(elevenLabsUrl, {
+        signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
         method: "POST",
         headers: {
             "xi-api-key": apiKey,
@@ -1987,6 +2002,7 @@ export async function generateSoundEffect(opts: {
     }
 
     const rawResponse = await fetch(elevenLabsUrl, {
+        signal: AbortSignal.timeout(SPEECH_UPSTREAM_TIMEOUT_MS),
         method: "POST",
         headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
         body: JSON.stringify(body),
