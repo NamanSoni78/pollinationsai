@@ -576,7 +576,7 @@ test("gives each agent its own Computer on the account, kept across runs", async
         await runOf("community/owner/agent-one"),
     );
     expect(agentOne).toContain(
-        `computer:${parent.userId}:agent:community/owner/agent-one:`,
+        `computer:${parent.userId}:agent:community/owner/agent-one:null`,
     );
     expect(await computerFor(await runOf("community/owner/agent-one"))).toBe(
         agentOne,
@@ -585,6 +585,69 @@ test("gives each agent its own Computer on the account, kept across runs", async
         await computerFor(await runOf("community/owner/agent-two")),
     ).not.toBe(agentOne);
     expect(await computerFor(parent.key)).not.toBe(agentOne);
+});
+
+test("withholds the account owner's GitHub identity from agent runs on Computer", async () => {
+    const parent = await createTestApiKey({
+        user: { tierBalance: 1, githubId: 583231, githubUsername: "octocat" },
+    });
+    const token = await signAgentRunToken({
+        secret: env.BETTER_AUTH_SECRET,
+        parentApiKeyId: parent.id,
+        parentRequestId: crypto.randomUUID(),
+        agentModelId: "community/owner/agent-one",
+    });
+
+    const agentResponse = await SELF.fetch(
+        "https://gen.pollinations.ai/mcp/computer",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "x-pollinations-user-github": "1+spoofed",
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(MCP_REQUEST),
+        },
+    );
+    expect(agentResponse.status).toBe(200);
+    expect(await agentResponse.json()).toEqual({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+            content: [
+                {
+                    type: "text",
+                    text: `computer:${parent.userId}:agent:community/owner/agent-one:null`,
+                },
+            ],
+        },
+    });
+
+    const ownerResponse = await SELF.fetch(
+        "https://gen.pollinations.ai/mcp/computer",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${parent.key}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(MCP_REQUEST),
+        },
+    );
+    expect(ownerResponse.status).toBe(200);
+    expect(await ownerResponse.json()).toEqual({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+            content: [
+                {
+                    type: "text",
+                    text: `computer:${parent.userId}:583231+octocat`,
+                },
+            ],
+        },
+    });
 });
 
 test.for(["composio", "computer"])(
