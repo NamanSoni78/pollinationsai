@@ -252,7 +252,7 @@ describe("Vercel search then JSON formatting", () => {
         { events: [{ choices: [], usage: { cost: 0.01 } }] },
         { events: [{ choices: [], usage: { ...lastUsage, cost: undefined } }] },
     ])(
-        "fails a stream missing final token usage or charge %j",
+        "answers a stream missing final token usage or charge with the in-band usage_missing event %j",
         async ({ events }) => {
             const { config } = upstream([
                 Response.json(completion(firstUsage)),
@@ -263,9 +263,77 @@ describe("Vercel search then JSON formatting", () => {
                 { ...options, stream: true },
                 config,
             );
-            await expect(
-                new Response(result.responseStream).text(),
-            ).rejects.toThrow();
+            const text = await new Response(result.responseStream).text();
+            expect(text).toContain("usage_missing");
+            expect(text).toContain("upstream_error");
+            expect(text).not.toContain("data: [DONE]");
         },
     );
+});
+describe("Vercel search streaming frame resilience", () => {
+    it("passes non-JSON frames through unchanged instead of crashing the stream", async () => {
+        const { config } = upstream([
+            Response.json(completion(firstUsage)),
+            sse([
+                { choices: [{ index: 0, delta: { content: '{"ans' } }] },
+                "keep-alive",
+                "",
+                { choices: [{ index: 0, delta: { content: 'wer":"b"}' } }] },
+                { usage: lastUsage },
+                "[DONE]",
+            ]),
+        ]);
+        const result = await callVercelSearch(messages, {
+            ...options,
+            stream: true,
+        }, config);
+        const text = await new Response(result.responseStream).text();
+        expect(text).toContain("data: keep-alive\n\n");
+        expect(text).toContain("data: \n\n");
+        expect(text).toContain('"total_tokens":215');
+        expect(text).toContain("data: [DONE]");
+    });
+    it("emits the in-band usage_missing event when the formatting stream tears before its usage", async () => {
+        const { config } = upstream([
+            Response.json(completion(firstUsage)),
+            sse([{ choices: [{ index: 0, delta: { content: '{"ans' } }] }]),
+        ]);
+        const result = await callVercelSearch(messages, {
+            ...options,
+            stream: true,
+        }, config);
+        const text = await new Response(result.responseStream).text();
+        expect(text).toContain("usage_missing");
+        expect(text).toContain("upstream_error");
+        expect(text).not.toContain("data: [DONE]");
+    });
+    it("survives an invalid usage frame mid-stream and still completes", async () => {
+        const { config } = upstream([
+            Response.json(completion(firstUsage)),
+            sse([
+                {
+                    choices: [
+                        { index: 0, delta: { content: '{"answer":"b"}' } },
+                    ],
+                },
+                {
+                    choices: [],
+                    usage: {
+                        prompt_tokens: "100",
+                        completion_tokens: "20",
+                        total_tokens: "120",
+                    },
+                },
+                { usage: lastUsage },
+                "[DONE]",
+            ]),
+        ]);
+        const result = await callVercelSearch(messages, {
+            ...options,
+            stream: true,
+        }, config);
+        const text = await new Response(result.responseStream).text();
+        expect(text).toContain('"total_tokens":215');
+        expect(text).toContain("data: [DONE]");
+    });
 });
