@@ -1596,3 +1596,15 @@ Live-probe spend this round: **0 pollen** (offline red/green only). Upstream PR 
 | codex/playground-record-audio (62 commits, in flight) | UI/SDK-only atop already-authenticated, rate-limited, priced server endpoints; family sweep clean |
 
 Live-probe spend this round: **0 pollen** (offline measurements + red/green only). Upstream PR creation re-verified **403** — fork PR #149 is the review surface.
+
+### Round-45 live-probe addendum (F-06 honest-verification, spend 0.00015 pollen)
+
+With upstream frozen, the session's live budget went to classifying the current F-06 exposure routes (the round-43 discipline):
+
+| Probe (own key, gen.pollinations.ai) | Result |
+|---|---|
+| `mistralai/mistral-large-4` + image (issue 132's model) | **Blocked at the preflight gate** — "This model needs the paid balance" (the bounty key is Quest-only; both mistral models are `paidOnly`). Issue 132's exposure therefore cannot be live-probed with this key; its unit red/green + the issue-45 live-proven `:vercel` split mechanism stand unchanged. |
+| `minimax/minimax-m3` + 8×8 PNG (Quest-eligible unpriced-vision route, fireworks primary) | **FOLD, billed — no undercharge**: usage `prompt_tokens: 132` (no `image_tokens` field anywhere), charged **0.00006720 = 132×$0.30/M + 0×$0.06/M + 23×$1.20/M to 8 decimals**. The image's tokens ride inside prompt_tokens at the text rate. Same fold class as round 43's muse-spark-open/gpt-5.6-sol/kimi-k3 re-probes. |
+| Platform behavior note | the earlier failed probe (output_token_limit_exceeded after reaching the provider) had its 0.001461 charge reversed within a minute — failed generations refund cleanly; not an issue. |
+
+**F-06 refinement (recorded in the report):** of the 41 unpriced image-input routes, the **fireworks/primary legs fold and bill** (live-confirmed on minimax-m3; previously muse-spark-open) — the $0 exposure is confined to the **split-reporting legs** (vercel gateway — live-proven class, issue 45; openrouter/deepinfra/novita — fixture-pinned), which for these models are fallback routes. The registry-math bug and the fix PRs are unchanged; this sharpens which legs carry live money exposure.
