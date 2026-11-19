@@ -240,7 +240,18 @@ export function createClosedLoop(options = {}) {
             state.escalations.push(item.packet);
             const tool = runtime?.tools?.consult_expert;
             if (typeof tool === "function") {
-                await tool(item.packet);
+                // consult_expert expects {question, file_paths, failed_attempts};
+                // translate the warden packet so the expert gets real content.
+                await tool({
+                    question: `The Warden rejected ${item.packet?.req_id} twice in a row: ${item.packet?.critique ?? "no critique given"}. Propose the minimal next action.`,
+                    file_paths: [],
+                    failed_attempts: (item.packet?.required_actions ?? []).map(
+                        (action) =>
+                            typeof action === "string"
+                                ? action
+                                : (action?.action ?? String(action)),
+                    ),
+                });
             }
             return {
                 kind: "consult_expert",
@@ -444,7 +455,7 @@ export function createClosedLoop(options = {}) {
     function applyPause() {
         budgetPauseRequested = false;
         try {
-            runtime?.tools?.git_checkpoint?.("budget cutoff");
+            runtime?.tools?.git_checkpoint?.({ message: "budget cutoff" });
         } catch {
             // best-effort checkpoint
         }

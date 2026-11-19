@@ -216,8 +216,10 @@ test("(j) warden exhaustion after maxWardenRounds; consult_expert packet deliver
     assert.equal(loop.phase(), "AUTONOMOUS_EXECUTION");
     assert.equal(loop.verdicts().length, 3);
     assert.equal(consults.length, 1);
-    assert.equal(consults[0].req_id, "REQ-1");
-    assert.ok(consults[0].defect.includes("final.txt"));
+    // The warden packet is translated into consult_expert's documented
+    // signature: {question, file_paths, failed_attempts}.
+    assert.match(consults[0].question, /REQ-1/);
+    assert.ok(consults[0].failed_attempts.length >= 1);
     assert.ok(milestones.some((m) => m.id === "consult-REQ-1"));
     assert.ok(milestones.some((m) => m.id === "fix-REQ-1"));
     assert.equal(loop.state.fixLog.length, 2);

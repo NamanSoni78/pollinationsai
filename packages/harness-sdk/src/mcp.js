@@ -7,8 +7,15 @@
  * layers these same primitives with the ground hub on top.
  */
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { compileContext, estTokens, maybeCompact } from "./context.js";
 import { gitBranchExperiment, gitCheckpoint, gitRollback } from "./git.js";
@@ -23,17 +30,73 @@ const workspace = () =>
         ? join(process.env.HARNESS_WORKSPACE)
         : process.cwd();
 
-/** Headless state per tool call — the runtime binder owns the long-lived one. */
+/** Repo root for `.agents/skills/*` discovery (same resolution as agent.js). */
+const REPO_ROOT = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "..",
+);
+
+const skillsStatePath = (ws) => join(ws, ".agent", "skills-state.json");
+
+/** Persist mounted skills per workspace (`.agent/skills-state.json`), atomic. */
+const persistSkills = (ws, state) => {
+    const file = skillsStatePath(ws);
+    const dir = dirname(file);
+    mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.tmp`;
+    writeFileSync(
+        tmp,
+        `${JSON.stringify(state.skills.map((skill) => skill.name))}\n`,
+    );
+    renameSync(tmp, file);
+};
+
+/**
+ * Headless state per tool call. What must persist across MCP calls (mounted
+ * skills) is read back from `.agent/skills-state.json`; the worklog layer
+ * reflects the real WORKLOG.md on disk. The full AgentRuntime binder
+ * (createAgentRuntime) layers these same primitives with the ground hub.
+ */
 const headlessState = () => {
     const ws = workspace();
+    const catalog = scanSkills({ workspace: ws, repoRoot: REPO_ROOT });
+    let loadedNames = [];
+    try {
+        loadedNames =
+            JSON.parse(readFileSync(skillsStatePath(ws), "utf8")) ?? [];
+    } catch {
+        loadedNames = [];
+    }
+    const worklog = existsSync(join(ws, "WORKLOG.md"))
+        ? readFileSync(join(ws, "WORKLOG.md"), "utf8")
+        : "";
     return {
         agentId: "harness-tools",
         role: "worker",
         workspace: ws,
         messages: [],
-        worklog: "",
-        skills: [],
-        skillsCatalog: scanSkills({ workspace: ws }),
+        worklog,
+        skills: loadedNames
+            .map((name) => {
+                const entry = catalog.find((skill) => skill.name === name);
+                if (!entry) return null;
+                const body = (
+                    readFileSync(entry.path, "utf8").split(
+                        /^---[\s\S]*?---\s*/m,
+                    )[1] ?? ""
+                ).trim();
+                return {
+                    name: entry.name,
+                    description: entry.description ?? "",
+                    body,
+                    tokens: entry.token_estimate ?? Math.ceil(body.length / 4),
+                    path: entry.path,
+                };
+            })
+            .filter(Boolean),
+        skillsCatalog: catalog,
         telemetry: {
             gitStatus: null,
             lastCommits: [],
@@ -55,7 +118,10 @@ const fail = (error) => ({
     content: [
         {
             type: "text",
-            text: JSON.stringify({ error: String(error?.message ?? error) }),
+            text: JSON.stringify({
+                error: String(error?.message ?? error),
+                code: error?.code ?? undefined,
+            }),
         },
     ],
 });
@@ -159,6 +225,16 @@ export const harnessTools = [
                         ],
                     }),
                 });
+                if (!response.ok) {
+                    // A 402 (hard cutoff — exactly when escalation is
+                    // mandated) or upstream failure must FAIL, never report
+                    // empty guidance as success.
+                    const body = await response.json().catch(() => ({}));
+                    return fail({
+                        message: `expert call failed: HTTP ${response.status}`,
+                        code: body?.error?.code ?? `http_${response.status}`,
+                    });
+                }
                 const data = await response.json();
                 return ok({
                     guidance: data?.choices?.[0]?.message?.content ?? "",
@@ -217,7 +293,7 @@ export const harnessTools = [
     ],
     [
         "rag_search",
-        "Hybrid BM25 search over the workspace (scopes: codebase, worklogs, docs, all).",
+        "BM25 search over the workspace (scopes: codebase, worklogs, docs, all).",
         {
             query: z.string(),
             scope: z.enum(["codebase", "worklogs", "docs", "all"]).optional(),
@@ -258,12 +334,16 @@ export const harnessTools = [
         async ({ name, workspace: ws } = {}) => {
             try {
                 process.env.HARNESS_WORKSPACE = ws ?? workspace();
-                const skill = loadSkill(headlessState(), name);
+                const state = headlessState();
+                const skill = loadSkill(state, name);
+                persistSkills(workspace(), state);
+                // Over MCP the host injects the returned instructions into its
+                // own context (Layer 2); the SDK persists the mount across calls.
                 return ok({
                     loaded: true,
-                    instructions_injected: true,
                     name: skill.name,
                     tokens: skill.tokens,
+                    instructions: skill.body,
                 });
             } catch (error) {
                 return fail(error);
@@ -287,6 +367,7 @@ export const harnessTools = [
                     (sum, skill) => sum + (skill.tokens ?? 0),
                     0,
                 );
+                if (unloaded) persistSkills(workspace(), state);
                 return ok(
                     unloaded
                         ? { unloaded: true, tokens_freed: before - after }
@@ -299,7 +380,7 @@ export const harnessTools = [
     ],
     [
         "sleep",
-        "Wait for a timer or a Ground event (ground_artifact | ground_reply | process_exit) without burning tokens.",
+        "Wait for a timer or a Ground event (ground_artifact | ground_reply | process_exit) without burning tokens. Over stdio MCP, event wake requires the host to relay Ground events; otherwise falls back to max_wait.",
         {
             seconds: z.number().positive().optional(),
             until_event: z

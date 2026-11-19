@@ -18,10 +18,10 @@
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
-    existsSync,
     mkdirSync,
     readdirSync,
     readFileSync,
+    rmSync,
     statSync,
     writeFileSync,
 } from "node:fs";
@@ -46,6 +46,20 @@ import { STUB_CALL_COST, startStubGen } from "./stub-gen.mjs";
 
 const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const hash = (text) => createHash("sha256").update(text).digest("hex");
+
+/** Keep only the last 5 demo runs on disk (each carries a git repo pair). */
+function pruneOldRuns(runsRoot) {
+    try {
+        const entries = readdirSync(runsRoot)
+            .filter((name) => name.startsWith("run-"))
+            .sort()
+            .slice(0, -5);
+        for (const name of entries)
+            rmSync(join(runsRoot, name), { recursive: true, force: true });
+    } catch {
+        // best-effort housekeeping
+    }
+}
 
 /** Deterministic content hash of a directory (skips .git/.agent) — the
  * non-disruptive proof for Shadow Reader queries. */
@@ -92,7 +106,13 @@ async function genViaProxy(
         }),
     });
     if (response.status === 402) return null;
-    const data = await response.json();
+    if (!response.ok) return null; // transient upstream failure: defer the item, never crash the multi-day loop
+    let data;
+    try {
+        data = await response.json();
+    } catch {
+        return null;
+    }
     const modelText = data?.choices?.[0]?.message?.content ?? null;
     if (live) {
         if (liveLog)
@@ -123,9 +143,10 @@ function syncBudget(runtime, proxy) {
 export async function runDemo(options = {}) {
     const mode = options.mode ?? "scripted";
     const live = mode === "live";
-    const runDir =
-        options.runDir ?? join(APP_DIR, ".demo-runs", `run-${Date.now()}`);
+    const runsRoot = join(APP_DIR, ".demo-runs");
+    const runDir = options.runDir ?? join(runsRoot, `run-${Date.now()}`);
     mkdirSync(runDir, { recursive: true });
+    pruneOldRuns(runsRoot);
     const backendWs = join(runDir, "backend");
     const frontendWs = join(runDir, "frontend");
     const narrating =
@@ -642,7 +663,8 @@ export async function runDemo(options = {}) {
 
     // The single "click Close the Loop" call — same path as POST /api/close-loop.
     say("autonomous execution started (human input disabled)");
-    const closeLoopResult = await ground.startCloseLoop(answers);
+    const startAck = await ground.startCloseLoop(answers);
+    const closeLoopResult = await startAck.run;
     say(
         `closed loop finished: phase=${loop.phase()} rounds=${loop.state.rounds}`,
     );

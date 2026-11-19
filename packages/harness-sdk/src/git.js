@@ -201,6 +201,8 @@ export function gitBranchExperiment(workspace, { name } = {}) {
  */
 export function gitRollback(workspace, { ref } = {}) {
     if (!ref) throw new Error("gitRollback requires ref");
-    git(workspace, ["checkout", "-f", ref]);
+    // reset --hard keeps the agent branch attached (checkout -f would leave
+    // a detached HEAD and orphan the next milestone commit).
+    git(workspace, ["reset", "--hard", ref]);
     return { restored_sha: headSha(workspace) };
 }

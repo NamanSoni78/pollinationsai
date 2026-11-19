@@ -186,6 +186,6 @@ test("git errors surface with stderr context", (t) => {
     initWorkspaceGit(workspace, { agentId: "err" });
     assert.throws(
         () => gitRollback(workspace, { ref: "no-such-ref" }),
-        /git checkout failed/,
+        /git reset failed/,
     );
 });

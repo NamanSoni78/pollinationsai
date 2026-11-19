@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { validateContract } from "./contract.js";
 
-const STUB_RE = /TODO|FIXME|XXX|HACK|stubbed|placeholder|@deprecated/;
+const STUB_RE = /TODO|FIXME|XXX|HACK|stubbed|mocked|placeholder|@deprecated/;
 const SKIPPED_DIRS = new Set([".git", ".agent", "node_modules"]);
 const MAX_HITS = 50;
 

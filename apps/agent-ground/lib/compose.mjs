@@ -189,17 +189,37 @@ export function closeLoopBroker({
 } = {}) {
     const broker = {
         current: null,
+        currentRun: null,
+        /**
+         * Start (or report on) a close-loop run. The run executes in the
+         * background so the HTTP request returns immediately ({started: true}
+         * + the run promise for programmatic callers); a second click returns
+         * {started: false, phase} instead of a 500.
+         */
         async start(answers) {
-            if (!broker.current) {
+            const loop = broker.current;
+            if (!loop) {
                 throw Object.assign(new Error("close-loop not configured"), {
                     code: "not_configured",
                 });
             }
-            return closeLoopStart(broker.current, answers, {
+            if (loop.phase() !== "IM_CHAT") {
+                return {
+                    started: false,
+                    phase: loop.phase(),
+                    run: broker.currentRun,
+                };
+            }
+            broker.currentRun = closeLoopStart(loop, answers, {
                 live,
                 proxy,
                 resumeWaitMs,
             });
+            return {
+                started: true,
+                phase: loop.phase(),
+                run: broker.currentRun,
+            };
         },
         status() {
             if (!broker.current) return null;
