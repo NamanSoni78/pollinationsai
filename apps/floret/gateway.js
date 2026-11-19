@@ -88,6 +88,29 @@ export function createGateway(getAgent, fetchImpl = globalThis.fetch) {
         if (path.startsWith("/_internal/") || path === "/run") {
             return new Response("Not found", { status: 404 });
         }
+        // This worker publishes public custom domains (floret.pollinations.ai,
+        // floret.myceli.ai). Every chat POST with any bearer — valid or junk —
+        // costs one Enter D1 auth read, and anonymous GETs queue into the
+        // single shared production container. Cap each client IP here before
+        // either cost is paid, the same guard the sibling pollinations-mcp
+        // worker installs on its public domain: rotating made-up keys cannot
+        // dodge a per-IP limit, and Gen-fronted agent runs (short-lived ag_
+        // tokens from Cloudflare's shared egress IPs) sit far below a
+        // 200/10 s per-IP budget on a two-instance container.
+        const ip = request.headers.get("cf-connecting-ip");
+        if (ip && !(await env.IP_RATE_LIMITER.limit({ key: ip })).success) {
+            return Response.json(
+                { detail: "Too many requests. Please slow down." },
+                {
+                    status: 429,
+                    headers: {
+                        "Access-Control-Allow-Origin": "*",
+                        "Cache-Control": "no-store",
+                        "Retry-After": "10",
+                    },
+                },
+            );
+        }
         const isChat =
             path === "/v1/chat/completions" && request.method === "POST";
         if (isChat && !(await authenticateBearer(request, fetchImpl))) {

@@ -26,5 +26,17 @@
   ],
   // Existing custom domains are Dashboard-managed. Omit routes so deployments
   // preserve their bindings without requiring zone-edit permissions.
+  // Per client IP, before any chat POST costs an Enter D1 auth read or any
+  // anonymous request queues into the shared container — the same guard the
+  // sibling pollinations-mcp worker installs on its public custom domain;
+  // namespace 1007 is the account's MCP rate-limit namespace (the sibling
+  // documents staging as sharing it).
+  "ratelimits": [
+    {
+      "name": "IP_RATE_LIMITER",
+      "namespace_id": "1007",
+      "simple": { "limit": 200, "period": 10 }
+    }
+  ],
   "observability": { "enabled": true }
 }
