@@ -1388,3 +1388,35 @@ Baseline: upstream `30a8939fd` at round 37's close; this session found `c6badca1
 - Pushed 3 independent fix branches off `8fc4c21` (`solution118-*`, `solution119-*`, `solution120-*`) with fork PRs #133, #134, #135 (upstream PR creation remains 403 due to fine-grained PAT scope).
 - `issues_mds`: append-only on round 38's head `3b3b4004`; added `issues/issue118-*.md`, `issues/issue119-*.md`, `issues/issue120-*.md`, Round 39 WORKLOG section, SYNC_LOG row, and Wave 39 AGENT_PROGRESS table.
 - Live probes: **$0** — all verification 100% offline via Vitest/Miniflare.
+
+## Round 40 — 2026-11-19 (Sandbox Surfaces, Least-Covered Gen Routes, Agent Fleet, MCP/Tools Apps, Shared Packages & Site)
+
+- **Base audited:** `upstream/main` @ `8fc4c212a4` (identical to round 39's baseline — the fresh range `c6badca138..8fc4c212a4` is the single metrics-only commit `chore: update app metrics (#20310)`, diff-audited as `operations/app-management/app.json` rows only); `fork/main` verified identical (0/0 both sides, no resync push needed).
+- **Focus areas (first-ever dedicated passes):** sandbox routes (`e2b.ts` 1449 ln, `azure-sandboxes.ts` 514 ln, `apps/machines-mcp`), least-covered gen routes (`jobs/messages/well-known/model-catalog/model-status/mcp-card/generation-executor/generation-handlers` + docs/seo residuals), the 21-app `agent-*` fleet, the never-individually-audited MCP/tool apps (`network/research/news/calculators/packages-mcp`, `pi-workbench`, `floret`, consumer fleet), and `packages/` (auth/sdk/mcp/polli-cli) + `pollinations.ai` site + `.github/workflows` residuals.
+
+### Verified & Delivered Issues (1 new — Issue 121)
+
+| # | Severity | Issue | Fix Branch | Fork PR | Verification (Offline, $0 Live) |
+|---|---|---|---|---|---|
+| 121 | Medium–High | floret's public custom domains (`floret.pollinations.ai`, `floret.myceli.ai`) have no per-IP rate limit: every chat POST with any bearer costs one Enter D1 auth read (300 s negative cache defeated by junk-bearer rotation), and anonymous GETs queue unthrottled into the shared two-instance production container — the issue-79 class on the one remaining never-audited platform worker publishing amplifying surfaces | `solution121-floret-gateway-ip-rate-limit` (`ba22b3b`) | [#136](https://github.com/NamanSoni78/pollinationsai/pull/136) | RED on `8fc4c21` (3/3 new tests fail: 201 auth reads paid, 201 container forwards, no per-IP budgets) → GREEN **9/9** (`gateway.test.js`); `node --check` clean, JSONC valid |
+
+### Subagent method (5 parallel audits) and verdicts
+- **W40-A (sandboxes):** e2b.ts/azure-sandboxes.ts/machines-mcp full read + 14-route-group mount matrix — **clean at gate level**: machines authz airtight cross-tenant (every state-change route runs `edgeRateLimit → auth() → requireSandboxAccess` → owner check); the two real weaknesses are already filed (unthrottled pre-auth envd proxy = issue 97 item 2 / PR #110; unbounded `readJson` body parse = issue 117's named site); 10 kills with evidence (charge deduction-failure swallow = documented postpaid-overdraft design; templateID passthrough priced at provider-reported size; TOCTOU advisory cap; no deterministic settle-drop on missing fetch deadlines — inline charge survives client hang-up).
+- **W40-B (least-covered gen routes):** mount matrix corroborates that the high-impact mount anomalies are issue 68 (`/v1/messages` pre-auth unthrottled parse + `/internal/generation` DO stub activation, PR #80 pending) and issue 97 (`/models/status` Tinybird / `/models/stats` KV amplification, PR #110 pending); job-ID predictability killed (DO-side `ownerIds` gate, no 404/401 oracle, test-pinned); Range header forwarding killed (parser safe-integer-guarded); 15-item kill list.
+- **W40-C (agent fleet):** all 21 `agent-*` apps read (entry logic full; aux transcripts skimmed + secret-scanned) — **W36-E's clean verdict confirmed at per-app level**: caller-pays verified at three independent layers (prompt agents spend the caller's key with `MAX_STEPS 24`/`MAX_TOOL_CALLS 48`; code agents pass the key only via outbound binding after untrusted code; computer-mcp's git credential is minted only for `pollinations/collective-memory` and never reaches the shell); no scheduled runs with platform tokens exist; zero hardcoded secrets (regex sweep clean); 8 below-gate holds recorded.
+- **W40-D (MCP/tool apps):** network/research/news/calculators/packages-mcp/pi-workbench full-read **clean** (validateUserMediaUrl on user URLs, redirect revalidation, fixed origins, caps everywhere); floret audited for the first time → **issue 121** (the one gate-passing finding); issue 54 re-confirmed still open at HEAD; consumer fleet secrets sweep clean.
+- **W40-E (packages + site + ops):** `packages/auth` deep-read **clean** (PKCE S256, HMAC-signed sessions, constant-time verify, origin-bound returnTo; 18 behaviors test-pinned); `packages/sdk` key-in-URL sweep clean (header-only auth everywhere); `packages/mcp` residuals all dedupe to issues 21/48/94; pollinations.ai site zero XSS sinks at this SHA (round 33's coverage verified as including the site); all 55 workflows re-verified (only 2 `pull_request_target`, both base-checkout; no fork-PR-controlled expression reaches a secret).
+
+### Audited-and-Killed / Below-Gate Records (for future dedup)
+- floret `n`/`width`/`height`/TTS-`text` schema caps absent — caller-pays amplification; gen enforces dimensions server-side; below gate.
+- floret authenticated body-cap sibling (round-36 hold) — the gateway never parses bodies pre-auth (401 precedes the container; the container is FastAPI with its own limits); below gate, unchanged.
+- research/packages/calculators `redirect:"follow"` on tool-owned fixed origins — `global_fetch_strictly_public` blocks private space; user-URL paths revalidate; below gate.
+- mama-barbara webhook non-constant-time compare + no limiter — secret-gated before any work; recorded W21-D; below gate.
+- W36-E's 8 below-gate fleet holds re-verified verbatim (composio callbackUrl, apps-review-submissions platform-keyed spend = issue-19 class bounds-verified, owner systemPrompt post-publication rewrite, etc.).
+- Sandbox fleet below-gate notes (charge swallow, templateID, TOCTOU, madeByGen 60 s window, cookie-session logIn fallback) — all documented in W40-A's kill list.
+
+### Sync
+- `fork/main` verified identical to `upstream/main` `8fc4c212a4` (0/0 both sides; round 39 already pushed the fast-forward).
+- Pushed 1 fix branch off `8fc4c21` (`solution121-floret-gateway-ip-rate-limit`) with fork PR #136 (upstream PR creation re-verified 403 per the standing fine-grained PAT limitation).
+- `issues_mds`: append-only on round 39's head `3b1981b`; added `issues/issue121-*.md`, Round 40 WORKLOG section, SYNC_LOG row, and Wave 40 AGENT_PROGRESS table.
+- Live probes: **$0** — all verification 100% offline via node --test on the injectable gateway harness.
