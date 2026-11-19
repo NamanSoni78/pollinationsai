@@ -1,3 +1,4 @@
+import { UpstreamError } from "@shared/error.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { transcribeWithXai } from "../src/routes/audio.ts";
 
@@ -79,5 +80,45 @@ describe("transcribeWithXai", () => {
                 log,
             }),
         ).rejects.toMatchObject({ status: 502 });
+    });
+
+    it("preserves billedUsage and passes an AbortSignal when xAI omits text after returning duration", async () => {
+        const fetchMock = vi.fn().mockResolvedValueOnce(
+            Response.json({ duration: 12.5 }),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+
+        const caught = await transcribeWithXai({
+            file: new File(["audio"], "audio.wav"),
+            apiKey: "test-key",
+            log,
+        }).catch((err: unknown) => err);
+
+        expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(
+            AbortSignal,
+        );
+        expect(caught).toBeInstanceOf(UpstreamError);
+        expect(caught).toMatchObject({
+            status: 502,
+            billedUsage: { promptAudioSeconds: 12.5 },
+        });
+    });
+
+    it("maps malformed xAI JSON to a 502 UpstreamError", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn().mockResolvedValueOnce(
+                new Response("<html>truncated</html>", { status: 200 }),
+            ),
+        );
+
+        const caught = await transcribeWithXai({
+            file: new File(["audio"], "audio.wav"),
+            apiKey: "test-key",
+            log,
+        }).catch((err: unknown) => err);
+
+        expect(caught).toBeInstanceOf(UpstreamError);
+        expect(caught).toMatchObject({ status: 502 });
     });
 });

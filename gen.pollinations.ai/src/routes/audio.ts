@@ -868,6 +868,8 @@ interface AzureTranscriptionResponse {
     };
 }
 
+const TRANSCRIPTION_UPSTREAM_TIMEOUT_MS = 120_000;
+
 const AZURE_GPT_TRANSCRIBE_ENDPOINT =
     "https://myceli-prod-swedencentral.openai.azure.com/openai/deployments/test-gpt-transcribe/audio/transcriptions?api-version=2025-04-01-preview";
 
@@ -916,23 +918,27 @@ export async function transcribeWithAzure(opts: {
             method: "POST",
             headers: { "api-key": apiKey },
             body: formData,
+            signal: AbortSignal.timeout(TRANSCRIPTION_UPSTREAM_TIMEOUT_MS),
         }),
         AZURE_GPT_TRANSCRIBE_ENDPOINT,
     );
     const transcript = (await response
         .json()
         .catch(() => null)) as AzureTranscriptionResponse | null;
-    if (
-        !transcript ||
-        typeof transcript.text !== "string" ||
-        transcript.usage?.type !== "duration" ||
-        typeof transcript.usage.seconds !== "number" ||
-        !Number.isFinite(transcript.usage.seconds) ||
-        transcript.usage.seconds <= 0
-    ) {
+    const billedSeconds =
+        transcript?.usage?.type === "duration" &&
+        typeof transcript.usage.seconds === "number" &&
+        Number.isFinite(transcript.usage.seconds) &&
+        transcript.usage.seconds > 0
+            ? transcript.usage.seconds
+            : undefined;
+    if (!transcript || typeof transcript.text !== "string" || !billedSeconds) {
         throw new UpstreamError(502 as ContentfulStatusCode, {
             message:
                 "Azure transcription response did not include valid input-duration metering.",
+            ...(billedSeconds !== undefined && {
+                billedUsage: createAudioSecondsUsage(billedSeconds),
+            }),
         });
     }
 
@@ -1037,11 +1043,21 @@ export async function transcribeWithXai(opts: {
             method: "POST",
             headers: { Authorization: `Bearer ${apiKey}` },
             body: formData,
+            signal: AbortSignal.timeout(TRANSCRIPTION_UPSTREAM_TIMEOUT_MS),
         }),
         xaiUrl,
     );
-    const transcript = (await response.json()) as XaiTranscriptionResponse;
+    const transcript = (await response
+        .json()
+        .catch(() => null)) as Partial<XaiTranscriptionResponse> | null;
+    const billedDuration =
+        typeof transcript?.duration === "number" &&
+        Number.isFinite(transcript.duration) &&
+        transcript.duration > 0
+            ? transcript.duration
+            : undefined;
     if (
+        !transcript ||
         typeof transcript.text !== "string" ||
         typeof transcript.duration !== "number" ||
         !Number.isFinite(transcript.duration) ||
@@ -1049,6 +1065,9 @@ export async function transcribeWithXai(opts: {
     ) {
         throw new UpstreamError(502 as ContentfulStatusCode, {
             message: "xAI returned an invalid transcription response",
+            ...(billedDuration !== undefined && {
+                billedUsage: createAudioSecondsUsage(billedDuration),
+            }),
         });
     }
 
@@ -1516,11 +1535,41 @@ export async function transcribeWithElevenLabs(opts: {
             "xi-api-key": apiKey,
         },
         body: formData,
+        signal: AbortSignal.timeout(TRANSCRIPTION_UPSTREAM_TIMEOUT_MS),
     });
     const response = await ensureUpstreamOk(rawResponse, elevenLabsUrl);
 
-    const elevenLabsData: ElevenLabsTranscriptionResponse =
-        await response.json();
+    const parsedData = (await response
+        .json()
+        .catch(() => null)) as Partial<ElevenLabsTranscriptionResponse> | null;
+    if (!parsedData || typeof parsedData.text !== "string") {
+        let billedSeconds: number | undefined;
+        if (
+            typeof parsedData?.audio_duration_secs === "number" &&
+            Number.isFinite(parsedData.audio_duration_secs) &&
+            parsedData.audio_duration_secs > 0
+        ) {
+            billedSeconds = parsedData.audio_duration_secs;
+        } else {
+            const rawCharacterCost = response.headers.get("character-cost");
+            const characterCost = Number(rawCharacterCost);
+            if (
+                rawCharacterCost !== null &&
+                Number.isFinite(characterCost) &&
+                characterCost > 0
+            ) {
+                billedSeconds =
+                    characterCost * ELEVENLABS_SCRIBE_SECONDS_PER_CREDIT;
+            }
+        }
+        throw new UpstreamError(502 as ContentfulStatusCode, {
+            message: "ElevenLabs returned an invalid transcription response.",
+            ...(billedSeconds !== undefined && {
+                billedUsage: createAudioSecondsUsage(billedSeconds),
+            }),
+        });
+    }
+    const elevenLabsData = parsedData as ElevenLabsTranscriptionResponse;
 
     // Scribe usually returns word-level timestamps; for silent audio or audio
     // with no detectable speech, the words array can be empty. Treat that as

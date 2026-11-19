@@ -792,10 +792,16 @@ export async function trackResponse(
     }
     if (!response.ok) {
         // A failure is billed only when the provider charged for it, which the
-        // handler reports on the error (an xAI video rejected after generation).
+        // handler reports on the error (an xAI video rejected after generation,
+        // or a post-charge transcription metering/receipt failure).
         const usage =
             error instanceof UpstreamError ? error.billedUsage : undefined;
-        if (!usage || isImplausibleProxyUsage(eventType, candidate, usage)) {
+        const providerBilling =
+            error instanceof UpstreamError ? error.providerBilling : undefined;
+        if (
+            (!usage && !providerBilling) ||
+            (usage && isImplausibleProxyUsage(eventType, candidate, usage))
+        ) {
             return notBilled({
                 modelUsed,
                 ...trackJsonErrorUsage(
@@ -807,6 +813,10 @@ export async function trackResponse(
                 ),
             });
         }
+        const effectiveUsage = usage ?? {};
+        const effectiveInput = providerBilling
+            ? { ...pricingInput, providerBilling }
+            : pricingInput;
         return {
             responseStatus: response.status,
             cacheHit,
@@ -814,15 +824,15 @@ export async function trackResponse(
             fallbackUsed,
             ...calculateUsageBilling({
                 model: resolvedModelRequested,
-                usage,
+                usage: effectiveUsage,
                 servedBy:
                     candidate.definition ?? requestTracking.modelDefinition,
                 quotedBy,
-                input: pricingInput,
+                input: effectiveInput,
             }),
             modelUsed,
             modelProviderUsed,
-            usage,
+            usage: effectiveUsage,
         };
     }
 
