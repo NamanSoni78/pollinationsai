@@ -1032,6 +1032,7 @@ const TEXT_BASE_SERVICES = {
             // Cohere's OpenRouter route, including the 5.5% credit-purchase fee.
             promptTextTokens: perMillion(0.3) * 1.055,
             promptCachedTokens: perMillion(0.15) * 1.055,
+            promptImageTokens: perMillion(0.3) * 1.055,
             completionTextTokens: perMillion(1.5) * 1.055,
         },
         title: "Command A+",
@@ -1085,6 +1086,7 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 1,
         cost: {
             promptTextTokens: perMillion(0.075) * 1.055,
+            promptImageTokens: perMillion(0.075) * 1.055,
             completionTextTokens: perMillion(0.2) * 1.055,
         },
         title: "Mistral Small 3.2",
@@ -2804,6 +2806,7 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(3),
             promptCachedTokens: perMillion(0.3),
             promptCacheWriteTokens: perMillion(3.75),
+            promptImageTokens: perMillion(3),
             completionTextTokens: perMillion(15),
         },
         title: "Kimi K3",
@@ -2833,6 +2836,7 @@ const TEXT_BASE_SERVICES = {
             promptTextTokens: perMillion(4),
             promptCachedTokens: perMillion(0.2),
             promptCacheWriteTokens: perMillion(4),
+            promptImageTokens: perMillion(4),
             completionTextTokens: perMillion(20),
         },
         title: "Kimi K3.1 Pro Highspeed",
@@ -2888,6 +2892,7 @@ const TEXT_BASE_SERVICES = {
             // Vercel AI Gateway list rates (2026-11-16). Vercel adds no gateway fee.
             promptTextTokens: perMillion(0.035),
             promptCachedTokens: perMillion(0.0015),
+            promptImageTokens: perMillion(0.035),
             completionTextTokens: perMillion(0.1405),
         },
         title: "Hy4 Flash",
@@ -3002,6 +3007,7 @@ const TEXT_BASE_SERVICES = {
             // mandatory 5.5% OpenRouter credit fee.
             promptTextTokens: perMillion(0.025) * 1.055,
             promptCachedTokens: perMillion(0.0025) * 1.055,
+            promptImageTokens: perMillion(0.025) * 1.055,
             completionTextTokens: perMillion(0.1) * 1.055,
         },
         title: "Nex N2.5 Mini",
@@ -3028,6 +3034,7 @@ const TEXT_BASE_SERVICES = {
             // mandatory 5.5% OpenRouter credit fee.
             promptTextTokens: perMillion(0.075) * 1.055,
             promptCachedTokens: perMillion(0.015) * 1.055,
+            promptImageTokens: perMillion(0.075) * 1.055,
             completionTextTokens: perMillion(0.25) * 1.055,
         },
         title: "Nex N2.5 Pro",
@@ -3223,6 +3230,7 @@ const TEXT_BASE_SERVICES = {
             // DeepInfra direct fp4 list rates (2026-10-23). No gateway fee.
             promptTextTokens: perMillion(0.15),
             promptCachedTokens: perMillion(0.02),
+            promptImageTokens: perMillion(0.15),
             completionTextTokens: perMillion(0.5),
         },
         title: "Nemotron 3.5 Super VL",
@@ -3247,6 +3255,7 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(0.14) * 1.055,
             promptCachedTokens: perMillion(0.0028) * 1.055,
+            promptImageTokens: perMillion(0.14) * 1.055,
             completionTextTokens: perMillion(0.28) * 1.055,
         },
         title: "MiMo V2.5",
@@ -3610,6 +3619,7 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 0.75,
         cost: {
             promptTextTokens: perMillion(0.25),
+            promptImageTokens: perMillion(0.25),
             completionTextTokens: perMillion(1.0),
         },
         title: "Llama 4 Maverick",
@@ -3701,6 +3711,7 @@ const TEXT_BASE_SERVICES = {
             // prompt $0.30/M, completion $1.20/M, cache read $0.06/M.
             promptTextTokens: perMillion(0.3),
             promptCachedTokens: perMillion(0.06),
+            promptImageTokens: perMillion(0.3),
             completionTextTokens: perMillion(1.2),
         },
         title: "MiniMax M3",
@@ -3727,6 +3738,7 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(0.15),
             promptCachedTokens: perMillion(0.015),
+            promptImageTokens: perMillion(0.15),
             completionTextTokens: perMillion(0.6),
         },
         title: "MiniMax M3.1 Flash",
@@ -3785,6 +3797,7 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.2",
@@ -3810,6 +3823,7 @@ const TEXT_BASE_SERVICES = {
             // Vercel AI Gateway Meta route, verified 2026-10-23.
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark 1.3",
@@ -3836,6 +3850,7 @@ const TEXT_BASE_SERVICES = {
             // preview ended. US-only capacity; Fireworks waives its premium.
             promptTextTokens: perMillion(1.25),
             promptCachedTokens: perMillion(0.15),
+            promptImageTokens: perMillion(1.25),
             completionTextTokens: perMillion(4.25),
         },
         title: "Muse Spark Open",
@@ -3913,6 +3928,7 @@ const TEXT_BASE_SERVICES = {
         cost: {
             promptTextTokens: perMillion(0.5),
             promptCachedTokens: perMillion(0.05),
+            promptImageTokens: perMillion(0.5),
             completionTextTokens: perMillion(1.5),
         },
         title: "Mistral Large 3",
@@ -4422,6 +4438,7 @@ const TEXT_BASE_SERVICES = {
         priceMultiplier: 1,
         cost: {
             promptTextTokens: perMillion(0.15),
+            promptImageTokens: perMillion(0.15),
             completionTextTokens: perMillion(0.6),
         },
         title: "Qwen3 VL 30B A3B Instruct",
@@ -4483,6 +4500,7 @@ const TEXT_BASE_SERVICES = {
             // OpenRouter's 5.5% credit fee.
             promptTextTokens: perMillion(1) * 1.055,
             promptCachedTokens: perMillion(0.1) * 1.055,
+            promptImageTokens: perMillion(1) * 1.055,
             completionTextTokens: perMillion(2.7) * 1.055,
         },
         title: "Step 5 Preview",
@@ -4515,6 +4533,7 @@ const TEXT_BASE_SERVICES = {
             // prompt $0.20/M, completion $1.15/M, cache read $0.04/M
             promptTextTokens: perMillion(0.2),
             promptCachedTokens: perMillion(0.04),
+            promptImageTokens: perMillion(0.2),
             completionTextTokens: perMillion(1.15),
         },
         title: "Step 3.7 Flash",

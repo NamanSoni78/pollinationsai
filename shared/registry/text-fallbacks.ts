@@ -76,6 +76,7 @@ export const TEXT_FALLBACKS = {
             provider: "aws",
             cost: {
                 promptTextTokens: perMillion(0.15),
+                promptCachedTokens: perMillion(0.15),
                 completionTextTokens: perMillion(0.6),
             },
         },
@@ -174,6 +175,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(1),
                 promptCachedTokens: perMillion(0.1),
+                promptImageTokens: perMillion(1),
                 completionTextTokens: perMillion(2.7),
             },
         },
@@ -192,6 +194,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.2),
                 promptCachedTokens: perMillion(0.04),
+                promptImageTokens: perMillion(0.2),
                 completionTextTokens: perMillion(1.15),
             },
         },
@@ -396,6 +399,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.14),
                 promptCachedTokens: perMillion(0.0028),
+                promptImageTokens: perMillion(0.14),
                 completionTextTokens: perMillion(0.28),
             },
         },
@@ -408,6 +412,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.387),
                 promptCachedTokens: perMillion(0.00324),
+                promptImageTokens: perMillion(0.387),
                 completionTextTokens: perMillion(0.783),
             },
         },
@@ -440,6 +445,7 @@ export const TEXT_FALLBACKS = {
                 // Fireworks Standard rates (2026-10-12).
                 promptTextTokens: perMillion(0.3),
                 promptCachedTokens: perMillion(0.006),
+                promptImageTokens: perMillion(0.3),
                 completionTextTokens: perMillion(1.2),
             },
         },
@@ -453,6 +459,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.3),
                 promptCachedTokens: perMillion(0.006),
+                promptImageTokens: perMillion(0.3),
                 completionTextTokens: perMillion(1.2),
             },
         },
@@ -465,6 +472,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.28),
                 promptCachedTokens: perMillion(0.056),
+                promptImageTokens: perMillion(0.28),
                 completionTextTokens: perMillion(1.1),
             },
         },
@@ -616,6 +624,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(3),
                 promptCachedTokens: perMillion(0.3),
+                promptImageTokens: perMillion(3),
                 completionTextTokens: perMillion(15),
             },
         },
@@ -626,6 +635,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(2.85),
                 promptCachedTokens: perMillion(0.285),
+                promptImageTokens: perMillion(2.85),
                 completionTextTokens: perMillion(14.25),
             },
         },
@@ -645,6 +655,7 @@ export const TEXT_FALLBACKS = {
         "mistralai/mistral-large-3:aws": {
             supportedParameters: CHAT_PARAMETERS.mistralLarge,
             provider: "aws",
+            priceMultiplier: 1,
             // Bedrock US Standard reports image input in the prompt total.
             cost: {
                 promptTextTokens: perMillion(0.5),
@@ -664,6 +675,7 @@ export const TEXT_FALLBACKS = {
                 promptTextTokens: perMillion(2),
                 promptCachedTokens: perMillion(0.2),
                 promptCacheWriteTokens: perMillion(2),
+                promptImageTokens: perMillion(2),
                 completionTextTokens: perMillion(10),
             },
         },
@@ -684,6 +696,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(0.035) * 1.055,
                 promptCachedTokens: perMillion(0.0015) * 1.055,
+                promptImageTokens: perMillion(0.035) * 1.055,
                 completionTextTokens: perMillion(0.1405) * 1.055,
             },
         },
@@ -700,6 +713,7 @@ export const TEXT_FALLBACKS = {
             // without the OpenRouter credit fee in the public quote.
             cost: {
                 promptTextTokens: perMillion(0.075),
+                promptImageTokens: perMillion(0.075),
                 completionTextTokens: perMillion(0.2),
             },
         },
@@ -723,6 +737,7 @@ export const TEXT_FALLBACKS = {
             addedDate: new Date("2026-09-01").getTime(),
             cost: {
                 promptTextTokens: perMillion(0.2),
+                promptCachedTokens: perMillion(0.2),
                 promptImageTokens: perMillion(0.2),
                 completionTextTokens: perMillion(0.4),
             },
@@ -919,6 +934,7 @@ export const TEXT_FALLBACKS = {
             cost: {
                 promptTextTokens: perMillion(1.25),
                 promptCachedTokens: perMillion(0.15),
+                promptImageTokens: perMillion(1.25),
                 completionTextTokens: perMillion(4.25),
             },
         },
@@ -962,6 +978,7 @@ export const TEXT_FALLBACKS = {
                 // 5.5% credit-purchase fee.
                 promptTextTokens: perMillion(0.15) * 1.055,
                 promptCachedTokens: perMillion(0.02) * 1.055,
+                promptImageTokens: perMillion(0.15) * 1.055,
                 completionTextTokens: perMillion(0.5) * 1.055,
             },
         },
@@ -1215,6 +1232,7 @@ export const TEXT_FALLBACKS = {
             priceMultiplier: 1,
             cost: {
                 promptTextTokens: perMillion(0.15) * 1.055,
+                promptImageTokens: perMillion(0.15) * 1.055,
                 completionTextTokens: perMillion(0.6) * 1.055,
             },
         },
