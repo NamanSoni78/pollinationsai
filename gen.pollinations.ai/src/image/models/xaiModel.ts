@@ -92,6 +92,17 @@ export async function callXaiImageAPI(
 
     const imageResponse = await fetchUpstream(result.url, {
         errorLabel: "Failed to download xAI result",
+    }).catch((error: unknown) => {
+        // xAI billed the generation — the URL is in hand — so a failed
+        // download still settles it.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                ...(isEditMode
+                    ? { promptImageTokens: safeParams.image.length }
+                    : {}),
+                completionImageTokens: 1,
+            },
+        });
     });
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 

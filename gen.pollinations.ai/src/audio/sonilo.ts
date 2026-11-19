@@ -73,23 +73,35 @@ export async function generateSoniloSfx(opts: {
             message: "Sonilo returned no audio output",
         });
     }
-    const audio = await fetchUpstream(data.audio.url, {
-        errorLabel: `Failed to download ${SONILO_MODEL} output`,
-    });
-    const bytes = await readResponseBytes(audio, MAX_OUTPUT_BYTES, (total) =>
-        UpstreamError.fromProvider(502, {
-            message: `${SONILO_MODEL} output is too large: ${total} bytes (max ${MAX_OUTPUT_BYTES})`,
-        }),
-    );
-    return new Response(bytes, {
-        headers: {
-            "Content-Type": "audio/mpeg",
-            ...buildUsageHeaders(
-                SONILO_MODEL,
-                createCompletionAudioSecondsUsage(units),
-            ),
-            [PROVIDER_BILLING_HEADERS.units]: String(units),
-            [PROVIDER_BILLING_HEADERS.unitCost]: String(unitCost),
-        },
-    });
+    // fal billed the completed job's reported seconds (the receipt above):
+    // download and size failures still settle them. (The no-audio site
+    // stays with solution14's branch so the fixes compose.)
+    try {
+        const audio = await fetchUpstream(data.audio.url, {
+            errorLabel: `Failed to download ${SONILO_MODEL} output`,
+        });
+        const bytes = await readResponseBytes(
+            audio,
+            MAX_OUTPUT_BYTES,
+            (total) =>
+                UpstreamError.fromProvider(502, {
+                    message: `${SONILO_MODEL} output is too large: ${total} bytes (max ${MAX_OUTPUT_BYTES})`,
+                }),
+        );
+        return new Response(bytes, {
+            headers: {
+                "Content-Type": "audio/mpeg",
+                ...buildUsageHeaders(
+                    SONILO_MODEL,
+                    createCompletionAudioSecondsUsage(units),
+                ),
+                [PROVIDER_BILLING_HEADERS.units]: String(units),
+                [PROVIDER_BILLING_HEADERS.unitCost]: String(unitCost),
+            },
+        });
+    } catch (error) {
+        throw Object.assign(toUpstreamError(error), {
+            billedUsage: createCompletionAudioSecondsUsage(units),
+        });
+    }
 }

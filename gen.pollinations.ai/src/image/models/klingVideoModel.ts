@@ -183,6 +183,18 @@ export async function callKlingVideoAPI(
 
     const videoResponse = await fetchKlingRead(result.video.url, {
         errorLabel: "Failed to download Kling output",
+    }).catch((error: unknown) => {
+        // fal billed the completed units (the receipt above): a failed
+        // download still settles them. (The no-video site stays with
+        // solution14's branch so the fixes compose.)
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds: billedSeconds,
+                ...(generateAudio
+                    ? { completionAudioSeconds: billedSeconds }
+                    : {}),
+            },
+        });
     });
 
     logOps("Kling generation complete", {

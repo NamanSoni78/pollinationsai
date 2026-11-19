@@ -112,9 +112,17 @@ export async function callAlibabaImage(
         (item) => item.image,
     )?.image;
     if (!url)
-        throw UpstreamError.fromProvider(502, {
-            message: "Alibaba returned no image",
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: "Alibaba returned no image",
+            }),
+            // DashScope bills completed async tasks; the sync routes' plain
+            // 200 cannot prove the provider generated, so only the async
+            // route settles (at the catalog's flat single-image unit).
+            route.asynchronous
+                ? { billedUsage: { completionImageTokens: 1 } }
+                : {},
+        );
     const outputCount = requireAlibabaUsage(
         result.usage?.[route.countKey],
         "output image count",
@@ -128,6 +136,17 @@ export async function callAlibabaImage(
         : 0;
     const image = await fetchUpstream(url, {
         errorLabel: "Failed to download Alibaba image",
+    }).catch((error: unknown) => {
+        // DashScope already billed the completed task (its usage counts are
+        // in hand); a failed download still settles them.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionImageTokens: outputCount,
+                ...(route.billsInputImages
+                    ? { promptImageTokens: inputCount }
+                    : {}),
+            },
+        });
     });
     return {
         buffer: Buffer.from(await image.arrayBuffer()),

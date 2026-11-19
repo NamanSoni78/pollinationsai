@@ -199,6 +199,13 @@ async function callFalH3API(
     const videoResponse = await fetchUpstream(result.video.url, {
         signal: AbortSignal.timeout(remainingTime(deadline, title)),
         errorLabel: `Failed to download ${title} output`,
+    }).catch((error: unknown) => {
+        // fal billed the completed job (the receipt above): a failed
+        // download still settles the reported seconds. (The no-video site
+        // stays with solution14's branch so the fixes compose.)
+        throw Object.assign(error as object, {
+            billedUsage: { completionVideoSeconds: durationSeconds },
+        });
     });
     return {
         buffer: Buffer.from(await videoResponse.arrayBuffer()),

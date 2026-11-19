@@ -102,9 +102,14 @@ export async function callAlibabaVideo(
     );
     const url = result.output?.video_url;
     if (!url)
-        throw UpstreamError.fromProvider(502, {
-            message: "Alibaba returned no video",
-        });
+        throw Object.assign(
+            UpstreamError.fromProvider(502, {
+                message: "Alibaba returned no video",
+            }),
+            // DashScope bills completed tasks; without the video_url the
+            // usage receipt is lost too, so settle the requested duration.
+            { billedUsage: { completionVideoSeconds: duration } },
+        );
     const outputSeconds = requireAlibabaUsage(
         result.usage?.output_video_duration,
         "output video duration",
@@ -116,6 +121,17 @@ export async function callAlibabaVideo(
     );
     const video = await fetchUpstream(url, {
         errorLabel: "Failed to download Alibaba video",
+    }).catch((error: unknown) => {
+        // DashScope already billed the SUCCEEDED task (its usage is in
+        // hand); a failed download still settles it.
+        throw Object.assign(error as object, {
+            billedUsage: {
+                completionVideoSeconds: outputSeconds,
+                ...(inputSeconds > 0
+                    ? { promptVideoSeconds: inputSeconds }
+                    : {}),
+            },
+        });
     });
     return {
         buffer: Buffer.from(await video.arrayBuffer()),

@@ -48,17 +48,25 @@ export async function generateLyria35(opts: {
             throw toUpstreamError(error);
         });
         units = falBillableUnits(result);
-        const data = (await result.json()) as { audio?: { url?: string } };
-        if (!data.audio?.url) {
-            throw new UpstreamError(502, {
-                message: "Lyria returned no audio output",
+        // fal billed the completed job's reported units: no-audio and
+        // download failures still settle them.
+        try {
+            const data = (await result.json()) as { audio?: { url?: string } };
+            if (!data.audio?.url) {
+                throw new UpstreamError(502, {
+                    message: "Lyria returned no audio output",
+                });
+            }
+            const audio = await ensureUpstreamOk(
+                await fetch(data.audio.url),
+                data.audio.url,
+            );
+            bytes = await audio.arrayBuffer();
+        } catch (error) {
+            throw Object.assign(toUpstreamError(error), {
+                billedUsage: { completionAudioTokens: units },
             });
         }
-        const audio = await ensureUpstreamOk(
-            await fetch(data.audio.url),
-            data.audio.url,
-        );
-        bytes = await audio.arrayBuffer();
     } else {
         if (!opts.geminiApiKey) {
             throw new UpstreamError(500, {
@@ -112,7 +120,13 @@ export async function generateLyria35(opts: {
         units = 1;
     }
     if (!bytes.byteLength) {
-        throw new UpstreamError(502, { message: "Lyria returned empty audio" });
+        // Both providers charge the completed generation (fal's receipt or
+        // Google's completed interaction): an empty delivery still settles
+        // its units.
+        throw Object.assign(
+            new UpstreamError(502, { message: "Lyria returned empty audio" }),
+            { billedUsage: { completionAudioTokens: units } },
+        );
     }
     return new Response(bytes, {
         headers: {
