@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { UpstreamError } from "@shared/error.ts";
 import { detectImageMimeType } from "@shared/image-mime.ts";
+import type { Usage } from "@shared/registry/registry.ts";
 import { signBedrockHeaders } from "../../text/auth/bedrock.ts";
 import type { ImageGenerationResult } from "../createAndReturnImages.ts";
 import { getImageEnv } from "../env.ts";
@@ -75,6 +76,11 @@ export async function callStabilityImage(
         ...(reference ? { strength: 0.55 } : { aspect_ratio: ratio }),
     };
     const signal = AbortSignal.timeout(60_000);
+    // Both providers charge per completed request: once the invoke returns a
+    // 200, every downstream failure (unreadable body, malformed JSON, bad
+    // base64, non-PNG payload) must still settle the flat image rate the way
+    // the success path reports it (issue-91/130 settlement convention).
+    const paidUsage: Usage = { completionImageTokens: 1 };
 
     let buffer: Buffer;
     if (params.model.endsWith(":stability")) {
@@ -110,7 +116,22 @@ export async function callStabilityImage(
                 signal,
             },
         );
-        buffer = Buffer.from(await response.arrayBuffer());
+        let raw: ArrayBuffer;
+        try {
+            raw = await response.arrayBuffer();
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            throw UpstreamError.fromProvider(502, {
+                message: `Failed to read the Stability image response: ${message}`,
+                requestUrl: new URL(
+                    `https://api.stability.ai/v2beta/stable-image/generate/${route.direct}`,
+                ),
+                cause: error,
+                billedUsage: paidUsage,
+            });
+        }
+        buffer = Buffer.from(raw);
     } else {
         const accessKeyId = getImageEnv("AWS_ACCESS_KEY_ID");
         const secretAccessKey = getImageEnv("AWS_SECRET_ACCESS_KEY");
@@ -140,21 +161,47 @@ export async function callStabilityImage(
             body,
             signal,
         });
-        const result = (await response.json()) as {
+        let result: {
             images?: string[];
             finish_reasons?: (string | null)[];
         };
+        try {
+            result = (await response.json()) as typeof result;
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error);
+            throw UpstreamError.fromProvider(502, {
+                message: `Failed to parse the Stability image response: ${message}`,
+                requestUrl: url,
+                cause: error,
+                billedUsage: paidUsage,
+            });
+        }
         if (result.finish_reasons?.[0]?.startsWith("Filter reason:")) {
             throw UpstreamError.fromProvider(400, {
                 message:
                     "Stability rejected the request or output under its content policy.",
             });
         }
-        buffer = base64ToBuffer(result.images?.[0] ?? "");
+        try {
+            buffer = base64ToBuffer(result.images?.[0] ?? "");
+        } catch (error) {
+            const message =
+                error instanceof UpstreamError
+                    ? error.message
+                    : "Failed to decode the Stability image response";
+            throw UpstreamError.fromProvider(502, {
+                message,
+                requestUrl: url,
+                cause: error,
+                billedUsage: paidUsage,
+            });
+        }
     }
     if (detectImageMimeType(buffer) !== "image/png") {
         throw UpstreamError.fromProvider(502, {
             message: "Stability returned no valid PNG image.",
+            billedUsage: paidUsage,
         });
     }
 
