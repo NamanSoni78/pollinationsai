@@ -2583,22 +2583,27 @@ test("every issue a merged PR closes pays, self-fixes too; fixes elsewhere or be
     ]);
 });
 
-// The user's PR and quest bounty rewards after a quest check.
+// The user's PR and quest bounty rewards after a quest check. Pre-claimed
+// payout markers occupy a PR's own id without being a payment, so they are
+// filtered out here; the marker behavior has its own test below.
 async function checkPrRewards(userId: string) {
     await checkQuestsForUser(env, userId);
     const rewards = await drizzle(env.DB, { schema })
         .select({
             questId: schema.rewards.questId,
             pollenAmount: schema.rewards.pollenAmount,
+            claimedAt: schema.rewards.claimedAt,
         })
         .from(schema.rewards)
         .where(eq(schema.rewards.userId, userId));
     return rewards
         .filter(
             (reward) =>
-                reward.questId.includes("merged_pr") ||
-                reward.questId.startsWith("github:issue:"),
+                reward.claimedAt === null &&
+                (reward.questId.includes("merged_pr") ||
+                    reward.questId.startsWith("github:issue:")),
         )
+        .map(({ questId, pollenAmount }) => ({ questId, pollenAmount }))
         .sort((a, b) => a.questId.localeCompare(b.questId));
 }
 
@@ -2777,6 +2782,112 @@ test("a merged PR pays once, whatever changes after it paid", async ({
         { questId: "github:merged_pr:9799", pollenAmount: 5 },
         ...paid.slice(1),
     ]);
+});
+
+test("a merged PR cannot re-arm for another payment by dropping its closing references", async ({
+    mocks,
+    sessionToken: _sessionToken,
+}) => {
+    const user = await getOnlyUser();
+    await mocks.enable("github", "tinybird");
+    for (const [issueNumber, reward] of [
+        [9600, 10],
+        [9601, 25],
+        // Never closed by anyone: the peel target.
+        [9602, 10],
+    ] as const) {
+        seedQuestIssue(mocks.github.state, {
+            issueNumber,
+            title: `Quest ${issueNumber}`,
+            goal: "Build it.",
+            reward,
+        });
+    }
+    const pr = (number: number, rest: object = {}) => ({
+        number,
+        authorLogin: user.githubUsername ?? "",
+        mergedAt: "2026-11-06T00:00:00Z",
+        ...rest,
+    });
+    mocks.github.state.mergedPullRequests.push(
+        // Closes two quests: pays the highest bounty once, under its id.
+        pr(9951, { closingIssues: [9600, 9601] }),
+        // A second PR closing the other quest pays that quest instead.
+        pr(9952, { closingIssues: [9600] }),
+    );
+
+    // All PR/quest rows, including pre-claimed payout markers.
+    const allPrRows = async () =>
+        (
+            await drizzle(env.DB, { schema })
+                .select({
+                    id: schema.rewards.id,
+                    questId: schema.rewards.questId,
+                    pollenAmount: schema.rewards.pollenAmount,
+                    claimedAt: schema.rewards.claimedAt,
+                })
+                .from(schema.rewards)
+                .where(eq(schema.rewards.userId, user.id))
+        )
+            .filter(
+                (reward) =>
+                    reward.questId.includes("merged_pr") ||
+                    reward.questId.startsWith("github:issue:"),
+            )
+            .sort((a, b) => a.questId.localeCompare(b.questId));
+    const summarize = (rows: Awaited<ReturnType<typeof allPrRows>>) =>
+        rows.map(({ questId, pollenAmount, claimedAt }) => ({
+            questId,
+            pollenAmount,
+            claimed: claimedAt !== null,
+        }));
+
+    // One payment per quest, and each quest-closing PR also leaves a
+    // pre-claimed marker under its own id so it can never qualify again.
+    await checkQuestsForUser(env, user.id);
+    const snapshot = [
+        { questId: "github:issue:9600", pollenAmount: 10, claimed: false },
+        { questId: "github:issue:9601", pollenAmount: 25, claimed: false },
+        { questId: "github:merged_pr:9951", pollenAmount: 1, claimed: true },
+        { questId: "github:merged_pr:9952", pollenAmount: 1, claimed: true },
+    ];
+    expect(summarize(await allPrRows())).toEqual(snapshot);
+
+    // Closing references come from the PR body, which the author can edit
+    // after the payout. Stripping them must not re-qualify the PR for the
+    // default reward, for the next remaining bounty, or for the second PR.
+    const findPr = (number: number) => {
+        const row = mocks.github.state.mergedPullRequests.find(
+            (candidate) => candidate.number === number,
+        );
+        if (!row) throw new Error(`PR ${number} missing from mock state`);
+        return row;
+    };
+    findPr(9951).closingIssues = [];
+    await checkQuestsForUser(env, user.id);
+    expect(summarize(await allPrRows())).toEqual(snapshot);
+
+    // Peeling to a still-unpaid quest must not pay it either.
+    findPr(9951).closingIssues = [9602];
+    await checkQuestsForUser(env, user.id);
+    expect(summarize(await allPrRows())).toEqual(snapshot);
+
+    // The second PR re-arms the same way.
+    findPr(9952).closingIssues = [];
+    await checkQuestsForUser(env, user.id);
+    expect(summarize(await allPrRows())).toEqual(snapshot);
+
+    // The marker rows can never credit pollen.
+    const marker = (await allPrRows()).find(
+        (reward) => reward.questId === "github:merged_pr:9951",
+    );
+    if (!marker) throw new Error("payout marker missing");
+    const claim = await claimReward(drizzle(env.DB, { schema }), {
+        rewardId: marker.id,
+        userId: user.id,
+    });
+    expect(claim.claimed).toBe(false);
+    expect(claim.newBalance).toBeNull();
 });
 
 test("Bee Census quest pays 3 Pollen once for the user's own labelled survey issue with enough written answers", async ({

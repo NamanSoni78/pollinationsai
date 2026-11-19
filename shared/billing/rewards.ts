@@ -41,6 +41,12 @@ export interface RecordRewardInput {
     title: string;
     /** Optional quest link, snapshotted so history renders it directly. */
     url?: string | null;
+    /**
+     * Record the row as already claimed. Marker rows use this to occupy an
+     * idempotency key (and appear in the earned set) without ever being
+     * claimable for pollen.
+     */
+    preClaimed?: boolean;
 }
 
 export interface RecordRewardsResult {
@@ -99,6 +105,7 @@ export async function recordRewards(
             // (mode:"timestamp"), matching claimedAt and every other timestamp
             // column. Relying on the column default emits milliseconds instead.
             earnedAt: new Date(),
+            ...(input.preClaimed ? { claimedAt: new Date() } : {}),
         };
     });
 
