@@ -3670,11 +3670,13 @@ const TEXT_BASE_SERVICES = {
         paidOnly: true,
         priceMultiplier: 1,
         cost: {
-            // OpenRouter Novita FP8 rates (2026-09-23), including the
-            // account's 5.5% credit-purchase fee.
-            promptTextTokens: perMillion(0.27) * 1.055,
-            promptCachedTokens: perMillion(0.054) * 1.055,
-            completionTextTokens: perMillion(1.08) * 1.055,
+            // OpenRouter GMICloud FP8 rates (2026-11-19), including the
+            // account's 5.5% credit-purchase fee. The Novita FP8 endpoint
+            // this route was pinned to is delisted; gmicloud/fp8 is the only
+            // live endpoint serving the model.
+            promptTextTokens: perMillion(0.21) * 1.055,
+            promptCachedTokens: perMillion(0.042) * 1.055,
+            completionTextTokens: perMillion(0.84) * 1.055,
         },
         title: "MiniMax M2.7",
         description:

@@ -1297,9 +1297,15 @@ export const TEXT_FALLBACKS = {
             provider: "openrouter",
             addedDate: new Date("2026-09-01").getTime(),
             cost: {
-                promptTextTokens: perMillion(0.18) * 1.055,
-                promptCachedTokens: perMillion(0.036) * 1.055,
-                completionTextTokens: perMillion(0.9) * 1.055,
+                // OpenRouter Parasail BF16 rates (2026-11-19), including the
+                // account's 5.5% credit-purchase fee. The StreamLake
+                // endpoint this fallback was pinned to is delisted;
+                // parasail/bf16 is the only live endpoint serving
+                // qwen3-coder-next - the primary sheet already carries these
+                // rates.
+                promptTextTokens: perMillion(0.12) * 1.055,
+                promptCachedTokens: perMillion(0.07) * 1.055,
+                completionTextTokens: perMillion(0.8) * 1.055,
             },
         },
     },
